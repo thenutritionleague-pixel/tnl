@@ -31,11 +31,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _load() async {
     final authId = Supabase.instance.client.auth.currentUser?.id;
-    if (authId == null) return;
+    if (authId == null) {
+      if (mounted) context.go('/login');
+      return;
+    }
 
     try {
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) return;
+      if (profile == null || profile['org_id'] == null) {
+        if (mounted) {
+          setState(() => _loading = false);
+          context.go('/signup');
+        }
+        return;
+      }
 
       final teamMembership = await ProfileService.getTeamMembership(profile['id']);
       final tasks = await TaskService.getActiveTasks(profile['org_id']);

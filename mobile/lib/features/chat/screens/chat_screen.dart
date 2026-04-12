@@ -32,11 +32,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _load() async {
     final authId = Supabase.instance.client.auth.currentUser?.id;
-    if (authId == null) return;
+    if (authId == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
     try {
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) return;
+      if (profile == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
 
       final messages = await ChatService.getMessages(widget.teamId);
 
@@ -54,6 +60,23 @@ class _ChatScreenState extends State<ChatScreen> {
       // Subscribe to new messages
       ChatService.subscribeMessages(widget.teamId, (msg) {
         if (mounted) {
+          // Enrich realtime payload with profile data
+          if (msg['profiles'] == null) {
+            if (msg['user_id'] == _profileId) {
+              msg['profiles'] = {'id': _profileId, 'name': _myName, 'avatar_color': _myAvatarColor};
+            } else {
+              // Find profile from existing messages cache
+              final cached = _messages.firstWhere(
+                (m) => m['profiles'] != null && (m['profiles'] as Map)['id'] == msg['user_id'],
+                orElse: () => {},
+              );
+              if (cached.containsKey('profiles')) {
+                msg['profiles'] = cached['profiles'];
+              } else {
+                msg['profiles'] = {'id': msg['user_id'], 'name': 'User', 'avatar_color': '#059669'};
+              }
+            }
+          }
           setState(() => _messages.add(msg));
           _scrollToBottom();
         }

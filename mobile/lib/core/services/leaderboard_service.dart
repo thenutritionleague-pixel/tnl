@@ -9,6 +9,8 @@ class LeaderboardService {
     String orgId,
     String challengeId,
   ) async {
+    if (challengeId.isEmpty) return [];
+
     final data = await _client
         .from('team_points_view')
         .select('team_id, total_points')

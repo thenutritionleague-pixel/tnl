@@ -28,11 +28,17 @@ class _TasksScreenState extends State<TasksScreen> {
 
   Future<void> _load() async {
     final authId = Supabase.instance.client.auth.currentUser?.id;
-    if (authId == null) return;
+    if (authId == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
     try {
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) return;
+      if (profile == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
 
       final tasks = await TaskService.getActiveTasks(profile['org_id']);
       final subs = await TaskService.getUserSubmissions(profile['id'], profile['org_id']);

@@ -24,11 +24,15 @@ class _MoreScreenState extends State<MoreScreen> {
 
   Future<void> _load() async {
     final authId = Supabase.instance.client.auth.currentUser?.id;
-    if (authId == null) return;
+    if (authId == null) {
+      return;
+    }
 
     try {
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) return;
+      if (profile == null) {
+        return;
+      }
       final team = await ProfileService.getTeamMembership(profile['id']);
       if (mounted) {
         setState(() {

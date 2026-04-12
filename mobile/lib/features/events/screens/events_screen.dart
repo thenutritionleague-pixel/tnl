@@ -24,11 +24,17 @@ class _EventsScreenState extends State<EventsScreen> {
 
   Future<void> _load() async {
     final authId = Supabase.instance.client.auth.currentUser?.id;
-    if (authId == null) return;
+    if (authId == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
     try {
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) return;
+      if (profile == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
       final events = await EventService.getEvents(profile['org_id']);
       if (mounted) {
         setState(() {

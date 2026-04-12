@@ -251,12 +251,12 @@ export async function getOrganization(id: string): Promise<OrgDetail | null> {
   // Total org points (all approved submissions)
   const { data: ptsData } = await supabase
     .from('task_submissions')
-    .select('tasks(points)')
+    .select('points_awarded')
     .eq('org_id', id)
     .eq('status', 'approved')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const totalPoints = (ptsData ?? []).reduce((sum: number, s: any) => sum + (s.tasks?.points ?? 0), 0)
+  const totalPoints = (ptsData ?? []).reduce((sum: number, s: any) => sum + (s.points_awarded ?? 0), 0)
 
   const activeChallenges = (challengesRes.data ?? [])
     .filter((c: { status: string }) => c.status === 'active')
@@ -333,14 +333,16 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     .from('org_members')
     .select(`
       id, role, joined_at,
-      profiles(id, name, email, avatar_color),
-      team_members!team_members_user_id_fkey(
-        role,
-        teams(id, name)
-      )
+      profiles(id, name, email, avatar_color)
     `)
     .eq('org_id', orgId)
     .order('joined_at', { ascending: true })
+
+  // Fetch team assignments separately (avoids invalid FK join path)
+  const { data: teamAssignments } = await supabase
+    .from('team_members')
+    .select('user_id, role, teams(id, name)')
+    .eq('org_id', orgId)
 
   if (!members) return []
 
@@ -349,7 +351,18 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     role: string
     joined_at: string
     profiles: { id: string; name: string; email: string; avatar_color: string } | null
-    team_members: Array<{ role: string; teams: { id: string; name: string } | null }>
+  }
+
+  // Build a team lookup by profile ID
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const teamLookup: Record<string, { role: string; teamId: string | null; teamName: string }> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const ta of (teamAssignments ?? []) as any[]) {
+    teamLookup[ta.user_id] = {
+      role: ta.role,
+      teamId: ta.teams?.id ?? null,
+      teamName: ta.teams?.name ?? 'Unassigned',
+    }
   }
 
   // Get approved points per user
@@ -368,13 +381,13 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
 
   return (members as unknown as MemberRaw[]).map(m => {
     const profile = m.profiles!
-    const tm = m.team_members?.[0]
+    const tm = teamLookup[profile.id]
     return {
       id: profile.id,
       name: profile.name,
       email: profile.email ?? '—',
-      team: tm?.teams?.name ?? 'Unassigned',
-      teamId: tm?.teams?.id ?? null,
+      team: tm?.teamName ?? 'Unassigned',
+      teamId: tm?.teamId ?? null,
       role: m.role as OrgMember['role'],
       teamRole: (tm?.role as OrgMember['teamRole']) ?? null,
       points: pointsMap[profile.id] ?? 0,
@@ -420,7 +433,7 @@ export async function getOrgTeams(orgId: string): Promise<TeamUI[]> {
     .eq('org_id', orgId)
     .eq('status', 'active')
     .limit(1)
-    .single()
+    .maybeSingle()
 
   let pointsMap: Record<string, number> = {}
 
@@ -538,7 +551,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     .eq('org_id', orgId)
     .eq('status', 'active')
     .limit(1)
-    .single()
+    .maybeSingle()
 
   type TmRaw = { user_id: string; role: string; profiles: { id: string; name: string; avatar_color: string } | null }
   const teamRaw = team as unknown as { id: string; name: string; emoji: string; color: string; team_members: TmRaw[] }
@@ -773,6 +786,7 @@ export async function addTask(challengeId: string, data: {
     description: data.description,
     points: data.points,
     start_week: data.weekNumber,
+    week_number: data.weekNumber,
     category: data.category,
     icon: data.icon,
   }).select().single()
@@ -786,6 +800,7 @@ export async function updateTask(id: string, data: {
     description: data.description,
     points: data.points,
     start_week: data.weekNumber,
+    week_number: data.weekNumber,
     category: data.category,
     icon: data.icon,
   }).eq('id', id)
