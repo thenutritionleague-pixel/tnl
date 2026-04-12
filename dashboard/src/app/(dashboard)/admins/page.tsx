@@ -1,8 +1,10 @@
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { UserCog, Shield, ShieldCheck, MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getPlatformAdmins } from '@/lib/supabase/admin-queries'
 import { getAdminProfile } from '@/lib/auth'
+import { isPlatformRole } from '@/types/database.types'
 import { InviteForm } from './_components/invite-form'
 
 const roleLabel: Record<string, string> = {
@@ -19,7 +21,13 @@ const statusStyle: Record<string, string> = {
 }
 
 export default async function AdminsPage() {
-  const [admins, viewer] = await Promise.all([getPlatformAdmins(), getAdminProfile()])
+  // Route guard: org-level admins cannot see platform admins
+  const viewer = await getAdminProfile()
+  if (viewer && !isPlatformRole(viewer.role as any) && viewer.org_id) {
+    redirect(`/organizations/${viewer.org_id}`)
+  }
+
+  const admins = await getPlatformAdmins()
   const isSuperAdmin = viewer?.role === 'super_admin'
   const superAdmins    = admins.filter(a => a.role === 'super_admin')
   const subSuperAdmins = admins.filter(a => a.role === 'sub_super_admin')

@@ -1,8 +1,11 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { Building2, Users, Trophy, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { getDashboardStats, getDashboardOrgs, getRecentActivity } from '@/lib/supabase/admin-queries'
+import { getAdminProfile } from '@/lib/auth'
+import { isPlatformRole } from '@/types/database.types'
 
 const statusStyle: Record<string, string> = {
   pending:  'bg-amber-100 text-amber-700',
@@ -11,6 +14,12 @@ const statusStyle: Record<string, string> = {
 }
 
 export default async function DashboardPage() {
+  // Route guard: org-level admins cannot see the platform overview
+  const profile = await getAdminProfile()
+  if (profile && !isPlatformRole(profile.role as any) && profile.org_id) {
+    redirect(`/organizations/${profile.org_id}`)
+  }
+
   const [stats, orgs, activity] = await Promise.all([
     getDashboardStats(),
     getDashboardOrgs(),

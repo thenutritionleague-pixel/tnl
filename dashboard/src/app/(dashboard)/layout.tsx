@@ -1,15 +1,10 @@
 import { redirect } from 'next/navigation'
-import { headers } from 'next/headers'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getUser, getAdminProfile } from '@/lib/auth'
 import { AppSidebar } from '@/components/app-sidebar'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { UserNav } from '@/components/user-nav'
 import type { AdminUser } from '@/types/database.types'
-import { isPlatformRole } from '@/types/database.types'
-
-// Extract org ID from pathname
-const ORG_PATH_RE = /^\/organizations\/(?!new$)([^/]+)(\/.*)?$/
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   // Skip auth when Supabase is not yet configured (local UI dev)
@@ -42,36 +37,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     created_at: new Date().toISOString(),
   }
 
-  // ── Route guard for org-level admins ──────────────────────────────────
-  const headersList = await headers()
-  const pathname = headersList.get('x-pathname') ?? headersList.get('x-next-url') ?? ''
-  const orgMatch = pathname.match(ORG_PATH_RE)
-  const urlOrgId = orgMatch?.[1] ?? null
-  const isPlatform = isPlatformRole(activeProfile.role)
-
-  if (!isPlatform && activeProfile.org_id) {
-    const ownOrgPath = `/organizations/${activeProfile.org_id}`
-
-    // If org admin is on a global page (no org in URL), redirect to their org
-    if (!urlOrgId) {
-      // Allow /settings as a personal page
-      const isAllowedGlobal = pathname === '/settings'
-      if (!isAllowedGlobal) {
-        redirect(ownOrgPath)
-      }
-    }
-    // If org admin tries to access a different org, redirect to their own
-    else if (urlOrgId !== activeProfile.org_id) {
-      redirect(ownOrgPath)
-    }
-  }
-
   // ── Fetch org name/emoji for sidebar ──────────────────────────────────
   let orgName: string | undefined
   let orgEmoji: string | undefined
 
-  // Determine which org to fetch: from URL or from admin's own org_id
-  const sidebarOrgId = urlOrgId ?? activeProfile.org_id
+  const sidebarOrgId = activeProfile.org_id
   if (sidebarOrgId && supabaseReady) {
     try {
       const adminClient = await createAdminClient()

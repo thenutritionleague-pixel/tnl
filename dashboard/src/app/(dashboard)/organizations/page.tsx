@@ -1,11 +1,20 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { Building2, Plus, Users, Trophy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getOrgsAdmin } from '@/lib/supabase/admin-queries'
+import { getAdminProfile } from '@/lib/auth'
+import { isPlatformRole } from '@/types/database.types'
 
 export default async function OrganizationsPage() {
+  // Route guard: org-level admins cannot see the global organizations list
+  const profile = await getAdminProfile()
+  if (profile && !isPlatformRole(profile.role as any) && profile.org_id) {
+    redirect(`/organizations/${profile.org_id}`)
+  }
+
   const orgs = await getOrgsAdmin()
   const totalMembers    = orgs.reduce((s, o) => s + o.memberCount, 0)
   const totalChallenges = orgs.reduce((s, o) => s + o.activeChallenges.length, 0)
