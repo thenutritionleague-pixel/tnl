@@ -187,6 +187,13 @@ create policy "feed_reactions: delete own"
     user_id = (select id from profiles where auth_id = auth.uid())
   );
 
+create policy "feed_reactions: update own"
+  on feed_reactions for update
+  to authenticated
+  using (
+    user_id = (select id from profiles where auth_id = auth.uid())
+  );
+
 -- ────────────────────────────────────────────────────────────────
 -- MESSAGES  (team chat)
 -- ────────────────────────────────────────────────────────────────
@@ -233,6 +240,27 @@ create policy "event_participations: read via event"
       select 1 from events e
       where e.id = event_id and e.org_id = auth_user_org_id()
     )
+  );
+
+create policy "event_participations: insert own"
+  on event_participations for insert
+  to authenticated
+  with check (
+    user_id = (select id from profiles where auth_id = auth.uid())
+  );
+
+create policy "event_participations: update own"
+  on event_participations for update
+  to authenticated
+  using (
+    user_id = (select id from profiles where auth_id = auth.uid())
+  );
+
+create policy "event_participations: delete own"
+  on event_participations for delete
+  to authenticated
+  using (
+    user_id = (select id from profiles where auth_id = auth.uid())
   );
 
 -- ────────────────────────────────────────────────────────────────
