@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { AdminUser } from '@/types/database.types'
+import { isPlatformRole } from '@/types/database.types'
 import { cn } from '@/lib/utils'
 
 // ── Global nav — Super Admin only (4 items) ──────────────────────────────────
@@ -75,12 +76,8 @@ function orgNavSections(orgId: string) {
 // ── Detect org context from pathname ─────────────────────────────────────────
 const ORG_PATH_RE = /^\/organizations\/(?!new$)([^/]+)(\/.*)?$/
 
-// Mock org data — replace with real lookup when Supabase is connected
-const ORG_NAMES:  Record<string, string> = { '1': 'Yi Mumbai', '2': 'Yi Delhi', '3': 'Yi Bangalore' }
-const ORG_EMOJIS: Record<string, string> = { '1': '🏙️', '2': '🕌', '3': '🌿' }
-
 // ─────────────────────────────────────────────────────────────────────────────
-export function AppSidebar({ profile }: { profile: AdminUser }) {
+export function AppSidebar({ profile, orgName, orgEmoji }: { profile: AdminUser; orgName?: string; orgEmoji?: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -88,6 +85,9 @@ export function AppSidebar({ profile }: { profile: AdminUser }) {
   const orgMatch = pathname.match(ORG_PATH_RE)
   const inOrgContext = !!orgMatch
   const orgId = orgMatch?.[1] ?? null
+
+  // Only platform-level admins (super_admin, sub_super_admin) can see global nav
+  const isPlatform = isPlatformRole(profile.role)
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -103,11 +103,11 @@ export function AppSidebar({ profile }: { profile: AdminUser }) {
         {inOrgContext && orgId ? (
           <div className="flex items-center gap-3 w-full min-w-0">
             <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-base select-none shrink-0">
-              {ORG_EMOJIS[orgId] ?? '🏢'}
+              {orgEmoji ?? '🏢'}
             </div>
             <div className="leading-tight min-w-0">
               <p className="text-sm font-bold text-foreground truncate">
-                {ORG_NAMES[orgId] ?? `Org ${orgId}`}
+                {orgName ?? 'Organization'}
               </p>
               <p className="text-xs text-muted-foreground">Org Dashboard</p>
             </div>
@@ -129,15 +129,19 @@ export function AppSidebar({ profile }: { profile: AdminUser }) {
       <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-4">
         {inOrgContext && orgId ? (
           <>
-            {/* Back link */}
-            <Link
-              href="/organizations"
-              className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/60"
-            >
-              <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
-              All Organizations
-            </Link>
-            <div className="h-px bg-border" />
+            {/* Back link — only for platform admins */}
+            {isPlatform && (
+              <>
+                <Link
+                  href="/organizations"
+                  className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/60"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                  All Organizations
+                </Link>
+                <div className="h-px bg-border" />
+              </>
+            )}
 
             {/* Org-scoped sections */}
             {orgNavSections(orgId).map((section, sIdx) => (
