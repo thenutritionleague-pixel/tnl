@@ -1,0 +1,586 @@
+/**
+ * Server-side admin queries — uses the service-role client (bypasses RLS).
+ * Import only in Server Components or Server Actions.
+ */
+
+import { createAdminClient } from './server'
+
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+export interface DashboardStats {
+  totalOrgs: number
+  totalMembers: number
+  activeChallenges: number
+  pendingApprovals: number
+}
+
+export interface DashboardOrg {
+  id: string
+  name: string
+  logo: string
+  slug: string
+  isActive: boolean
+  memberCount: number
+  teamCount: number
+  pendingApprovals: number
+}
+
+export interface ActivityItem {
+  id: string
+  memberName: string
+  orgName: string
+  taskTitle: string
+  submittedAt: string
+  status: 'pending' | 'approved' | 'rejected'
+}
+
+export interface PlatformAdmin {
+  id: string
+  userId: string | null
+  name: string
+  email: string
+  role: string
+  status: string
+  createdAt: string
+}
+
+export interface OrgSummaryAdmin {
+  id: string
+  name: string
+  slug: string
+  logo: string
+  isActive: boolean
+  createdAt: string
+  memberCount: number
+  teamCount: number
+  activeChallenges: string[]
+  orgAdmin: string
+}
+
+// ── Dashboard ──────────────────────────────────────────────────────────────────
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const client = await createAdminClient()
+  const [orgsRes, membersRes, challengesRes, pendingRes] = await Promise.all([
+    client.from('organizations').select('id', { count: 'exact', head: true }),
+    client.from('profiles').select('id', { count: 'exact', head: true }).eq('is_test', false),
+    client.from('challenges').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+    client.from('task_submissions').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+  ])
+  return {
+    totalOrgs: orgsRes.count ?? 0,
+    totalMembers: membersRes.count ?? 0,
+    activeChallenges: challengesRes.count ?? 0,
+    pendingApprovals: pendingRes.count ?? 0,
+  }
+}
+
+export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
+  const client = await createAdminClient()
+  const { data: orgs } = await client
+    .from('organizations')
+    .select('id, name, logo, slug, is_active')
+    .order('created_at')
+  if (!orgs) return []
+
+  const results: DashboardOrg[] = []
+  for (const org of orgs) {
+    const { data: challenges } = await client
+      .from('challenges')
+      .select('id')
+      .eq('org_id', org.id)
+    const challengeIds = (challenges ?? []).map((c: { id: string }) => c.id)
+
+    const [membersRes, teamsRes, pendingRes] = await Promise.all([
+      client.from('org_members').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
+      client.from('teams').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
+      challengeIds.length > 0
+        ? client.from('task_submissions').select('id', { count: 'exact', head: true }).in('challenge_id', challengeIds).eq('status', 'pending')
+        : { count: 0 },
+    ])
+    results.push({
+      id: org.id,
+      name: org.name,
+      logo: org.logo,
+      slug: org.slug,
+      isActive: org.is_active,
+      memberCount: membersRes.count ?? 0,
+      teamCount: teamsRes.count ?? 0,
+      pendingApprovals: pendingRes.count ?? 0,
+    })
+  }
+  return results
+}
+
+export async function getRecentActivity(): Promise<ActivityItem[]> {
+  const client = await createAdminClient()
+  const { data } = await client
+    .from('task_submissions')
+    .select('id, status, submitted_at, profiles(name), tasks(title), challenges(organizations(name))')
+    .order('submitted_at', { ascending: false })
+    .limit(8)
+
+  if (!data) return []
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data as any[]).map(s => ({
+    id: s.id,
+    memberName: s.profiles?.name ?? 'Unknown',
+    orgName: s.challenges?.organizations?.name ?? '—',
+    taskTitle: s.tasks?.title ?? '—',
+    submittedAt: timeAgo(s.submitted_at),
+    status: s.status as ActivityItem['status'],
+  }))
+}
+
+// ── Platform Admins ────────────────────────────────────────────────────────────
+
+export async function getPlatformAdmins(): Promise<PlatformAdmin[]> {
+  const client = await createAdminClient()
+  const { data } = await client
+    .from('admin_users')
+    .select('id, user_id, name, email, role, status, created_at')
+    .in('role', ['super_admin', 'sub_super_admin'])
+    .order('created_at')
+  if (!data) return []
+  return data.map(a => ({
+    id: a.id,
+    userId: a.user_id,
+    name: a.name,
+    email: a.email,
+    role: a.role,
+    status: a.status,
+    createdAt: fmtDate(a.created_at),
+  }))
+}
+
+// ── Org Admins ─────────────────────────────────────────────────────────────────
+
+export interface OrgAdminUser {
+  id: string
+  name: string
+  email: string
+  role: 'org_admin' | 'sub_admin'
+  status: string
+  createdAt: string
+}
+
+export async function getOrgAdmins(orgId: string): Promise<OrgAdminUser[]> {
+  const client = await createAdminClient()
+  const { data } = await client
+    .from('admin_users')
+    .select('id, name, email, role, status, created_at')
+    .eq('org_id', orgId)
+    .in('role', ['org_admin', 'sub_admin'])
+    .order('role') // org_admin first
+  if (!data) return []
+  return data.map(a => ({
+    id: a.id,
+    name: a.name,
+    email: a.email,
+    role: a.role as OrgAdminUser['role'],
+    status: a.status,
+    createdAt: fmtDate(a.created_at),
+  }))
+}
+
+// ── Org Points Breakdown ───────────────────────────────────────────────────────
+
+export interface TaskBreakdown {
+  icon: string
+  title: string
+  daysCompleted: number
+  pointsPerDay: number
+  subtotal: number
+}
+
+export interface WeekPoints {
+  week: number
+  points: number
+  tasks: TaskBreakdown[]
+}
+
+export interface MemberStatAdmin {
+  id: string
+  name: string
+  teamId: string
+  teamName: string
+  teamColor: string
+  teamEmoji: string
+  avatarColor: string
+  weekPoints: WeekPoints[]
+  total: number
+}
+
+export interface TeamStatAdmin {
+  id: string
+  name: string
+  color: string
+  emoji: string
+  members: MemberStatAdmin[]
+  total: number
+}
+
+export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[] }> {
+  const client = await createAdminClient()
+
+  const [challengeRes, teamMembersRes, orgMembersRes, subsRes] = await Promise.all([
+    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
+    client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
+    client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
+    client.from('task_submissions').select('user_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)').eq('org_id', orgId).eq('status', 'approved'),
+  ])
+
+  const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
+
+  // Build team lookup
+  type TmRaw = { user_id: string; profiles: { id: string; name: string; avatar_color: string } | null; teams: { id: string; name: string; emoji: string; color: string } | null }
+  const teamMap: Record<string, { id: string; name: string; emoji: string; color: string }> = {}
+  for (const tm of (teamMembersRes.data ?? []) as unknown as TmRaw[]) {
+    if (tm.profiles?.id && tm.teams) teamMap[tm.profiles.id] = tm.teams
+  }
+
+  // Build member map from org_members
+  type OmRaw = { user_id: string; profiles: { id: string; name: string; avatar_color: string } | null }
+  const memberMap: Record<string, MemberStatAdmin> = {}
+  for (const om of (orgMembersRes.data ?? []) as unknown as OmRaw[]) {
+    const p = om.profiles
+    if (!p) continue
+    const t = teamMap[p.id]
+    memberMap[p.id] = {
+      id: p.id, name: p.name, avatarColor: p.avatar_color ?? '#059669',
+      teamId: t?.id ?? '', teamName: t?.name ?? 'Unassigned',
+      teamColor: t?.color ?? '#94a3b8', teamEmoji: t?.emoji ?? '—',
+      weekPoints: [], total: 0,
+    }
+  }
+
+  // Build week breakdown from submissions
+  type SubRaw = { user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }
+  type WeekData = { points: number; tasks: Record<string, { daysCompleted: number; pointsPerDay: number; icon: string }> }
+  const weekDataMap: Record<string, Record<number, WeekData>> = {}
+
+  for (const sub of (subsRes.data ?? []) as unknown as SubRaw[]) {
+    const { user_id, submitted_date, points_awarded, tasks } = sub
+    if (!tasks || !memberMap[user_id]) continue
+
+    let week = tasks.start_week ?? 1
+    if (startDate && submitted_date) {
+      const diffDays = Math.floor((new Date(submitted_date + 'T12:00:00').getTime() - startDate.getTime()) / 86400000)
+      week = Math.max(1, Math.floor(diffDays / 7) + 1)
+    }
+
+    const pts = points_awarded ?? tasks.points
+    if (!weekDataMap[user_id]) weekDataMap[user_id] = {}
+    if (!weekDataMap[user_id][week]) weekDataMap[user_id][week] = { points: 0, tasks: {} }
+    weekDataMap[user_id][week].points += pts
+    memberMap[user_id].total += pts
+
+    const key = tasks.title
+    if (!weekDataMap[user_id][week].tasks[key]) weekDataMap[user_id][week].tasks[key] = { daysCompleted: 0, pointsPerDay: tasks.points, icon: tasks.icon }
+    weekDataMap[user_id][week].tasks[key].daysCompleted++
+  }
+
+  for (const userId in weekDataMap) {
+    if (!memberMap[userId]) continue
+    memberMap[userId].weekPoints = Object.entries(weekDataMap[userId])
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([week, data]) => ({
+        week: Number(week),
+        points: data.points,
+        tasks: Object.entries(data.tasks).map(([title, t]) => ({
+          title, icon: t.icon, daysCompleted: t.daysCompleted,
+          pointsPerDay: t.pointsPerDay, subtotal: t.daysCompleted * t.pointsPerDay,
+        })),
+      }))
+  }
+
+  const members = Object.values(memberMap).sort((a, b) => b.total - a.total)
+
+  // Build team stats
+  const teamStatMap: Record<string, TeamStatAdmin> = {}
+  for (const m of members) {
+    if (!m.teamId) continue
+    if (!teamStatMap[m.teamId]) {
+      teamStatMap[m.teamId] = { id: m.teamId, name: m.teamName, color: m.teamColor, emoji: m.teamEmoji, members: [], total: 0 }
+    }
+    teamStatMap[m.teamId].members.push(m)
+    teamStatMap[m.teamId].total += m.total
+  }
+  const teams = Object.values(teamStatMap).sort((a, b) => b.total - a.total)
+
+  return { members, teams }
+}
+
+// ── Org Events ─────────────────────────────────────────────────────────────────
+
+export interface OrgEvent {
+  id: string
+  title: string
+  description: string
+  type: 'quiz' | 'offline'
+  points: number
+  location: string | null
+  startTime: string
+  endTime: string | null
+  status: 'upcoming' | 'completed'
+  isActive: boolean
+  attendeesCount: number
+  displayDate: string
+  displayTime: string
+}
+
+export async function getOrgEvents(orgId: string): Promise<OrgEvent[]> {
+  const client = await createAdminClient()
+  const { data: events } = await client
+    .from('events')
+    .select('id, title, description, type, points, location, start_time, end_time, status, is_active')
+    .eq('org_id', orgId)
+    .order('start_time', { ascending: false })
+  if (!events) return []
+
+  const results: OrgEvent[] = []
+  for (const ev of events) {
+    const { count } = await client
+      .from('event_participations')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', ev.id)
+    const startDate = new Date(ev.start_time)
+    results.push({
+      id: ev.id, title: ev.title, description: ev.description ?? '',
+      type: ev.type as OrgEvent['type'], points: ev.points ?? 0,
+      location: ev.location ?? null, startTime: ev.start_time, endTime: ev.end_time ?? null,
+      status: ev.status as OrgEvent['status'], isActive: ev.is_active,
+      attendeesCount: count ?? 0,
+      displayDate: startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      displayTime: startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+    })
+  }
+  return results
+}
+
+// ── Invite Whitelist ───────────────────────────────────────────────────────────
+
+export interface InviteEntry {
+  id: string
+  email: string
+  teamId: string | null
+  teamName: string
+  role: 'team_captain' | 'vice_captain' | 'member'
+  addedAt: string
+  status: 'pending' | 'accepted'
+}
+
+export async function getInviteWhitelist(orgId: string): Promise<{ invites: InviteEntry[]; teams: Array<{ id: string; name: string }> }> {
+  const client = await createAdminClient()
+  const [invitesRes, teamsRes] = await Promise.all([
+    client.from('invite_whitelist').select('id, email, team_id, role, used_at, created_at, teams(name)').eq('org_id', orgId).order('created_at', { ascending: false }),
+    client.from('teams').select('id, name').eq('org_id', orgId).order('name'),
+  ])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invites: InviteEntry[] = ((invitesRes.data ?? []) as any[]).map(i => ({
+    id: i.id,
+    email: i.email,
+    teamId: i.team_id ?? null,
+    teamName: i.teams?.name ?? 'Unassigned',
+    role: i.role as InviteEntry['role'],
+    addedAt: fmtDate(i.created_at),
+    status: i.used_at ? 'accepted' : 'pending',
+  }))
+
+  const teams = (teamsRes.data ?? []).map((t: { id: string; name: string }) => ({ id: t.id, name: t.name }))
+  return { invites, teams }
+}
+
+// ── Org Approvals ──────────────────────────────────────────────────────────────
+
+export interface OrgApproval {
+  id: string
+  member: string
+  userId: string
+  teamName: string
+  taskTitle: string
+  taskDescription: string
+  taskPoints: number
+  submittedAt: string
+  submittedDate: string
+  status: 'pending' | 'approved' | 'rejected' | 'expired'
+  rejectionReason: string | null
+  notes: string | null
+  pointsAwarded: number | null
+  proofType: 'image' | 'text'
+  proofUrl: string | null
+}
+
+export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
+  const client = await createAdminClient()
+
+  const [subsRes, teamMemsRes] = await Promise.all([
+    client
+      .from('task_submissions')
+      .select('id, status, submitted_at, submitted_date, proof_type, proof_url, notes, rejection_reason, points_awarded, user_id, profiles(name), tasks(title, description, points)')
+      .eq('org_id', orgId)
+      .order('submitted_at', { ascending: false })
+      .limit(200),
+    client
+      .from('team_members')
+      .select('user_id, teams(name)')
+      .eq('org_id', orgId),
+  ])
+
+  const teamMap: Record<string, string> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const tm of (teamMemsRes.data ?? []) as any[]) {
+    teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((subsRes.data ?? []) as any[]).map(s => ({
+    id: s.id,
+    member: s.profiles?.name ?? 'Unknown',
+    userId: s.user_id,
+    teamName: teamMap[s.user_id] ?? 'Unassigned',
+    taskTitle: s.tasks?.title ?? '—',
+    taskDescription: s.tasks?.description ?? '',
+    taskPoints: s.tasks?.points ?? 0,
+    submittedAt: timeAgo(s.submitted_at),
+    submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
+    status: s.status as OrgApproval['status'],
+    rejectionReason: s.rejection_reason ?? null,
+    notes: s.notes ?? null,
+    pointsAwarded: s.points_awarded ?? null,
+    proofType: (s.proof_type ?? 'image') as OrgApproval['proofType'],
+    proofUrl: s.proof_url ?? null,
+  }))
+}
+
+// ── Org Overview ───────────────────────────────────────────────────────────────
+
+export interface OrgOverview {
+  id: string
+  name: string
+  slug: string
+  logo: string
+  country: string
+  timezone: string
+  isActive: boolean
+  createdAt: string
+  orgAdmin: string
+  orgAdminEmail: string
+  stats: {
+    members: number
+    teams: number
+    totalPoints: number
+    pendingApprovals: number
+    activeChallenges: Array<{ name: string; dates: string }>
+  }
+  teams: Array<{ id: string; name: string; captain: string; members: number; points: number }>
+}
+
+export async function getOrgOverview(orgId: string): Promise<OrgOverview | null> {
+  const client = await createAdminClient()
+
+  const { data: org } = await client.from('organizations').select('*').eq('id', orgId).single()
+  if (!org) return null
+
+  const [membersRes, teamsRes, pendingRes, challengesRes, adminRes, teamsListRes] = await Promise.all([
+    client.from('profiles').select('id', { count: 'exact', head: true }).eq('org_id', orgId),
+    client.from('teams').select('id', { count: 'exact', head: true }).eq('org_id', orgId),
+    client.from('task_submissions').select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('status', 'pending'),
+    client.from('challenges').select('name, start_date, end_date, status').eq('org_id', orgId),
+    client.from('admin_users').select('name, email').eq('org_id', orgId).eq('role', 'org_admin').maybeSingle(),
+    client.from('teams').select('id, name, team_members(user_id, role, profiles(name))').eq('org_id', orgId).order('created_at', { ascending: true }),
+  ])
+
+  const { data: ptsData } = await client
+    .from('task_submissions')
+    .select('points_awarded')
+    .eq('org_id', orgId)
+    .eq('status', 'approved')
+  const totalPoints = (ptsData ?? []).reduce((sum: number, s: { points_awarded: number | null }) => sum + (s.points_awarded ?? 0), 0)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeChallenges = ((challengesRes.data ?? []) as any[])
+    .filter((c: { status: string }) => c.status === 'active')
+    .map((c: { name: string; start_date: string; end_date: string }) => ({
+      name: c.name,
+      dates: `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`,
+    }))
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const teams = ((teamsListRes.data ?? []) as any[]).map((t: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const captain = t.team_members.find((m: any) => m.role === 'captain')?.profiles?.name ?? '—'
+    return { id: t.id, name: t.name, captain, members: t.team_members.length, points: 0 }
+  })
+
+  return {
+    id: org.id,
+    name: org.name,
+    slug: org.slug,
+    logo: org.logo ?? '🏢',
+    country: org.country ?? '',
+    timezone: org.timezone ?? '',
+    isActive: org.is_active,
+    createdAt: fmtDate(org.created_at),
+    orgAdmin: adminRes.data?.name ?? '—',
+    orgAdminEmail: adminRes.data?.email ?? '—',
+    stats: {
+      members: membersRes.count ?? 0,
+      teams: teamsRes.count ?? 0,
+      totalPoints,
+      pendingApprovals: pendingRes.count ?? 0,
+      activeChallenges,
+    },
+    teams,
+  }
+}
+
+// ── Organizations ──────────────────────────────────────────────────────────────
+
+export async function getOrgsAdmin(): Promise<OrgSummaryAdmin[]> {
+  const client = await createAdminClient()
+  const { data: orgs } = await client
+    .from('organizations')
+    .select('id, name, slug, logo, is_active, created_at')
+    .order('created_at')
+  if (!orgs) return []
+
+  const results: OrgSummaryAdmin[] = []
+  for (const org of orgs) {
+    const [membersRes, teamsRes, challengesRes, adminRes] = await Promise.all([
+      client.from('org_members').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
+      client.from('teams').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
+      client.from('challenges').select('name').eq('org_id', org.id).eq('status', 'active'),
+      client.from('admin_users').select('name').eq('org_id', org.id).eq('role', 'org_admin').limit(1).maybeSingle(),
+    ])
+    results.push({
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      logo: org.logo,
+      isActive: org.is_active,
+      createdAt: fmtDate(org.created_at),
+      memberCount: membersRes.count ?? 0,
+      teamCount: teamsRes.count ?? 0,
+      activeChallenges: (challengesRes.data ?? []).map((c: { name: string }) => c.name),
+      orgAdmin: adminRes.data?.name ?? '—',
+    })
+  }
+  return results
+}
