@@ -48,28 +48,15 @@ class _SignupScreenState extends State<SignupScreen> {
         return;
       }
 
-      // Create profile
-      final profile = await ProfileService.createProfile(
+      // Claim invite atomically using RPC
+      await ProfileService.claimInvite(
         authId: authId,
-        orgId: widget.orgId,
-        name: name,
         email: widget.email,
+        name: name,
+        orgId: widget.orgId,
+        inviteId: widget.inviteId,
+        teamId: widget.teamId,
       );
-
-      // Add to team if specified
-      if (widget.teamId != null && widget.teamId!.isNotEmpty) {
-        await Supabase.instance.client.from('team_members').insert({
-          'team_id': widget.teamId,
-          'user_id': profile['id'],
-          'org_id': widget.orgId,
-          'role': 'member',
-        });
-      }
-
-      // Mark invite as used
-      if (widget.inviteId != null) {
-        await ProfileService.markInviteUsed(widget.inviteId!);
-      }
 
       if (mounted) context.go('/home');
     } catch (e) {

@@ -39,33 +39,24 @@ class ProfileService {
         .maybeSingle();
   }
 
-  /// Create a new profile (first login from invite whitelist).
-  static Future<Map<String, dynamic>> createProfile({
+  /// Claim an invite atomically via RPC (creates profile, assigns team, marks invite).
+  static Future<Map<String, dynamic>> claimInvite({
     required String authId,
-    required String orgId,
-    required String name,
     required String email,
+    required String name,
+    required String orgId,
+    String? inviteId,
+    String? teamId,
   }) async {
-    // Pick a random avatar color
-    const colors = [
-      '#059669', '#3B82F6', '#8B5CF6', '#F59E0B',
-      '#EF4444', '#EC4899', '#14B8A6', '#F97316',
-    ];
-    colors.shuffle();
-    final avatarColor = colors.first;
-
-    final data = await _client
-        .from('profiles')
-        .update({
-          'org_id': orgId,
-          'name': name.trim(),
-          'email': email.trim(),
-          'avatar_color': avatarColor,
-        })
-        .eq('auth_id', authId)
-        .select()
-        .single();
-    return data;
+    final response = await _client.rpc('claim_user_invite', params: {
+      'p_auth_id': authId,
+      'p_email': email.trim(),
+      'p_name': name.trim(),
+      'p_org_id': orgId,
+      'p_invite_id': inviteId,
+      'p_team_id': teamId,
+    });
+    return response as Map<String, dynamic>;
   }
 
   /// Fetch an invite whitelist entry by email (unused only).
@@ -76,13 +67,5 @@ class ProfileService {
         .eq('email', email.trim())
         .isFilter('used_at', null)
         .maybeSingle();
-  }
-
-  /// Mark an invite as used.
-  static Future<void> markInviteUsed(String inviteId) async {
-    await _client
-        .from('invite_whitelist')
-        .update({'used_at': DateTime.now().toIso8601String()})
-        .eq('id', inviteId);
   }
 }
