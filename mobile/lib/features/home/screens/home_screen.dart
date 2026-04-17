@@ -251,9 +251,13 @@ class _HomeScreenState extends State<HomeScreen>
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.6),
+                                color: dark
+                                    ? const Color(0xFF0F2416).withValues(alpha: 0.8)
+                                    : Colors.white.withValues(alpha: 0.6),
                                 borderRadius: BorderRadius.circular(24),
-                                border: Border.all(color: AppColors.primaryMint),
+                                border: Border.all(
+                                  color: dark ? const Color(0xFF34D399).withValues(alpha: 0.4) : AppColors.primaryMint,
+                                ),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -262,10 +266,10 @@ class _HomeScreenState extends State<HomeScreen>
                                   const SizedBox(width: 5),
                                   Text(
                                     '$points',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontWeight: FontWeight.w800,
                                       fontSize: 16,
-                                      color: Color(0xFF065F46),
+                                      color: dark ? const Color(0xFF34D399) : const Color(0xFF065F46),
                                     ),
                                   ),
                                 ],
@@ -278,8 +282,11 @@ class _HomeScreenState extends State<HomeScreen>
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.55),
+                            color: dark
+                                ? const Color(0xFF162E1C).withValues(alpha: 0.8)
+                                : Colors.white.withValues(alpha: 0.55),
                             borderRadius: BorderRadius.circular(14),
+                            border: dark ? Border.all(color: const Color(0xFF1E3D25)) : null,
                           ),
                           child: Column(
                             children: [
@@ -288,10 +295,10 @@ class _HomeScreenState extends State<HomeScreen>
                                   Expanded(
                                     child: Text(
                                       challengeName,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 13,
-                                        color: Color(0xFF1A3A2B),
+                                        color: dark ? const Color(0xFFF0FDF4) : const Color(0xFF1A3A2B),
                                       ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -300,14 +307,14 @@ class _HomeScreenState extends State<HomeScreen>
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                                       decoration: BoxDecoration(
-                                        color: AppColors.primary.withValues(alpha: 0.12),
+                                        color: AppColors.primary.withValues(alpha: 0.18),
                                         borderRadius: BorderRadius.circular(20),
                                       ),
                                       child: Text(
                                         weekLabel,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 11,
-                                          color: AppColors.primary,
+                                          color: dark ? const Color(0xFF34D399) : AppColors.primary,
                                           fontWeight: FontWeight.w700,
                                         ),
                                       ),
@@ -320,8 +327,8 @@ class _HomeScreenState extends State<HomeScreen>
                                 child: LinearProgressIndicator(
                                   value: progress,
                                   minHeight: 6,
-                                  backgroundColor: AppColors.primaryMint,
-                                  color: AppColors.primary,
+                                  backgroundColor: dark ? const Color(0xFF1E3D25) : AppColors.primaryMint,
+                                  color: dark ? const Color(0xFF34D399) : AppColors.primary,
                                 ),
                               ),
                               if (endDateStr.isNotEmpty)
@@ -331,7 +338,10 @@ class _HomeScreenState extends State<HomeScreen>
                                     padding: const EdgeInsets.only(top: 4),
                                     child: Text(
                                       endDateStr,
-                                      style: const TextStyle(fontSize: 10, color: Color(0xFF3D6B58)),
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: dark ? const Color(0xFF86EFAC) : const Color(0xFF3D6B58),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -344,41 +354,24 @@ class _HomeScreenState extends State<HomeScreen>
 
                   // ── 3 Stat Tiles ────────────────────────────────────
                   Container(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.surface,
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Row(
                       children: [
-                        _StatTile(
-                          icon: '🏆',
-                          value: _teamRank > 0 ? '${_ordinal(_teamRank)}' : '--',
-                          label: 'Team Rank',
-                        ),
+                        _StatTile(icon: '🏆', value: _teamRank > 0 ? _ordinal(_teamRank) : '--', label: 'Team Rank'),
                         _VertDivider(),
-                        _StatTile(
-                          icon: '🎯',
-                          value: '$_todayDonePct%',
-                          label: 'Today Done',
-                        ),
+                        _StatTile(icon: '🎯', value: '$_todayDonePct%', label: 'Today Done'),
                         _VertDivider(),
-                        _StatTile(
-                          icon: '🥦',
-                          value: '$_teamPoints',
-                          label: 'Team 🥦',
-                          valueStyle: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF065F46),
-                          ),
-                        ),
+                        _StatTile(icon: '🥦', value: '$_teamPoints', label: 'Team 🥦', highlight: true),
                       ],
                     ),
                   ),
 
-                  const SizedBox(height: 10),
+                  SizedBox(height: 10, child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor)),
 
                   // ── Today's Challenges ───────────────────────────────
                   Container(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.surface,
                     child: Column(
                       children: [
                         Padding(
@@ -386,9 +379,9 @@ class _HomeScreenState extends State<HomeScreen>
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text(
+                              Text(
                                 "Today's Challenges",
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.onSurface),
                               ),
                               GestureDetector(
                                 onTap: () => context.go('/tasks'),
@@ -403,9 +396,10 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ),
                         if (todayTasks.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(18, 0, 18, 16),
-                            child: Text('🎉  No active challenges right now', style: TextStyle(color: AppColors.textHint)),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                            child: Text('🎉  No active challenges right now',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4))),
                           )
                         else
                           ...todayTasks.asMap().entries.map((entry) {
@@ -419,11 +413,11 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
 
-                  const SizedBox(height: 10),
+                  SizedBox(height: 10, child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor)),
 
                   // ── Team Leaderboard ─────────────────────────────────
                   Container(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.surface,
                     child: Column(
                       children: [
                         Padding(
@@ -431,9 +425,9 @@ class _HomeScreenState extends State<HomeScreen>
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text(
+                              Text(
                                 'Leaderboard',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.onSurface),
                               ),
                               GestureDetector(
                                 onTap: () => context.go('/leaderboard'),
@@ -448,9 +442,10 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ),
                         if (_teamLeaderboard.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(18, 0, 18, 16),
-                            child: Text('No leaderboard data yet', style: TextStyle(color: AppColors.textHint)),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                            child: Text('No leaderboard data yet',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4))),
                           )
                         else
                           ..._teamLeaderboard.asMap().entries.map((entry) {
@@ -504,34 +499,44 @@ class _HomeScreenState extends State<HomeScreen>
 
 class _VertDivider extends StatelessWidget {
   @override
-  Widget build(BuildContext context) => Container(width: 1, height: 60, color: const Color(0xFFEEEEEE));
+  Widget build(BuildContext context) => Container(
+        width: 1, height: 60,
+        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.4),
+      );
 }
 
 class _StatTile extends StatelessWidget {
   final String icon;
   final String value;
   final String label;
-  final TextStyle? valueStyle;
-  const _StatTile({required this.icon, required this.value, required this.label, this.valueStyle});
+  final bool highlight;
+  const _StatTile({required this.icon, required this.value, required this.label, this.highlight = false});
 
   @override
-  Widget build(BuildContext context) => Expanded(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(icon, style: const TextStyle(fontSize: 22)),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style: valueStyle ?? const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 22)),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: highlight ? cs.primary : cs.onSurface,
               ),
-              Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-            ],
-          ),
+            ),
+            Text(label, style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5))),
+          ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _ChallengeRow extends StatelessWidget {
@@ -541,63 +546,70 @@ class _ChallengeRow extends StatelessWidget {
   const _ChallengeRow({required this.task, required this.status, required this.isLast});
 
   @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          InkWell(
-            onTap: () => context.push('/tasks/submit', extra: task),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-              child: Row(
-                children: [
-                  Text(task['icon'] as String? ?? '📋', style: const TextStyle(fontSize: 22)),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          task['title'] as String? ?? '',
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.textPrimary),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Since week ${task['week_number'] ?? 1}',
-                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
-                        ),
-                      ],
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final approved = status == 'approved';
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => context.push('/tasks/submit', extra: task),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+            child: Row(
+              children: [
+                Text(task['icon'] as String? ?? '📋', style: const TextStyle(fontSize: 22)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        task['title'] as String? ?? '',
+                        style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: cs.onSurface),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Since week ${task['week_number'] ?? 1}',
+                        style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: approved
+                        ? cs.primary.withValues(alpha: 0.12)
+                        : cs.onSurface.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: approved ? cs.primary.withValues(alpha: 0.3) : Colors.transparent,
                     ),
                   ),
-                  // Points pill
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: status == 'approved' ? AppColors.primarySurface : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: status == 'approved' ? AppColors.primaryMint : Colors.transparent),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('🥦', style: TextStyle(fontSize: 12)),
-                        const SizedBox(width: 3),
-                        Text(
-                          '${task['points']}',
-                          style: TextStyle(
-                            color: status == 'approved' ? AppColors.primary : AppColors.textSecondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🥦', style: TextStyle(fontSize: 12)),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${task['points']}',
+                        style: TextStyle(
+                          color: approved ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          if (!isLast) const Divider(height: 1, color: Color(0xFFF1F5F9), indent: 18),
-        ],
-      );
+        ),
+        if (!isLast) Divider(height: 1, color: cs.outline.withValues(alpha: 0.2), indent: 18),
+      ],
+    );
+  }
 }
 
 class _LeaderboardRow extends StatelessWidget {
@@ -624,64 +636,60 @@ class _LeaderboardRow extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          Container(
-            color: isHighlighted ? AppColors.primarySurface : Colors.transparent,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-            child: Row(
-              children: [
-                // Rank circle
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(color: _rankBg, shape: BoxShape.circle),
-                  child: Center(
-                    child: Text(
-                      '$rank',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800),
-                    ),
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Container(
+          color: isHighlighted ? cs.primary.withValues(alpha: 0.10) : Colors.transparent,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+          child: Row(
+            children: [
+              Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(color: _rankBg, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('$rank',
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(emoji, style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  name,
+                  style: TextStyle(
+                    fontWeight: isHighlighted ? FontWeight.w700 : FontWeight.w600,
+                    fontSize: 14,
+                    color: isHighlighted ? cs.primary : cs.onSurface,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Text(emoji, style: const TextStyle(fontSize: 22)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    name,
-                    style: TextStyle(
-                      fontWeight: isHighlighted ? FontWeight.w700 : FontWeight.w600,
-                      fontSize: 14,
-                      color: isHighlighted ? AppColors.primary : AppColors.textPrimary,
-                    ),
-                  ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: cs.primary.withValues(alpha: 0.25)),
                 ),
-                // Points pill
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.primarySurface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.primaryMint),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('🥦', style: TextStyle(fontSize: 12)),
-                      const SizedBox(width: 3),
-                      Text(
-                        '$points',
-                        style: const TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('🥦', style: TextStyle(fontSize: 12)),
+                    const SizedBox(width: 3),
+                    Text('$points',
+                        style: TextStyle(color: cs.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          if (!isLast) const Divider(height: 1, color: Color(0xFFF1F5F9), indent: 18),
-        ],
-      );
+        ),
+        if (!isLast) Divider(height: 1, color: cs.outline.withValues(alpha: 0.2), indent: 18),
+      ],
+    );
+  }
 }
 
 // ── Skeleton Loader ─────────────────────────────────────────────────────────
@@ -718,7 +726,7 @@ class _SkeletonHomeState extends State<_SkeletonHome> with SingleTickerProviderS
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF6F6F6),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     body: SafeArea(
       child: Column(
         children: [
