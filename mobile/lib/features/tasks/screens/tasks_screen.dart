@@ -6,6 +6,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class TasksScreen extends StatefulWidget {
   const TasksScreen({super.key});
@@ -167,10 +168,10 @@ class _TasksScreenState extends State<TasksScreen>
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
                             "Today's Tasks",
-                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: context.textPrimary),
                           ),
                         ),
                         GestureDetector(
@@ -203,7 +204,7 @@ class _TasksScreenState extends State<TasksScreen>
                     const SizedBox(height: 4),
                     Text(
                       'Week $currentWeekNum • ${'$_todayCount habit${_todayCount == 1 ? '' : 's'} to complete today'}',
-                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                      style: TextStyle(fontSize: 13, color: context.textSecondary),
                     ),
                     const SizedBox(height: 14),
 
@@ -255,7 +256,7 @@ class _TasksScreenState extends State<TasksScreen>
 
             // ── Task list ────────────────────────────────────────────
             if (_tasks.isEmpty)
-              const SliverFillRemaining(
+              SliverFillRemaining(
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -263,7 +264,7 @@ class _TasksScreenState extends State<TasksScreen>
                       Text('🎉', style: TextStyle(fontSize: 48)),
                       SizedBox(height: 12),
                       Text('No active tasks right now.',
-                          style: TextStyle(color: AppColors.textSecondary, fontSize: 16)),
+                          style: TextStyle(color: context.textSecondary, fontSize: 16)),
                     ],
                   ),
                 ),
@@ -325,19 +326,19 @@ class _WeekHeader extends StatelessWidget {
         children: [
           Text(
             'WEEK $week',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: AppColors.textHint,
+              color: context.textHint,
               letterSpacing: 1.4,
             ),
           ),
           const SizedBox(width: 8),
           Text(
             '$completedCount / $taskCount',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
-              color: AppColors.textHint,
+              color: context.textHint,
               letterSpacing: 0.2,
             ),
           ),
@@ -451,10 +452,10 @@ class _TaskCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                           height: 1.3,
                         ),
                       ),
@@ -462,9 +463,9 @@ class _TaskCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           desc,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.textHint,
+                            color: context.textHint,
                             height: 1.4,
                           ),
                           maxLines: 1,

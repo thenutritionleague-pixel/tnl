@@ -5,6 +5,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   const TaskHistoryScreen({super.key});
@@ -87,22 +88,22 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                               size: 18, color: AppColors.textPrimary),
                         ),
                         const SizedBox(width: 10),
-                        const Text(
+                        Text(
                           'Task History',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
-                            color: AppColors.textPrimary,
+                            color: context.textPrimary,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    const Text(
+                    Text(
                       'Tasks from previous days pending review or open for resubmission.',
                       style: TextStyle(
                         fontSize: 13,
-                        color: AppColors.textSecondary,
+                        color: context.textSecondary,
                       ),
                     ),
                   ],
@@ -117,7 +118,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                 ),
               )
             else if (_history.isEmpty)
-              const SliverFillRemaining(
+              SliverFillRemaining(
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -129,7 +130,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                         ),
                       ),
                       SizedBox(height: 4),
@@ -138,7 +139,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
-                          color: AppColors.textSecondary,
+                          color: context.textSecondary,
                         ),
                       ),
                     ],
@@ -211,7 +212,7 @@ class _HistoryCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border, width: 1),
+        border: Border.all(color: context.borderColor, width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -242,10 +243,10 @@ class _HistoryCard extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                           height: 1.3,
                         ),
                       ),
@@ -257,9 +258,9 @@ class _HistoryCard extends StatelessWidget {
                           const SizedBox(width: 3),
                           Text(
                             displayDate,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
-                              color: AppColors.textHint,
+                              color: context.textHint,
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -279,9 +280,9 @@ class _HistoryCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           desc,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11.5,
-                            color: AppColors.textHint,
+                            color: context.textHint,
                             height: 1.4,
                           ),
                           maxLines: 1,
@@ -304,7 +305,7 @@ class _HistoryCard extends StatelessWidget {
                   : const Color(0xFFF3FAF6),
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
               border: Border(
-                top: BorderSide(color: AppColors.border.withValues(alpha: 0.6)),
+                top: BorderSide(color: context.borderColor.withValues(alpha: 0.6)),
               ),
             ),
             child: Row(
