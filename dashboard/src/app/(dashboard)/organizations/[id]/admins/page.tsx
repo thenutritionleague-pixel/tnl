@@ -14,12 +14,15 @@ export default async function OrgAdminsPage({ params }: { params: Promise<{ id: 
     viewer?.role === 'sub_super_admin' ||
     viewer?.role === 'org_admin'
 
+  const isSuperAdmin = viewer?.role === 'super_admin' || viewer?.role === 'sub_super_admin'
+
   return (
     <OrgAdminsClient
       orgId={orgId}
       orgAdmin={orgAdmin}
       subAdmins={subAdmins}
       canManage={canManage}
+      isSuperAdmin={isSuperAdmin}
     />
   )
 }

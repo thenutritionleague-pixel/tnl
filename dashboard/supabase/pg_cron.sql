@@ -1,67 +1,48 @@
 -- ================================================================
--- Yi Nutrition League — pg_cron Jobs
--- Run in Supabase → SQL Editor after enabling the pg_cron extension
--- ================================================================
---
--- STEP 1: Enable extension (Supabase Dashboard → Database → Extensions)
--- Search "pg_cron" and toggle it ON. Then run the queries below.
+-- Yi Nutrition League — pg_cron Jobs (Multi-Tenant & Timezone Aware)
 -- ================================================================
 
 -- ────────────────────────────────────────────────────────────────
 -- JOB 1: Auto-activate challenges on start_date
--- Runs daily at 00:05 UTC (5:35 AM IST)
+-- Runs HOURLY. Activates challenges where local org time is >= start_date.
 -- ────────────────────────────────────────────────────────────────
 select cron.schedule(
   'auto-activate-challenges',
-  '5 0 * * *',
+  '0 * * * *',
   $$
-    update challenges
+    update challenges c
     set status = 'active'
-    where status = 'upcoming'
-      and start_date <= current_date
-      and manually_closed = false;
+    from organizations o
+    where c.org_id = o.id
+      and c.status = 'upcoming'
+      and c.start_date <= (current_timestamp at time zone o.timezone)::date
+      and c.manually_closed = false;
   $$
 );
 
 -- ────────────────────────────────────────────────────────────────
 -- JOB 2: Auto-complete challenges after end_date
--- Runs daily at 01:00 UTC (6:30 AM IST)
+-- Runs HOURLY. Completes challenges where local org time is > end_date.
 -- ────────────────────────────────────────────────────────────────
 select cron.schedule(
   'auto-complete-challenges',
-  '0 1 * * *',
+  '0 * * * *',
   $$
-    update challenges
+    update challenges c
     set status = 'completed'
-    where status = 'active'
-      and end_date < current_date;
+    from organizations o
+    where c.org_id = o.id
+      and c.status = 'active'
+      and c.end_date < (current_timestamp at time zone o.timezone)::date;
   $$
 );
 
--- ────────────────────────────────────────────────────────────────
--- JOB 3: Expire pending submissions at midnight IST (18:30 UTC)
--- Marks 'pending' submissions from yesterday as 'expired'.
--- Uses submitted_date to target only stale submissions.
--- ────────────────────────────────────────────────────────────────
-select cron.schedule(
-  'expire-stale-submissions',
-  '30 18 * * *',
-  $$
-    update task_submissions
-    set status = 'expired'
-    where status = 'pending'
-      and submitted_date < (current_timestamp at time zone 'Asia/Kolkata')::date;
-  $$
-);
+-- NOTE: JOB 3 (expire-stale-submissions) was REMOVED in migration_018.
+-- The `expired` status no longer exists. Admins use the date filter
+-- on the approvals page to find old pending submissions.
+-- Future: AI-assisted review will process submissions automatically.
 
 -- ────────────────────────────────────────────────────────────────
 -- VERIFY: List all scheduled jobs
--- ────────────────────────────────────────────────────────────────
 -- select * from cron.job;
-
--- ────────────────────────────────────────────────────────────────
--- REMOVE JOBS (if you need to update a schedule):
--- select cron.unschedule('auto-activate-challenges');
--- select cron.unschedule('auto-complete-challenges');
--- select cron.unschedule('expire-stale-submissions');
 -- ────────────────────────────────────────────────────────────────

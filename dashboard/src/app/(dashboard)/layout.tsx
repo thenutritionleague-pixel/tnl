@@ -4,6 +4,7 @@ import { getUser, getAdminProfile } from '@/lib/auth'
 import { AppSidebar } from '@/components/app-sidebar'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { UserNav } from '@/components/user-nav'
+import { getAllOrgShortNames } from '@/lib/supabase/admin-queries'
 import type { AdminUser } from '@/types/database.types'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -37,34 +38,40 @@ export default async function DashboardLayout({ children }: { children: React.Re
     created_at: new Date().toISOString(),
   }
 
-  // ── Fetch org name/emoji for sidebar ──────────────────────────────────
+  // ── Fetch org name/emoji for sidebar AND orgMap for breadcrumbs
   let orgName: string | undefined
   let orgEmoji: string | undefined
+  let orgLogoUrl: string | undefined
+  let orgMap: Record<string, string> = {}
 
-  const sidebarOrgId = activeProfile.org_id
-  if (sidebarOrgId && supabaseReady) {
+  if (supabaseReady) {
     try {
-      const adminClient = await createAdminClient()
-      const { data: org } = await adminClient
-        .from('organizations')
-        .select('name, logo')
-        .eq('id', sidebarOrgId)
-        .maybeSingle()
-      if (org) {
-        orgName = org.name
-        orgEmoji = org.logo
+      orgMap = await getAllOrgShortNames()
+      const sidebarOrgId = activeProfile.org_id
+      if (sidebarOrgId) {
+        const adminClient = await createAdminClient()
+        const { data: org } = await adminClient
+          .from('organizations')
+          .select('name, logo, logo_url')
+          .eq('id', sidebarOrgId)
+          .maybeSingle()
+        if (org) {
+          orgName = org.name
+          orgEmoji = org.logo
+          orgLogoUrl = org.logo_url ?? undefined
+        }
       }
     } catch {
-      // Fallback silently — sidebar will show defaults
+      // Fallback silently — sidebar/breadcrumbs will show defaults
     }
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <AppSidebar profile={activeProfile} orgName={orgName} orgEmoji={orgEmoji} />
+      <AppSidebar profile={activeProfile} orgName={orgName} orgEmoji={orgEmoji} orgLogoUrl={orgLogoUrl} />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-6 bg-background z-10">
-          <Breadcrumbs />
+          <Breadcrumbs orgMap={orgMap} />
           <div className="ml-auto">
             <UserNav profile={activeProfile} />
           </div>

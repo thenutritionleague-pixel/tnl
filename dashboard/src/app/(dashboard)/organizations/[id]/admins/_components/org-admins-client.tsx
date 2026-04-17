@@ -40,9 +40,10 @@ interface Props {
   orgAdmin: OrgAdminUser | null
   subAdmins: OrgAdminUser[]
   canManage: boolean
+  isSuperAdmin: boolean
 }
 
-export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, canManage }: Props) {
+export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, canManage, isSuperAdmin }: Props) {
   const [subAdmins, setSubAdmins] = useState(initialSubAdmins)
   const [formName, setFormName]   = useState('')
   const [formEmail, setFormEmail] = useState('')
@@ -131,6 +132,22 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
                 <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-primary/10 text-primary">
                   Org Admin
                 </span>
+                {isSuperAdmin && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0">
+                      <MoreHorizontal className="w-4 h-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[140px]">
+                      <DropdownMenuItem
+                        onClick={() => setRemoveTarget(orgAdmin)}
+                        variant="destructive"
+                        className="gap-2 whitespace-nowrap"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" /> Remove Admin
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </div>
             ) : (
               <p className="px-5 py-4 text-sm text-muted-foreground">No org admin assigned.</p>

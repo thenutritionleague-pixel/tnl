@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Trash2, MoreHorizontal, UserPlus, Users, ChevronDown, Loader2 } from 'lucide-react'
+import { Trash2, MoreHorizontal, UserPlus, Users, ChevronDown, Loader2, Edit2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Button } from '@/components/ui/button'
@@ -14,13 +14,13 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
-import { addToWhitelist, bulkAddToWhitelist, removeFromWhitelist } from '../actions'
+import { addToWhitelist, bulkAddToWhitelist, removeFromWhitelist, updateWhitelistEntry } from '../actions'
 import type { InviteEntry } from '@/lib/supabase/admin-queries'
 
-type InviteRole = 'member' | 'vice_captain' | 'team_captain'
+type InviteRole = 'member' | 'vice_captain' | 'captain'
 
 const roleLabel: Record<InviteRole, string> = {
-  member: 'Member', vice_captain: 'Vice Captain', team_captain: 'Captain',
+  member: 'Member', vice_captain: 'Vice Captain', captain: 'Captain',
 }
 
 interface Props {
@@ -50,12 +50,29 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
   // Remove
   const [removeTarget, setRemoveTarget] = useState<InviteEntry | null>(null)
   const [removing, setRemoving]         = useState(false)
+  
+  // Edit
+  const [editTarget, setEditTarget]     = useState<InviteEntry | null>(null)
+  const [editEmail, setEditEmail]       = useState('')
+  const [editTeam, setEditTeam]         = useState('')
+  const [editRole, setEditRole]         = useState<InviteRole>('member')
+  const [editError, setEditError]       = useState('')
+  const [updating, setUpdating]         = useState(false)
+
+  function openEdit(entry: InviteEntry) {
+    setEditTarget(entry)
+    setEditEmail(entry.email)
+    setEditTeam(entry.teamId ?? '')
+    setEditRole(entry.role)
+    setEditError('')
+  }
 
   async function addSingle() {
     const email = singleEmail.trim().toLowerCase()
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setSingleError('Enter a valid email.'); return }
+    if (!singleTeam) { setSingleError('Select a team.'); return }
     setSaving(true)
-    const teamId = singleTeam || null
+    const teamId = singleTeam
     const result = await addToWhitelist(orgId, email, teamId, singleRole)
     if (result.error) {
       setSingleError(result.error)
@@ -63,7 +80,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
       toast.success(`${email} added to whitelist.`)
       const teamName = teams.find(t => t.id === teamId)?.name ?? 'Unassigned'
       setInvites(prev => [{
-        id: Math.random().toString(36).slice(2),
+        id: result.id as string,
         email, teamId, teamName, role: singleRole,
         addedAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         status: 'pending',
@@ -88,7 +105,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
       const teamName = teams.find(t => t.id === bulkTeam)?.name ?? 'Unassigned'
       const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
       const newEntries: InviteEntry[] = lines.map(email => ({
-        id: Math.random().toString(36).slice(2),
+        id: (result.data as any[])?.find(d => d.email === email)?.id ?? Math.random().toString(36).slice(2),
         email, teamId: bulkTeam, teamName, role: bulkRole, addedAt: today, status: 'pending',
       }))
       setInvites(prev => [...newEntries, ...prev.filter(i => !lines.includes(i.email))])
@@ -110,6 +127,29 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
       setRemoveTarget(null)
     }
     setRemoving(false)
+  }
+
+  async function handleUpdate() {
+    if (!editTarget) return
+    const email = editEmail.trim().toLowerCase()
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setEditError('Enter a valid email.'); return }
+    if (!editTeam) { setEditError('Select a team.'); return }
+
+    setUpdating(true)
+    const result = await updateWhitelistEntry(orgId, editTarget.id, email, editTeam, editRole)
+    if (result.error) {
+      setEditError(result.error)
+    } else {
+      toast.success('Invitation updated.')
+      const teamName = teams.find(t => t.id === editTeam)?.name ?? 'Unassigned'
+      setInvites(prev => prev.map(inv => 
+        inv.id === editTarget.id 
+          ? { ...inv, email, teamId: editTeam, teamName, role: editRole }
+          : inv
+      ))
+      setEditTarget(null)
+    }
+    setUpdating(false)
   }
 
   const pending  = invites.filter(i => i.status === 'pending')
@@ -148,7 +188,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
               <select value={singleRole} onChange={e => setSingleRole(e.target.value as InviteRole)} className="w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer">
                 <option value="member">Member</option>
                 <option value="vice_captain">Vice Captain</option>
-                <option value="team_captain">Captain</option>
+                <option value="captain">Captain</option>
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             </div>
@@ -193,7 +233,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
                 <select value={bulkRole} onChange={e => setBulkRole(e.target.value as InviteRole)} className="w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer">
                   <option value="member">Member</option>
                   <option value="vice_captain">Vice Captain</option>
-                  <option value="team_captain">Captain</option>
+                  <option value="captain">Captain</option>
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               </div>
@@ -214,7 +254,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
           <h2 className="font-semibold text-foreground text-sm">Pending</h2>
           <p className="text-xs text-muted-foreground mt-0.5">{pending.length} awaiting signup</p>
         </div>
-        <InviteTable invites={pending} onRemove={setRemoveTarget} />
+        <InviteTable orgId={orgId} invites={pending} onRemove={setRemoveTarget} onEdit={openEdit} />
       </div>
 
       {/* Accepted table */}
@@ -224,7 +264,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
             <h2 className="font-semibold text-foreground text-sm">Accepted</h2>
             <p className="text-xs text-muted-foreground mt-0.5">{accepted.length} signed up</p>
           </div>
-          <InviteTable invites={accepted} onRemove={setRemoveTarget} />
+          <InviteTable orgId={orgId} invites={accepted} onRemove={setRemoveTarget} onEdit={openEdit} />
         </div>
       )}
 
@@ -243,11 +283,55 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null) }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Edit Invitation</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              <Input type="email" value={editEmail} onChange={e => { setEditEmail(e.target.value); setEditError('') }} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Team</Label>
+                <div className="relative">
+                  <select value={editTeam} onChange={e => { setEditTeam(e.target.value); setEditError('') }} className="w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer">
+                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Role</Label>
+                <div className="relative">
+                  <select value={editRole} onChange={e => setEditRole(e.target.value as InviteRole)} className="w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer">
+                    <option value="member">Member</option>
+                    <option value="vice_captain">Vice Captain</option>
+                    <option value="captain">Captain</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+            </div>
+            {editError && <p className="text-xs text-destructive">{editError}</p>}
+          </div>
+          <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
+            <button onClick={() => setEditTarget(null)} className={cn(buttonVariants({ variant: 'outline' }))}>Cancel</button>
+            <Button onClick={handleUpdate} disabled={updating} className="bg-primary text-primary-foreground">
+              {updating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function InviteTable({ invites, onRemove }: { invites: InviteEntry[]; onRemove: (i: InviteEntry) => void }) {
+function InviteTable({ orgId, invites, onRemove, onEdit }: { orgId: string; invites: InviteEntry[]; onRemove: (i: InviteEntry) => void; onEdit: (i: InviteEntry) => void }) {
   if (invites.length === 0) return <div className="px-5 py-8 text-center text-sm text-muted-foreground">No entries.</div>
   return (
     <table className="w-full text-sm">
@@ -266,7 +350,7 @@ function InviteTable({ invites, onRemove }: { invites: InviteEntry[]; onRemove: 
             <td className="px-5 py-3 font-medium text-foreground">{inv.email}</td>
             <td className="px-5 py-3 text-muted-foreground text-sm">{inv.teamName}</td>
             <td className="px-5 py-3 hidden sm:table-cell">
-              <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', inv.role === 'team_captain' && 'bg-amber-100 text-amber-700', inv.role === 'vice_captain' && 'bg-blue-100 text-blue-700', inv.role === 'member' && 'bg-muted text-muted-foreground')}>
+              <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', inv.role === 'captain' && 'bg-amber-100 text-amber-700', inv.role === 'vice_captain' && 'bg-blue-100 text-blue-700', inv.role === 'member' && 'bg-muted text-muted-foreground')}>
                 {roleLabel[inv.role]}
               </span>
             </td>
@@ -277,9 +361,20 @@ function InviteTable({ invites, onRemove }: { invites: InviteEntry[]; onRemove: 
                   <MoreHorizontal className="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[140px]">
-                  <DropdownMenuItem onClick={() => onRemove(inv)} variant="destructive" className="gap-2 whitespace-nowrap">
-                    <Trash2 className="w-3.5 h-3.5 shrink-0" /> Remove
-                  </DropdownMenuItem>
+                  {inv.status === 'accepted' ? (
+                    <DropdownMenuItem onClick={() => window.location.href = `/organizations/${orgId}/members`} className="gap-2 whitespace-nowrap">
+                      <Users className="w-3.5 h-3.5 shrink-0" /> View Members
+                    </DropdownMenuItem>
+                  ) : (
+                    <>
+                      <DropdownMenuItem onClick={() => onEdit(inv)} className="gap-2 whitespace-nowrap">
+                        <Edit2 className="w-3.5 h-3.5 shrink-0" /> Edit Invite
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onRemove(inv)} variant="destructive" className="gap-2 whitespace-nowrap">
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" /> Remove
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </td>

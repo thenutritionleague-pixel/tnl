@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math';
+import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -15,73 +17,84 @@ class TaskSubmissionScreen extends StatefulWidget {
 }
 
 class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
-  final _textController = TextEditingController();
-  bool _useImage = false;
   File? _selectedImage;
   bool _submitting = false;
   bool _done = false;
 
-  Map<String, dynamic> get _taskData => widget.task['task'] as Map<String, dynamic>? ?? widget.task;
-  String get _profileId => widget.task['profileId'] as String? ?? '';
-  String get _orgId => widget.task['orgId'] as String? ?? '';
+  late final ConfettiController _confettiCtrl =
+      ConfettiController(duration: const Duration(seconds: 4));
 
   @override
   void dispose() {
-    _textController.dispose();
+    _confettiCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-    if (picked != null) {
+  Map<String, dynamic> get _taskData =>
+      widget.task['task'] as Map<String, dynamic>? ?? widget.task;
+  String  get _profileId    => widget.task['profileId']    as String? ?? '';
+  String  get _orgId        => widget.task['orgId']        as String? ?? '';
+  bool    get _isResubmit   => widget.task['isResubmit']   as bool?   ?? false;
+  /// Original submitted_date from Task History — null means use today.
+  String? get _submittedDate => widget.task['submittedDate'] as String?;
+
+  Future<void> _pickFromGallery() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 82,
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedImage = File(picked.path));
+    }
+  }
+
+  Future<void> _pickFromCamera() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      imageQuality: 82,
+    );
+    if (picked != null && mounted) {
       setState(() => _selectedImage = File(picked.path));
     }
   }
 
   Future<void> _submit() async {
+    if (_selectedImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select or take a photo first.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
     final taskId = _taskData['id'] as String? ?? '';
     final challengeId = _taskData['challenge_id'] as String? ?? '';
-
-    if (_useImage && _selectedImage == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select an image.'), backgroundColor: AppColors.error),
-      );
-      return;
-    }
-    if (!_useImage && _textController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please describe your task completion.'), backgroundColor: AppColors.error),
-      );
-      return;
-    }
 
     setState(() => _submitting = true);
 
     try {
-      if (_useImage) {
-        await TaskService.submitTaskImage(
-          taskId: taskId,
-          challengeId: challengeId,
-          userId: _profileId,
-          orgId: _orgId,
-          imageFile: _selectedImage!,
-        );
-      } else {
-        await TaskService.submitTaskText(
-          taskId: taskId,
-          challengeId: challengeId,
-          userId: _profileId,
-          orgId: _orgId,
-          text: _textController.text.trim(),
-        );
+      await TaskService.submitTaskImage(
+        taskId: taskId,
+        challengeId: challengeId,
+        userId: _profileId,
+        orgId: _orgId,
+        imageFile: _selectedImage!,
+        submittedDate: _submittedDate,
+      );
+      if (mounted) {
+        setState(() { _submitting = false; _done = true; });
+        _confettiCtrl.play();
       }
-      setState(() { _submitting = false; _done = true; });
     } catch (e) {
       if (mounted) {
         setState(() => _submitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Submission failed: $e'), backgroundColor: AppColors.error),
+          SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: AppColors.error,
+          ),
         );
       }
     }
@@ -89,67 +102,140 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final task = _taskData;
-    final title = task['title'] as String? ?? 'Task';
-    final desc = task['description'] as String? ?? '';
-    final points = task['points'] as int? ?? 0;
-    final icon = task['icon'] as String? ?? '📋';
+    final task  = _taskData;
+    final title  = task['title']       as String? ?? 'Task';
+    final desc   = task['description'] as String? ?? '';
+    final points = task['points']      as int?    ?? 0;
+    final icon   = task['icon']        as String? ?? '📋';
 
+    // ── Success state ──────────────────────────────────────────────────────
     if (_done) {
       return Scaffold(
-        backgroundColor: AppColors.background,
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('🎉', style: TextStyle(fontSize: 64)),
-              const SizedBox(height: 20),
-              const Text('Submitted!',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
-              const SizedBox(height: 8),
-              const Text('Waiting for admin approval.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 15)),
-              const SizedBox(height: 36),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: ElevatedButton(
-                  onPressed: () => context.go('/tasks'),
-                  child: const Text('Back to Tasks'),
+        backgroundColor: const Color(0xFFF3FAF6),
+        body: Stack(
+          children: [
+            // ── Confetti from top-center ───────────────────────────────────
+            Align(
+              alignment: Alignment.topCenter,
+              child: ConfettiWidget(
+                confettiController: _confettiCtrl,
+                blastDirectionality: BlastDirectionality.explosive,
+                numberOfParticles: 28,
+                gravity: 0.25,
+                emissionFrequency: 0.06,
+                maxBlastForce: 20,
+                minBlastForce: 8,
+                colors: const [
+                  Color(0xFF059669), Color(0xFF34D399), Color(0xFFF59E0B),
+                  Color(0xFFFBBF24), Color(0xFF6EE7B7), Color(0xFF10B981),
+                ],
+                createParticlePath: (size) {
+                  final path = Path();
+                  // mix of circles and squares
+                  if (Random().nextBool()) {
+                    path.addOval(Rect.fromCircle(
+                        center: Offset(size.width / 2, size.height / 2),
+                        radius: size.width / 2));
+                  } else {
+                    path.addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+                  }
+                  return path;
+                },
+              ),
+            ),
+            // ── Success content ────────────────────────────────────────────
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pulsing icon
+                    _PulseIcon(),
+                    const SizedBox(height: 28),
+                    const Text(
+                      'Submitted!',
+                      style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textPrimary),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Your proof photo is waiting for\nadmin approval.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 14,
+                          height: 1.6),
+                    ),
+                    const SizedBox(height: 44),
+                    GestureDetector(
+                      onTap: () => context.go('/tasks'),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withValues(alpha: 0.35),
+                              blurRadius: 16,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'Back to Tasks',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
+    // ── Main submission screen ─────────────────────────────────────────────
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: const Color(0xFFF3FAF6),
       appBar: AppBar(
-        title: const Text('Submit Task'),
-        backgroundColor: AppColors.surface,
+        title: Text(_isResubmit ? 'Resubmit Proof' : 'Submit Proof'),
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
         leading: BackButton(onPressed: () => context.pop()),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Task header
+            // ── Task header card ──────────────────────────────────────────
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.border),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
               ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 52,
-                    height: 52,
+                    width: 52, height: 52,
                     decoration: BoxDecoration(
-                      color: AppColors.primarySurface,
+                      color: const Color(0xFFECFDF5),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Center(child: Text(icon, style: const TextStyle(fontSize: 28))),
@@ -163,18 +249,25 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.textPrimary)),
                         if (desc.isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(desc, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                          Text(desc, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4)),
                         ],
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: AppColors.pointsBadge,
+                            color: AppColors.primarySurface,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: AppColors.pointsBadgeBorder),
+                            border: Border.all(color: AppColors.primaryMint),
                           ),
-                          child: Text('🥦 $points pts',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.pointsText)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('🥦', style: TextStyle(fontSize: 13)),
+                              const SizedBox(width: 4),
+                              Text('$points pts',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -185,113 +278,195 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
             const SizedBox(height: 24),
 
-            // Proof type toggle
-            const Text('Proof Type',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _useImage = false),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: !_useImage ? AppColors.primary : AppColors.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: !_useImage ? AppColors.primary : AppColors.border,
-                        ),
-                      ),
-                      child: Center(
-                        child: Text('📝 Text',
-                            style: TextStyle(
-                                color: !_useImage ? Colors.white : AppColors.textSecondary,
-                                fontWeight: FontWeight.w600)),
-                      ),
-                    ),
+            // ── Photo upload area ──────────────────────────────────────────
+            const Text(
+              'Upload Your Proof Photo',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Take a photo or pick from your gallery as evidence.',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+
+            // Photo preview / upload area
+            GestureDetector(
+              onTap: _pickFromGallery,
+              child: Container(
+                height: 220,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: _selectedImage != null
+                        ? AppColors.primary
+                        : AppColors.border,
+                    width: _selectedImage != null ? 2 : 1,
                   ),
+                  boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _useImage = true),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: _useImage ? AppColors.primary : AppColors.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _useImage ? AppColors.primary : AppColors.border,
-                        ),
+                clipBehavior: Clip.antiAlias,
+                child: _selectedImage != null
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.file(_selectedImage!, fit: BoxFit.cover),
+                          Positioned(
+                            top: 10, right: 10,
+                            child: GestureDetector(
+                              onTap: () => setState(() => _selectedImage = null),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 10, right: 10,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Text('Change', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 60, height: 60,
+                            decoration: BoxDecoration(
+                              color: AppColors.primarySurface,
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            child: const Icon(Icons.add_photo_alternate_outlined, size: 30, color: AppColors.primary),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text('Tap to upload from gallery', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.textPrimary)),
+                          const SizedBox(height: 4),
+                          const Text('or use the camera button below', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                        ],
                       ),
-                      child: Center(
-                        child: Text('📸 Photo',
-                            style: TextStyle(
-                                color: _useImage ? Colors.white : AppColors.textSecondary,
-                                fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
 
-            if (_useImage) ...[
+            // Camera button alternative
+            if (_selectedImage == null)
               GestureDetector(
-                onTap: _pickImage,
+                onTap: _pickFromCamera,
                 child: Container(
-                  height: 200,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: _selectedImage != null ? AppColors.primary : AppColors.border,
-                      style: _selectedImage == null ? BorderStyle.solid : BorderStyle.solid,
-                    ),
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.border),
                   ),
-                  child: _selectedImage != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.file(_selectedImage!, fit: BoxFit.cover, width: double.infinity),
-                        )
-                      : const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_photo_alternate_outlined, size: 40, color: AppColors.textHint),
-                            SizedBox(height: 8),
-                            Text('Tap to select a photo',
-                                style: TextStyle(color: AppColors.textHint, fontSize: 14)),
-                          ],
-                        ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.camera_alt_outlined, color: AppColors.primary, size: 20),
+                      SizedBox(width: 8),
+                      Text('Take a Photo', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 14)),
+                    ],
+                  ),
                 ),
               ),
-            ] else ...[
-              TextField(
-                controller: _textController,
-                maxLines: 5,
-                decoration: const InputDecoration(
-                  hintText: 'Describe how you completed this task...',
-                  alignLabelWithHint: true,
-                ),
-              ),
-            ],
 
             const SizedBox(height: 32),
 
-            ElevatedButton(
-              onPressed: _submitting ? null : _submit,
-              child: _submitting
-                  ? const SizedBox(
-                      height: 20, width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Submit Proof'),
+            // Submit button
+            GestureDetector(
+              onTap: _submitting ? null : _submit,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                decoration: BoxDecoration(
+                  color: _submitting
+                      ? AppColors.primary.withValues(alpha: 0.6)
+                      : (_selectedImage != null ? AppColors.primary : AppColors.border),
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: Center(
+                  child: _submitting
+                      ? const SizedBox(
+                          height: 20, width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                        )
+                      : const Text(
+                          'Submit Proof',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+                        ),
+                ),
+              ),
             ),
+
+            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
+}
+
+// ── Pulsing success icon ─────────────────────────────────────────────────────
+
+class _PulseIcon extends StatefulWidget {
+  @override
+  State<_PulseIcon> createState() => _PulseIconState();
+}
+
+class _PulseIconState extends State<_PulseIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _scale =
+      Tween<double>(begin: 1.0, end: 1.08).animate(
+    CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+  );
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ScaleTransition(
+        scale: _scale,
+        child: Container(
+          width: 110,
+          height: 110,
+          decoration: BoxDecoration(
+            color: AppColors.primarySurface,
+            shape: BoxShape.circle,
+            border: Border.all(
+                color: AppColors.primary.withValues(alpha: 0.35), width: 2.5),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withValues(alpha: 0.18),
+                blurRadius: 24,
+                spreadRadius: 4,
+              ),
+            ],
+          ),
+          child: const Center(
+            child: Text('🎉', style: TextStyle(fontSize: 52)),
+          ),
+        ),
+      );
 }

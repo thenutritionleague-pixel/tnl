@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/feed_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/utils/session_mixin.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -11,17 +12,26 @@ class FeedScreen extends StatefulWidget {
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen> {
+class _FeedScreenState extends State<FeedScreen>
+    with SessionAwareMixin {
   bool _loading = true;
   List<Map<String, dynamic>> _posts = [];
   String? _profileId;
+  String? _orgId;
+  RealtimeChannel? _channel;
 
   static const List<String> _reactions = ['🥦', '🔥', '⭐', '❤️'];
 
   @override
   void initState() {
     super.initState();
-    _load();
+    waitForSession(then: _load);
+  }
+
+  @override
+  void dispose() {
+    _channel?.unsubscribe();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -37,17 +47,38 @@ class _FeedScreenState extends State<FeedScreen> {
         if (mounted) setState(() => _loading = false);
         return;
       }
-      final posts = await FeedService.getFeedItems(profile['org_id']);
+      final orgId = profile['org_id'] as String;
+      final posts = await FeedService.getFeedItems(orgId);
       if (mounted) {
         setState(() {
           _profileId = profile['id'];
+          _orgId = orgId;
           _posts = posts;
           _loading = false;
         });
+        _subscribeRealtime(orgId);
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _subscribeRealtime(String orgId) {
+    _channel?.unsubscribe();
+    _channel = Supabase.instance.client
+        .channel('feed:$orgId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'feed_items',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'org_id',
+            value: orgId,
+          ),
+          callback: (_) => _load(),
+        )
+        .subscribe();
   }
 
   Future<void> _toggleReaction(String postId, String reaction) async {
@@ -72,14 +103,14 @@ class _FeedScreenState extends State<FeedScreen> {
   Map<String, int> _reactionCounts(List reactions) {
     final Map<String, int> counts = {};
     for (final r in reactions) {
-      final emoji = r['reaction'] as String? ?? '';
-      counts[emoji] = (counts[emoji] ?? 0) + 1;
+      final key = r['reaction'] as String? ?? '';
+      counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;
   }
 
-  bool _hasReacted(List reactions, String emoji) {
-    return reactions.any((r) => r['user_id'] == _profileId && r['reaction'] == emoji);
+  bool _hasReacted(List reactions, String key) {
+    return reactions.any((r) => r['user_id'] == _profileId && r['reaction'] == key);
   }
 
   @override
@@ -96,14 +127,24 @@ class _FeedScreenState extends State<FeedScreen> {
               onRefresh: _load,
               color: AppColors.primary,
               child: _posts.isEmpty
-                  ? const Center(
-                      child: Text('No posts yet.', style: TextStyle(color: AppColors.textSecondary)),
-                    )
+                  ? _EmptyFeed()
                   : ListView.builder(
-                      padding: const EdgeInsets.all(20),
-                      itemCount: _posts.length,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                      itemCount: _buildItems().length,
                       itemBuilder: (context, i) {
-                        final post = _posts[i];
+                        final item = _buildItems()[i];
+                        if (item is _DateHeader) {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+                            child: Text(item.label,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.textHint,
+                                    letterSpacing: 0.5)),
+                          );
+                        }
+                        final post = item as Map<String, dynamic>;
                         final reactions = List<Map<String, dynamic>>.from(
                             post['feed_reactions'] as List? ?? []);
                         final counts = _reactionCounts(reactions);
@@ -112,9 +153,10 @@ class _FeedScreenState extends State<FeedScreen> {
                         final isAuto = post['is_auto_generated'] as bool? ?? false;
                         final title = post['title'] as String? ?? '';
                         final content = post['content'] as String? ?? '';
+                        final authorName = (post['profiles'] as Map?)?['name'] as String?;
 
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 14),
+                          margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
                             color: AppColors.surface,
                             borderRadius: BorderRadius.circular(20),
@@ -130,7 +172,7 @@ class _FeedScreenState extends State<FeedScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Header
+                              // Header row
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                                 child: Row(
@@ -142,7 +184,7 @@ class _FeedScreenState extends State<FeedScreen> {
                                     _TypeChip(type: type, isAuto: isAuto),
                                     const Spacer(),
                                     Text(
-                                      _formatDate(post['created_at'] as String? ?? ''),
+                                      _formatTime(post['created_at'] as String? ?? ''),
                                       style: const TextStyle(fontSize: 11, color: AppColors.textHint),
                                     ),
                                   ],
@@ -150,40 +192,49 @@ class _FeedScreenState extends State<FeedScreen> {
                               ),
                               // Content
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     if (title.isNotEmpty)
                                       Text(title,
                                           style: const TextStyle(
-                                              fontSize: 16,
+                                              fontSize: 15,
                                               fontWeight: FontWeight.w700,
                                               color: AppColors.textPrimary)),
                                     if (content.isNotEmpty) ...[
                                       const SizedBox(height: 4),
                                       Text(content,
                                           style: const TextStyle(
-                                              fontSize: 14,
+                                              fontSize: 13,
                                               color: AppColors.textSecondary,
                                               height: 1.5)),
+                                    ],
+                                    if (!isAuto && authorName != null) ...[
+                                      const SizedBox(height: 6),
+                                      Text('Posted by $authorName',
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: AppColors.textHint,
+                                              fontStyle: FontStyle.italic)),
                                     ],
                                   ],
                                 ),
                               ),
                               // Reactions
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(12, 12, 16, 14),
+                                padding: const EdgeInsets.fromLTRB(12, 10, 16, 12),
                                 child: Row(
                                   children: _reactions.map((emoji) {
-                                    final count = counts[emoji] ?? 0;
-                                    final reacted = _hasReacted(reactions, emoji);
+                                    final reactionKey = _emojiToKey(emoji);
+                                    final count = counts[reactionKey] ?? 0;
+                                    final reacted = _hasReacted(reactions, reactionKey);
                                     return GestureDetector(
-                                      onTap: () => _toggleReaction(post['id'], emoji),
+                                      onTap: () => _toggleReaction(post['id'], reactionKey),
                                       child: AnimatedContainer(
                                         duration: const Duration(milliseconds: 200),
                                         margin: const EdgeInsets.only(right: 8),
-                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                         decoration: BoxDecoration(
                                           color: reacted
                                               ? AppColors.primarySurface
@@ -211,17 +262,90 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 
-  String _formatDate(String iso) {
+  // Reaction emoji → DB key mapping
+  String _emojiToKey(String emoji) {
+    switch (emoji) {
+      case '🥦': return 'broccoli';
+      case '🔥': return 'fire';
+      case '⭐': return 'star';
+      case '❤️': return 'heart';
+      default: return emoji;
+    }
+  }
+
+  // Build flat list interleaved with date headers
+  List<dynamic> _buildItems() {
+    final result = <dynamic>[];
+    String? lastLabel;
+    for (final post in _posts) {
+      final label = _dayLabel(post['created_at'] as String? ?? '');
+      if (label != lastLabel) {
+        result.add(_DateHeader(label));
+        lastLabel = label;
+      }
+      result.add(post);
+    }
+    return result;
+  }
+
+  String _dayLabel(String iso) {
     try {
       final dt = DateTime.parse(iso).toLocal();
-      final now = DateTime.now();
-      final diff = now.difference(dt);
-      if (diff.inDays == 0) return 'Today';
-      if (diff.inDays == 1) return 'Yesterday';
-      return '${dt.day}/${dt.month}';
+      final today = DateTime.now();
+      final diff = DateTime(today.year, today.month, today.day)
+          .difference(DateTime(dt.year, dt.month, dt.day))
+          .inDays;
+      if (diff == 0) return 'TODAY';
+      if (diff == 1) return 'YESTERDAY';
+      return '${dt.day}/${dt.month}/${dt.year}';
     } catch (_) {
       return '';
     }
+  }
+
+  String _formatTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    } catch (_) {
+      return '';
+    }
+  }
+}
+
+class _DateHeader {
+  final String label;
+  const _DateHeader(this.label);
+}
+
+class _EmptyFeed extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color: AppColors.primarySurface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(Icons.dynamic_feed_rounded,
+                color: AppColors.primary, size: 36),
+          ),
+          const SizedBox(height: 16),
+          const Text('Nothing here yet',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+          const SizedBox(height: 6),
+          const Text('Activity will appear as the challenge progresses.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: AppColors.textHint)),
+        ],
+      ),
+    );
   }
 }
 
@@ -235,6 +359,8 @@ class _TypeChip extends StatelessWidget {
     switch (type) {
       case 'announcement': return const Color(0xFF3B82F6);
       case 'achievement': return AppColors.gold;
+      case 'milestone': return const Color(0xFF8B5CF6);
+      case 'leaderboard_change': return const Color(0xFF059669);
       case 'reminder': return AppColors.pending;
       case 'challenge_update': return AppColors.primary;
       case 'submission_approved': return AppColors.success;
@@ -246,6 +372,8 @@ class _TypeChip extends StatelessWidget {
     switch (type) {
       case 'announcement': return '📢 Announcement';
       case 'achievement': return '🏆 Achievement';
+      case 'milestone': return '🌟 Milestone';
+      case 'leaderboard_change': return '📈 Leaderboard';
       case 'reminder': return '⏰ Reminder';
       case 'challenge_update': return '🥦 Challenge';
       case 'submission_approved': return '✅ Approved';

@@ -36,3 +36,12 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+### Auto-index Rule (MANDATORY)
+
+If `semantic_search_nodes` or `query_graph` returns 0 results or "not found":
+1. **Immediately** call `build_or_update_graph_tool` (incremental — no args needed)
+2. Retry the graph query
+3. Only fall back to Grep/Glob/Read if still no results after re-index
+
+Never skip to Grep when graph returns empty — always re-index first.

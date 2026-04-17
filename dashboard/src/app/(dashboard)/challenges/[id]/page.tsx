@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, CalendarDays } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { getChallengeDetailAdmin } from "@/lib/supabase/admin-queries"
 import {
   Card,
   CardContent,
@@ -19,33 +20,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-type Task = {
-  id: string
-  week: number
-  title: string
-  points: number
-  status: "active" | "inactive"
-}
+export default async function ChallengeDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const data = await getChallengeDetailAdmin(id)
 
-// Mock challenge data — in a real page this would come from params + DB
-const challenge = {
-  id: "1",
-  title: "April Wellness Challenge",
-  description:
-    "A month-long challenge designed to build healthy nutrition habits across all teams. Members submit daily proof of completed tasks and earn 🥦 points that contribute to their team leaderboard.",
-  startDate: "Apr 1, 2026",
-  endDate: "Apr 30, 2026",
-  status: "active" as const,
-}
+  if (!data) {
+    return <p className="text-sm text-muted-foreground">Challenge not found.</p>
+  }
 
-const tasks: Task[] = [
-  { id: "t1", week: 1, title: "Drink 8 glasses of water", points: 10, status: "active" },
-  { id: "t2", week: 1, title: "Walk 10,000 steps", points: 20, status: "active" },
-  { id: "t3", week: 2, title: "Eat salad for lunch", points: 15, status: "active" },
-  { id: "t4", week: 2, title: "Skip sugar for a day", points: 25, status: "active" },
-]
+  const { challenge, tasks } = data
 
-export default function ChallengeDetailPage() {
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -82,12 +66,14 @@ export default function ChallengeDetailPage() {
           <CardDescription>Overview and settings for this challenge.</CardDescription>
         </CardHeader>
         <CardContent className="pt-4 space-y-4">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
-              Description
-            </p>
-            <p className="text-sm text-foreground leading-relaxed">{challenge.description}</p>
-          </div>
+          {challenge.description && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                Description
+              </p>
+              <p className="text-sm text-foreground leading-relaxed">{challenge.description}</p>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <div>
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
@@ -140,7 +126,13 @@ export default function ChallengeDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tasks.map((task) => (
+                {tasks.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
+                      No tasks assigned yet.
+                    </TableCell>
+                  </TableRow>
+                ) : tasks.map((task) => (
                   <TableRow key={task.id}>
                     <TableCell>
                       <Badge variant="outline">Week {task.week}</Badge>

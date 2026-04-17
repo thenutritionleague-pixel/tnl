@@ -8,7 +8,6 @@ export async function approveSubmission(
   submissionId: string,
   orgId: string,
   pointsOverride: number | null,
-  notes: string,
 ) {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
@@ -27,17 +26,11 @@ export async function approveSubmission(
     finalPoints = (sub as any)?.tasks?.points ?? 0
   }
 
-  // Build notes with admin attribution
-  const auditNotes = notes
-    ? `${notes} [approved by ${profile.name}]`
-    : `[approved by ${profile.name}]`
-
   const { error } = await client
     .from('task_submissions')
     .update({
       status: 'approved',
       points_awarded: finalPoints,
-      notes: auditNotes,
       reviewed_at: new Date().toISOString(),
     })
     .eq('id', submissionId)

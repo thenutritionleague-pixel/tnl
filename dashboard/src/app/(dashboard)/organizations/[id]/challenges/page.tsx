@@ -376,6 +376,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
   const [week, setWeek]         = useState(1)
   const [category, setCategory] = useState(CATEGORIES[0].label)
   const [teams, setTeams]       = useState<string[]>([])
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate]     = useState('')
 
   const icon = CATEGORIES.find(c => c.label === category)?.icon ?? '✅'
 
@@ -388,6 +390,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setWeek(editTarget.weekNumber)
       setCategory(editTarget.category)
       setTeams(editTarget.teams)
+      setStartDate(editTarget.startDate || '')
+      setEndDate(editTarget.endDate || '')
     } else {
       setTitle('')
       setDesc('')
@@ -395,18 +399,20 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setWeek(existingWeeks.length > 0 ? Math.max(...existingWeeks) + 1 : 1)
       setCategory(CATEGORIES[0].label)
       setTeams([])
+      setStartDate('')
+      setEndDate('')
     }
   }, [open, editTarget])
 
   const otherWeeks = editTarget
     ? existingWeeks.filter(w => w !== editTarget.weekNumber)
     : existingWeeks
-  const isDuplicate = otherWeeks.includes(week)
-  const gaps = isDuplicate ? [] : getWeekGaps(otherWeeks, week)
+  const isDuplicate = false
+  const gaps = getWeekGaps(otherWeeks, week)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    onSave({ title, description: desc, points, weekNumber: week, category, icon, teams })
+    onSave({ title, description: desc, points, weekNumber: week, category, icon, teams, startDate, endDate })
   }
 
   return (
@@ -472,6 +478,17 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
             )}
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="t-start">Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input id="t-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="t-end">End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input id="t-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} />
+            </div>
+          </div>
+
           {/* Title */}
           <div className="space-y-1.5">
             <Label htmlFor="t-title">Task title <span className="text-destructive">*</span></Label>
@@ -525,7 +542,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
           <Button
             type="submit"
             form="task-form"
-            disabled={!title.trim() || isDuplicate}
+            disabled={!title.trim()}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             {editTarget ? 'Save Changes' : 'Add Task'}
@@ -608,7 +625,7 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
   const hasDuplicateWeeks = tasks.some(task =>
     tasks.some(t => t.id !== task.id && t.weekNumber === task.weekNumber)
   )
-  const isValid = name.trim() && startDate && endDate && (isEdit || (tasks.every(t => t.title.trim()) && !hasDuplicateWeeks))
+  const isValid = name.trim() && startDate && (isEdit || (tasks.every(t => t.title.trim())))
   const totalPoints = tasks.reduce((sum, t) => sum + t.points, 0)
 
   return (
@@ -650,7 +667,7 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
               <DatePicker value={startDate} onChange={setStartDate} placeholder="Pick start date" />
             </div>
             <div className="space-y-1.5">
-              <Label>End date <span className="text-destructive">*</span></Label>
+              <Label>End date <span className="text-muted-foreground text-xs font-normal">(optional)</span></Label>
               <DatePicker value={endDate} onChange={setEndDate} min={startDate || undefined} placeholder="Pick end date" />
             </div>
             <p className="col-span-2 text-xs text-muted-foreground -mt-1">
@@ -695,8 +712,8 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
                 <div className="space-y-2">
                   {tasks.map((task, idx) => {
                     const otherWeeks = tasks.filter(t => t.id !== task.id).map(t => t.weekNumber)
-                    const isTaskDuplicate = otherWeeks.includes(task.weekNumber)
-                    const gaps = isTaskDuplicate ? [] : getWeekGaps(otherWeeks, task.weekNumber)
+                    const isTaskDuplicate = false
+                    const gaps = getWeekGaps(otherWeeks, task.weekNumber)
                     const catIcon = CATEGORIES.find(c => c.label === task.category)?.icon ?? '✅'
                     return (
                       <div key={task.id} className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
@@ -900,6 +917,7 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
           const { data: newTask } = await addTask(newCh.id, {
             title: t.title, description: t.description, points: t.points,
             weekNumber: t.weekNumber, category: t.category, icon: t.icon,
+            teams: t.teams,
           })
           if (newTask) savedTasks.push({ ...t, id: newTask.id, isActive: true })
         }

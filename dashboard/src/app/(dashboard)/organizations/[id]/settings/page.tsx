@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useEffect } from 'react'
+import { use, useState, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { buttonVariants } from '@/components/ui/button'
@@ -10,9 +10,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
 import { useRouter } from 'next/navigation'
+import { Loader2, Upload, X } from 'lucide-react'
 import {
   getOrgSettings, updateOrgSettings, setOrgActive, deleteOrg,
 } from '@/lib/supabase/queries'
+import { uploadOrgLogo, removeOrgLogo } from './actions'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -70,18 +72,51 @@ export default function OrgSettingsPage({ params }: { params: Promise<{ id: stri
   const { id: orgId } = use(params)
   const router = useRouter()
 
-  const [isLoading, setIsLoading] = useState(true)
-  const [name, setName]         = useState('')
-  const [country, setCountry]   = useState('IN')
-  const [timezone, setTimezone] = useState('Asia/Kolkata')
-  const [isActive, setIsActive] = useState(true)
-  const [saved, setSaved]       = useState(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
+
+  const [isLoading, setIsLoading]         = useState(true)
+  const [name, setName]                   = useState('')
+  const [country, setCountry]             = useState('IN')
+  const [timezone, setTimezone]           = useState('Asia/Kolkata')
+  const [isActive, setIsActive]           = useState(true)
+  const [saved, setSaved]                 = useState(false)
+  const [logoUrl, setLogoUrl]             = useState<string | null>(null)
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoError, setLogoError]         = useState<string | null>(null)
 
   useEffect(() => {
     getOrgSettings(orgId).then(s => {
-      if (s) { setName(s.name); setCountry(s.country); setTimezone(s.timezone); setIsActive(s.isActive) }
+      if (s) {
+        setName(s.name)
+        setCountry(s.country)
+        setTimezone(s.timezone)
+        setIsActive(s.isActive)
+        setLogoUrl(s.logoUrl)
+      }
     }).finally(() => setIsLoading(false))
   }, [orgId])
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLogoError(null)
+    setLogoUploading(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    const result = await uploadOrgLogo(orgId, fd)
+    if ('error' in result && result.error) {
+      setLogoError(result.error)
+    } else if ('publicUrl' in result) {
+      setLogoUrl(result.publicUrl)
+    }
+    setLogoUploading(false)
+    if (logoInputRef.current) logoInputRef.current.value = ''
+  }
+
+  async function handleLogoRemove() {
+    await removeOrgLogo(orgId)
+    setLogoUrl(null)
+  }
 
   const [showDeactivate, setShowDeactivate] = useState(false)
   const [showDelete, setShowDelete]         = useState(false)
@@ -113,6 +148,59 @@ export default function OrgSettingsPage({ params }: { params: Promise<{ id: stri
             <h2 className="font-semibold text-foreground">Organization Details</h2>
           </div>
           <div className="px-6 py-5 space-y-4">
+
+            {/* Logo upload */}
+            <div className="space-y-2">
+              <Label>Organization Logo</Label>
+              <div className="flex items-center gap-4">
+                {/* Preview */}
+                <div className="w-16 h-16 rounded-xl border border-border bg-muted flex items-center justify-center overflow-hidden shrink-0 text-2xl select-none">
+                  {logoUrl
+                    ? <img src={logoUrl} alt="Org logo" className="w-full h-full object-cover" />
+                    : '🏢'}
+                </div>
+                {/* Actions */}
+                <div className="space-y-2 flex-1">
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={logoUploading}
+                      onClick={() => logoInputRef.current?.click()}
+                      className="gap-1.5"
+                    >
+                      {logoUploading
+                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Uploading…</>
+                        : <><Upload className="h-3.5 w-3.5" />{logoUrl ? 'Replace' : 'Upload Logo'}</>}
+                    </Button>
+                    {logoUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleLogoRemove}
+                        className="gap-1.5 text-destructive hover:text-destructive"
+                      >
+                        <X className="h-3.5 w-3.5" />Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">PNG, JPG or WebP · Max 2 MB</p>
+                  {logoError && <p className="text-xs text-destructive">{logoError}</p>}
+                </div>
+              </div>
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+            </div>
+
+            <div className="h-px bg-border" />
+
             <div className="space-y-1.5">
               <Label htmlFor="org-name">Name</Label>
               <Input

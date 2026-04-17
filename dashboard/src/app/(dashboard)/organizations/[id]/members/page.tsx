@@ -3,7 +3,7 @@
 import { use, useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, MoreHorizontal, Search, UserMinus, Eye, ChevronDown } from 'lucide-react'
+import { Plus, MoreHorizontal, Search, UserMinus, Eye, ChevronDown, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Button } from '@/components/ui/button'
@@ -23,8 +23,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
-  getOrgMembers, removeMember, updateTeamMemberRole,
-  type OrgMember,
+  getOrgMembers, removeMember, updateMember, getOrgTeams,
+  type OrgMember, type TeamUI
 } from '@/lib/supabase/queries'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,12 +59,18 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
 
   const [isLoading, setIsLoading] = useState(true)
   const [members, setMembers]     = useState<OrgMember[]>([])
+  const [allTeams, setAllTeams] = useState<TeamUI[]>([])
   const [search, setSearch]       = useState('')
   const [teamFilter, setTeamFilter] = useState('')
 
-  // Edit (role only) modal
+  // Edit Member modal
   const [editTarget, setEditTarget] = useState<OrgMember | null>(null)
+  const [editName, setEditName]     = useState('')
+  const [editEmail, setEditEmail]   = useState('')
+  const [editTeamId, setEditTeamId] = useState<string | null>(null)
   const [editRole, setEditRole]     = useState<DisplayRole>('member')
+  const [editOrgRole, setEditOrgRole] = useState<OrgMember['role']>('member')
+  const [roleError, setRoleError]   = useState<string | null>(null)
   const [saving, setSaving]         = useState(false)
 
   // Remove confirm
@@ -72,7 +78,13 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
   const [removing, setRemoving]         = useState(false)
 
   useEffect(() => {
-    getOrgMembers(orgId).then(setMembers).finally(() => setIsLoading(false))
+    Promise.all([
+      getOrgMembers(orgId),
+      getOrgTeams(orgId)
+    ]).then(([m, t]) => {
+      setMembers(m)
+      setAllTeams(t)
+    }).finally(() => setIsLoading(false))
   }, [orgId])
 
   const teamList = useMemo(
@@ -89,18 +101,61 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
 
   function openEdit(m: OrgMember) {
     setEditTarget(m)
+    setEditName(m.name)
+    setEditEmail(m.email)
+    setEditTeamId(m.teamId)
     setEditRole(displayRole(m))
+    setEditOrgRole(m.role)
+    setRoleError(null)
   }
 
   async function confirmEdit() {
-    if (!editTarget || !editTarget.teamId) return
+    if (!editTarget) return
+
+    // ── ROLE CONFLICT VALIDATION ──────────────────
+    if (editRole === 'captain' || editRole === 'vice_captain') {
+      const team = allTeams.find(t => t.id === editTeamId)
+      if (team) {
+        // Find if someone ELSE has this role in this team
+        const conflict = team.members.find(m => m.id !== editTarget.id && m.role === editRole)
+        if (conflict) {
+          setRoleError(`This team already has a ${roleLabel[editRole]} (${conflict.name}).`)
+          return
+        }
+      }
+    }
+
     setSaving(true)
-    await updateTeamMemberRole(editTarget.teamId, editTarget.id, editRole)
-    setMembers(prev => prev.map(m =>
-      m.id === editTarget.id ? { ...m, teamRole: editRole } : m
-    ))
-    setEditTarget(null)
-    setSaving(false)
+    setRoleError(null)
+    try {
+      await updateMember(orgId, editTarget.id, {
+        name: editName,
+        email: editEmail,
+        teamId: editTeamId,
+        teamRole: editRole,
+        orgRole: editOrgRole,
+        oldEmail: editTarget.email
+      })
+      
+      const updatedTeamName = allTeams.find(t => t.id === editTeamId)?.name ?? 'Unassigned'
+
+      setMembers(prev => prev.map(m =>
+        m.id === editTarget.id ? { 
+          ...m, 
+          name: editName, 
+          email: editEmail, 
+          teamId: editTeamId, 
+          team: updatedTeamName,
+          teamRole: editRole,
+          role: editOrgRole 
+        } : m
+      ))
+      setEditTarget(null)
+    } catch (error) {
+      console.error('Failed to update member:', error)
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function confirmRemove() {
@@ -224,11 +279,9 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
                         >
                           <Eye className="w-3.5 h-3.5 shrink-0" /> View Member
                         </DropdownMenuItem>
-                        {m.teamId && (
-                          <DropdownMenuItem onClick={() => openEdit(m)} className="gap-2 whitespace-nowrap">
-                            <ChevronDown className="w-3.5 h-3.5 shrink-0" /> Change Role
-                          </DropdownMenuItem>
-                        )}
+                        <DropdownMenuItem onClick={() => openEdit(m)} className="gap-2 whitespace-nowrap">
+                          <Pencil className="w-3.5 h-3.5 shrink-0" /> Edit Member
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={() => setRemoveTarget(m)}
@@ -251,42 +304,94 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
       <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null) }}>
         <DialogContent className="sm:max-w-sm" showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Change Role</DialogTitle>
+            <DialogTitle>Edit Member</DialogTitle>
           </DialogHeader>
 
           {editTarget && (
-            <div className="space-y-5 py-1">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 border border-border">
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-                  style={{ backgroundColor: editTarget.avatarColor }}
-                >
-                  {initials(editTarget.name)}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{editTarget.name}</p>
-                  <p className="text-xs text-muted-foreground">{editTarget.team}</p>
-                </div>
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Name</label>
+                <Input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="User Name"
+                />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Team Role</label>
+                <label className="text-sm font-medium text-foreground">Email</label>
+                <Input
+                  value={editEmail}
+                  onChange={e => setEditEmail(e.target.value)}
+                  placeholder="user@example.com"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Member Type (Dashboard Role)</label>
                 <div className="relative">
                   <select
-                    value={editRole}
-                    onChange={e => setEditRole(e.target.value as DisplayRole)}
+                    value={editOrgRole}
+                    onChange={e => setEditOrgRole(e.target.value as any)}
                     className={cn(
                       'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
                       'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
                     )}
                   >
-                    <option value="member">Member</option>
-                    <option value="vice_captain">Vice Captain</option>
-                    <option value="captain">Captain</option>
+                    <option value="member">General Member</option>
+                    <option value="sub_admin">Sub Admin (Organization level)</option>
+                    <option value="org_admin">Full Admin (Organization level)</option>
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Team</label>
+                  <div className="relative">
+                    <select
+                      value={editTeamId ?? ''}
+                      onChange={e => setEditTeamId(e.target.value || null)}
+                      className={cn(
+                        'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+                        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+                      )}
+                    >
+                      <option value="">Unassigned</option>
+                      {allTeams.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Team Role</label>
+                  <div className="relative">
+                    <select
+                      value={editRole}
+                      onChange={e => setEditRole(e.target.value as DisplayRole)}
+                      className={cn(
+                        'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+                        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+                      )}
+                    >
+                      <option value="member">Member</option>
+                      <option value="vice_captain">Vice Captain</option>
+                      <option value="captain">Captain</option>
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+              </div>
+
+              {roleError && (
+                <p className="text-[13px] font-medium text-destructive bg-destructive/5 border border-destructive/20 p-2 rounded-lg">
+                  {roleError}
+                </p>
+              )}
             </div>
           )}
 

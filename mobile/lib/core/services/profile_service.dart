@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfileService {
@@ -8,19 +10,63 @@ class ProfileService {
     return await _client
         .from('profiles')
         .select('''
-          id, auth_id, org_id, name, email, avatar_color,
+          id, auth_id, org_id, name, email, avatar_color, avatar_url,
           total_points, created_at, is_test,
-          organizations!profiles_org_id_fkey(id, name, slug, logo, timezone)
+          organizations(id, name, slug, logo, logo_url, timezone)
         ''')
         .eq('auth_id', authId)
         .maybeSingle();
+  }
+
+  /// Update the display name in the profiles table.
+  static Future<void> updateName(String profileId, String name) async {
+    await _client
+        .from('profiles')
+        .update({'name': name.trim()})
+        .eq('id', profileId);
+  }
+
+  /// Sync the email field in profiles after a confirmed auth email change.
+  static Future<void> updateEmail(String profileId, String email) async {
+    await _client
+        .from('profiles')
+        .update({'email': email.trim()})
+        .eq('id', profileId);
+  }
+
+  /// Upload a new avatar image and save the public URL to the profile.
+  /// Returns the new public URL.
+  static Future<String> uploadAvatar(String profileId, File imageFile) async {
+    final ext = p.extension(imageFile.path).toLowerCase();
+    final path = '$profileId/${DateTime.now().millisecondsSinceEpoch}$ext';
+
+    await _client.storage.from('avatars').upload(
+      path,
+      imageFile,
+      fileOptions: const FileOptions(upsert: true),
+    );
+
+    final publicUrl = _client.storage.from('avatars').getPublicUrl(path);
+
+    await _client
+        .from('profiles')
+        .update({'avatar_url': publicUrl})
+        .eq('id', profileId);
+
+    return publicUrl;
   }
 
   /// Fetch all points transactions for a user, most recent first.
   static Future<List<Map<String, dynamic>>> getPointsHistory(String userId) async {
     final data = await _client
         .from('points_transactions')
-        .select('id, amount, reason, is_manual, created_at')
+        .select('''
+          id, amount, reason, is_manual, created_at,
+          task_submissions(
+            submitted_at,
+            tasks(title)
+          )
+        ''')
         .eq('user_id', userId)
         .order('created_at', ascending: false)
         .limit(50);
@@ -59,13 +105,12 @@ class ProfileService {
     return response as Map<String, dynamic>;
   }
 
-  /// Fetch an invite whitelist entry by email (unused only).
+  /// Fetch an invite whitelist entry by email (any status).
   static Future<Map<String, dynamic>?> getInvite(String email) async {
     return await _client
         .from('invite_whitelist')
-        .select('id, org_id, team_id, role')
+        .select('id, org_id, team_id, role, used_at')
         .eq('email', email.trim())
-        .isFilter('used_at', null)
         .maybeSingle();
   }
 }

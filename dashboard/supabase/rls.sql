@@ -23,6 +23,22 @@ returns uuid language sql stable security definer as $$
 $$;
 
 -- ────────────────────────────────────────────────────────────────
+-- Helper function: check if current user is an org admin
+-- ────────────────────────────────────────────────────────────────
+create or replace function is_admin_of(p_org_id uuid)
+returns boolean language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (
+    select 1 from public.org_members m
+    join public.profiles p on m.user_id = p.id
+    where p.auth_id = auth.uid()
+    and m.org_id = p_org_id
+    and m.role in ('org_admin', 'sub_admin')
+  );
+end;
+$$;
+
+-- ────────────────────────────────────────────────────────────────
 -- ORGANIZATIONS
 -- Authenticated users can read their own org only
 -- ────────────────────────────────────────────────────────────────
@@ -48,6 +64,11 @@ create policy "profiles: update own"
   on profiles for update
   to authenticated
   using (auth_id = auth.uid());
+
+create policy "profiles: admin management"
+  on profiles for update
+  to authenticated
+  using (is_admin_of(org_id));
 
 -- ────────────────────────────────────────────────────────────────
 -- ORG MEMBERS
@@ -78,6 +99,11 @@ create policy "team_members: read same org"
   on team_members for select
   to authenticated
   using (org_id = auth_user_org_id());
+
+create policy "team_members: admin management"
+  on team_members for all
+  to authenticated
+  using (is_admin_of(org_id));
 
 -- ────────────────────────────────────────────────────────────────
 -- CHALLENGES
@@ -292,3 +318,38 @@ create policy "invite_whitelist: read own invite"
 alter table admin_users enable row level security;
 -- No authenticated policies — dashboard queries go through service role.
 -- If you need anon to check admin status, add a specific policy here.
+
+-- ────────────────────────────────────────────────────────────────
+-- STORAGE: task-proofs bucket
+-- Path structure: proofs/{profile_id}/{task_id}_{timestamp}.ext
+-- Members upload to their own folder; all org members can read
+-- ────────────────────────────────────────────────────────────────
+
+-- Allow authenticated members to upload proofs into their own folder.
+-- Folder segment [2] of "proofs/{profile_id}/..." must match their profile id.
+create policy "task-proofs: member upload"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'task-proofs'
+    and (string_to_array(name, '/'))[2] = (
+      select id::text from public.profiles where auth_id = auth.uid() limit 1
+    )
+  );
+
+-- Allow authenticated users to read any proof (needed for admin review).
+create policy "task-proofs: authenticated read"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'task-proofs');
+
+-- Allow members to delete their own proofs (optional, for resubmit).
+create policy "task-proofs: member delete own"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'task-proofs'
+    and (string_to_array(name, '/'))[2] = (
+      select id::text from public.profiles where auth_id = auth.uid() limit 1
+    )
+  );

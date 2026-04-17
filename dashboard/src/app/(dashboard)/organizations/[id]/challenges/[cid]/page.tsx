@@ -50,14 +50,12 @@ const submissionStatusStyle: Record<string, string> = {
   pending:  'bg-amber-100 text-amber-700',
   approved: 'bg-emerald-100 text-emerald-700',
   rejected: 'bg-red-100 text-red-700',
-  expired:  'bg-muted text-muted-foreground',
 }
 
 const submissionStatusIcon: Record<string, React.ReactNode> = {
   pending:  <Clock className="w-3 h-3" />,
   approved: <CheckCircle2 className="w-3 h-3" />,
   rejected: <XCircle className="w-3 h-3" />,
-  expired:  <XCircle className="w-3 h-3" />,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -164,6 +162,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
   const [week, setWeek]         = useState(1)
   const [category, setCategory] = useState(CATEGORIES[0].label)
   const [teams, setTeams]       = useState<string[]>([])
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate]     = useState('')
   const [saving, setSaving]     = useState(false)
 
   const icon = CATEGORIES.find(c => c.label === category)?.icon ?? '✅'
@@ -174,10 +174,12 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setTitle(editTarget.title); setDesc(editTarget.description)
       setPoints(editTarget.points); setWeek(editTarget.weekNumber)
       setCategory(editTarget.category); setTeams(editTarget.teams)
+      setStartDate(editTarget.startDate || ''); setEndDate(editTarget.endDate || '')
     } else {
       setTitle(''); setDesc(''); setPoints(10)
       setWeek(existingWeeks.length > 0 ? Math.max(...existingWeeks) + 1 : 1)
       setCategory(CATEGORIES[0].label); setTeams([])
+      setStartDate(''); setEndDate('')
     }
   }, [open, editTarget])
 
@@ -187,7 +189,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    await onSave({ title, description: desc, points, weekNumber: week, category, icon, teams })
+    await onSave({ title, description: desc, points, weekNumber: week, category, icon, teams, startDate, endDate })
     setSaving(false)
   }
 
@@ -222,6 +224,17 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
                 </p>
               </div>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="t-start">Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input id="t-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="t-end">End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input id="t-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} />
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -534,7 +547,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
         onClose={() => setTaskModal({ open: false, editTarget: null })}
         editTarget={taskModal.editTarget}
         existingWeeks={existingWeeks}
-        teamOptions={teamList}
+        teamOptions={challenge.teams.length ? challenge.teams : teamList}
         onSave={handleSaveTask}
       />
 

@@ -1,11 +1,12 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { UserCog, Shield, ShieldCheck, MoreHorizontal } from 'lucide-react'
+import { UserCog, Shield, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getPlatformAdmins } from '@/lib/supabase/admin-queries'
 import { getAdminProfile } from '@/lib/auth'
 import { isPlatformRole } from '@/types/database.types'
 import { InviteForm } from './_components/invite-form'
+import { PlatformAdminRowActions } from './_components/platform-admin-row-actions'
 
 const roleLabel: Record<string, string> = {
   super_admin:     'Super Admin',
@@ -124,11 +125,7 @@ export default async function AdminsPage() {
                 <td className="px-5 py-3.5 text-muted-foreground text-xs">{admin.createdAt}</td>
                 {isSuperAdmin && (
                   <td className="px-5 py-3.5 text-right">
-                    {admin.role === 'sub_super_admin' && (
-                      <button className="text-muted-foreground hover:text-foreground transition-colors">
-                        <MoreHorizontal className="size-4" />
-                      </button>
-                    )}
+                    <PlatformAdminRowActions admin={admin} isSuperAdmin={isSuperAdmin} />
                   </td>
                 )}
               </tr>

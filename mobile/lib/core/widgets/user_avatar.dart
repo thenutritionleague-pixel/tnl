@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 
-/// Colored circle avatar showing user initials.
+/// Avatar widget — shows a real photo if [avatarUrl] is set,
+/// otherwise falls back to a colored circle with initials.
 class UserAvatar extends StatelessWidget {
   final String name;
   final String? avatarColor;
+  final String? avatarUrl;
   final double radius;
 
   const UserAvatar({
     super.key,
     required this.name,
     this.avatarColor,
+    this.avatarUrl,
     this.radius = 20,
   });
 
@@ -34,6 +37,15 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (avatarUrl != null && avatarUrl!.isNotEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: bgColor.withValues(alpha: 0.15),
+        backgroundImage: NetworkImage(avatarUrl!),
+        onBackgroundImageError: (_, __) {},
+        child: null,
+      );
+    }
     return CircleAvatar(
       radius: radius,
       backgroundColor: bgColor.withValues(alpha: 0.15),

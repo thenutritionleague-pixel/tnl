@@ -14,7 +14,7 @@ const routeLabels: Record<string, string> = {
   admins:        'Admins',
   users:         'Users',
   invite:        'Invite',
-  points:        'Points',
+  points:        'Leaderboard',
   events:        'Events',
   feed:          'Feed',
   policies:      'Policies',
@@ -23,16 +23,9 @@ const routeLabels: Record<string, string> = {
   edit:          'Edit',
 }
 
-// Mock org name map — replace with real lookup when Supabase is connected
-const orgNames: Record<string, string> = {
-  '1': 'Yi Mumbai',
-  '2': 'Yi Delhi',
-  '3': 'Yi Bangalore',
-}
-
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function Breadcrumbs() {
+export function Breadcrumbs({ orgMap = {} }: { orgMap?: Record<string, string> }) {
   const pathname = usePathname()
   const allSegments = pathname.split('/').filter(Boolean)
   const segments = allSegments.filter(s => !uuidPattern.test(s))
@@ -48,7 +41,7 @@ export function Breadcrumbs() {
 
   function getLabel(segment: string): string {
     if (orgId && segment === orgId) {
-      return orgNames[segment] ?? `Org ${segment}`
+      return orgMap[segment] ?? `Org ${segment}`
     }
     return routeLabels[segment] || segment
   }

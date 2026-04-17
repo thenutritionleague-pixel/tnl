@@ -14,7 +14,7 @@ export function isPlatformRole(role: AdminRole): role is PlatformRole {
 export function canManagePlatformAdmins(role: AdminRole): boolean {
   return role === 'super_admin'
 }
-export type SubmissionStatus = 'pending' | 'approved' | 'rejected' | 'expired'
+export type SubmissionStatus = 'pending' | 'approved' | 'rejected'
 export type EventType = 'quiz' | 'offline'
 export type MediaType = 'image' | 'video'
 export type FeedItemType = 'task_approved' | 'rank_change' | 'announcement' | 'event'

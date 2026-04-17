@@ -128,18 +128,29 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
 
 export async function getRecentActivity(): Promise<ActivityItem[]> {
   const client = await createAdminClient()
-  const { data } = await client
+  const { data: subs } = await client
     .from('task_submissions')
-    .select('id, status, submitted_at, profiles(name), tasks(title), challenges(organizations(name))')
+    .select('id, status, user_id, submitted_at, tasks!task_id(title), challenges(organizations(name))')
     .order('submitted_at', { ascending: false })
     .limit(8)
 
-  if (!data) return []
+  if (!subs) return []
+
+  const userIds = Array.from(new Set((subs as any[]).map(s => s.user_id)))
+  const { data: profiles } = await client
+    .from('profiles')
+    .select('id, name')
+    .in('id', userIds)
+
+  const profileMap: Record<string, string> = {}
+  for (const p of (profiles ?? []) as any[]) {
+    profileMap[p.id] = p.name
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (data as any[]).map(s => ({
+  return (subs as any[]).map(s => ({
     id: s.id,
-    memberName: s.profiles?.name ?? 'Unknown',
+    memberName: profileMap[s.user_id] ?? 'Unknown',
     orgName: s.challenges?.organizations?.name ?? '—',
     taskTitle: s.tasks?.title ?? '—',
     submittedAt: timeAgo(s.submitted_at),
@@ -204,14 +215,30 @@ export interface TaskBreakdown {
   icon: string
   title: string
   daysCompleted: number
+  missedDays: number
   pointsPerDay: number
   subtotal: number
+}
+
+export interface SubmissionEntry {
+  taskTitle: string
+  taskIcon: string
+  date: string
+  status: 'approved' | 'rejected' | 'missed'
+  points: number
 }
 
 export interface WeekPoints {
   week: number
   points: number
   tasks: TaskBreakdown[]
+  entries: SubmissionEntry[]
+}
+
+export interface ManualAdjustment {
+  amount: number
+  reason: string
+  createdAt: string
 }
 
 export interface MemberStatAdmin {
@@ -224,6 +251,8 @@ export interface MemberStatAdmin {
   avatarColor: string
   weekPoints: WeekPoints[]
   total: number
+  manualTotal: number
+  manualAdjustments: ManualAdjustment[]
 }
 
 export interface TeamStatAdmin {
@@ -238,11 +267,28 @@ export interface TeamStatAdmin {
 export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[] }> {
   const client = await createAdminClient()
 
-  const [challengeRes, teamMembersRes, orgMembersRes, subsRes] = await Promise.all([
+  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes] = await Promise.all([
     client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
     client.from('task_submissions').select('user_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)').eq('org_id', orgId).eq('status', 'approved'),
+    // Fetch 0-pt missed-task transactions written by the daily cron
+    client.from('points_transactions')
+      .select('user_id, org_id, reason, created_at')
+      .eq('org_id', orgId)
+      .eq('amount', 0)
+      .like('reason', 'Task missed:%'),
+    // Fetch manual point adjustments
+    client.from('points_transactions')
+      .select('user_id, amount, reason, created_at')
+      .eq('org_id', orgId)
+      .eq('is_manual', true)
+      .order('created_at', { ascending: false }),
+    // Fetch rejected submissions
+    client.from('task_submissions')
+      .select('user_id, submitted_date, tasks(title, icon, start_week)')
+      .eq('org_id', orgId)
+      .eq('status', 'rejected'),
   ])
 
   const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
@@ -266,35 +312,98 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
       teamId: t?.id ?? '', teamName: t?.name ?? 'Unassigned',
       teamColor: t?.color ?? '#94a3b8', teamEmoji: t?.emoji ?? '—',
       weekPoints: [], total: 0,
+      manualTotal: 0, manualAdjustments: [],
     }
   }
 
-  // Build week breakdown from submissions
-  type SubRaw = { user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }
-  type WeekData = { points: number; tasks: Record<string, { daysCompleted: number; pointsPerDay: number; icon: string }> }
+  // Build week breakdown data structure
+  type TaskEntry = { daysCompleted: number; missedDays: number; pointsPerDay: number; icon: string }
+  type WeekData  = { points: number; tasks: Record<string, TaskEntry>; entries: SubmissionEntry[] }
   const weekDataMap: Record<string, Record<number, WeekData>> = {}
+
+  function ensureWeek(userId: string, week: number) {
+    if (!weekDataMap[userId]) weekDataMap[userId] = {}
+    if (!weekDataMap[userId][week]) weekDataMap[userId][week] = { points: 0, tasks: {}, entries: [] }
+  }
+
+  // ── Approved submissions → completed days ───────────────────────────────────
+  type SubRaw = { user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }
+
+  function calcWeek(dateStr: string | null, pts?: number): number {
+    if (startDate && dateStr) {
+      const diff = Math.floor((new Date(dateStr + 'T12:00:00').getTime() - startDate.getTime()) / 86400000)
+      return Math.max(1, Math.floor(diff / 7) + 1)
+    }
+    return pts ?? 1
+  }
 
   for (const sub of (subsRes.data ?? []) as unknown as SubRaw[]) {
     const { user_id, submitted_date, points_awarded, tasks } = sub
     if (!tasks || !memberMap[user_id]) continue
-
-    let week = tasks.start_week ?? 1
-    if (startDate && submitted_date) {
-      const diffDays = Math.floor((new Date(submitted_date + 'T12:00:00').getTime() - startDate.getTime()) / 86400000)
-      week = Math.max(1, Math.floor(diffDays / 7) + 1)
-    }
-
+    const week = calcWeek(submitted_date, tasks.start_week ?? 1)
     const pts = points_awarded ?? tasks.points
-    if (!weekDataMap[user_id]) weekDataMap[user_id] = {}
-    if (!weekDataMap[user_id][week]) weekDataMap[user_id][week] = { points: 0, tasks: {} }
+    ensureWeek(user_id, week)
     weekDataMap[user_id][week].points += pts
     memberMap[user_id].total += pts
-
     const key = tasks.title
-    if (!weekDataMap[user_id][week].tasks[key]) weekDataMap[user_id][week].tasks[key] = { daysCompleted: 0, pointsPerDay: tasks.points, icon: tasks.icon }
+    if (!weekDataMap[user_id][week].tasks[key])
+      weekDataMap[user_id][week].tasks[key] = { daysCompleted: 0, missedDays: 0, pointsPerDay: tasks.points, icon: tasks.icon }
     weekDataMap[user_id][week].tasks[key].daysCompleted++
+    weekDataMap[user_id][week].entries.push({
+      taskTitle: tasks.title, taskIcon: tasks.icon,
+      date: submitted_date ? fmtDate(submitted_date) : '—',
+      status: 'approved', points: pts,
+    })
   }
 
+  // ── Rejected submissions → entries ──────────────────────────────────────────
+  type RejRaw = { user_id: string; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }
+  for (const sub of (rejectedRes.data ?? []) as unknown as RejRaw[]) {
+    const { user_id, submitted_date, tasks } = sub
+    if (!tasks || !memberMap[user_id]) continue
+    const week = calcWeek(submitted_date, tasks.start_week ?? 1)
+    ensureWeek(user_id, week)
+    weekDataMap[user_id][week].entries.push({
+      taskTitle: tasks.title, taskIcon: tasks.icon,
+      date: submitted_date ? fmtDate(submitted_date) : '—',
+      status: 'rejected', points: 0,
+    })
+  }
+
+  // ── Missed transactions → missed days + entries ─────────────────────────────
+  type MissedRaw = { user_id: string; org_id: string; reason: string; created_at: string }
+  const missedTaskPattern = /^Task missed: (.+) \((\d{4}-\d{2}-\d{2})\)$/
+
+  for (const row of (missedRes.data ?? []) as unknown as MissedRaw[]) {
+    const { user_id, reason, created_at } = row
+    if (!memberMap[user_id]) continue
+    const match = reason.match(missedTaskPattern)
+    if (!match) continue
+    const taskTitle = match[1]
+    const dateStr = match[2] ?? null
+    const week = calcWeek(dateStr ?? created_at.slice(0, 10))
+    ensureWeek(user_id, week)
+    if (!weekDataMap[user_id][week].tasks[taskTitle])
+      weekDataMap[user_id][week].tasks[taskTitle] = { daysCompleted: 0, missedDays: 0, pointsPerDay: 0, icon: '❌' }
+    weekDataMap[user_id][week].tasks[taskTitle].missedDays++
+    weekDataMap[user_id][week].entries.push({
+      taskTitle, taskIcon: '❌',
+      date: dateStr ? fmtDate(dateStr) : '—',
+      status: 'missed', points: 0,
+    })
+  }
+
+  // ── Manual adjustments ──────────────────────────────────────────────────────
+  type ManualRaw = { user_id: string; amount: number; reason: string; created_at: string }
+  for (const row of (manualRes.data ?? []) as unknown as ManualRaw[]) {
+    const { user_id, amount, reason, created_at } = row
+    if (!memberMap[user_id]) continue
+    memberMap[user_id].manualAdjustments.push({ amount, reason, createdAt: fmtDate(created_at) })
+    memberMap[user_id].manualTotal += amount
+    memberMap[user_id].total += amount
+  }
+
+  // ── Assemble weekPoints on each member ──────────────────────────────────────
   for (const userId in weekDataMap) {
     if (!memberMap[userId]) continue
     memberMap[userId].weekPoints = Object.entries(weekDataMap[userId])
@@ -302,9 +411,13 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
       .map(([week, data]) => ({
         week: Number(week),
         points: data.points,
+        entries: data.entries.sort((a, b) => a.date.localeCompare(b.date)),
         tasks: Object.entries(data.tasks).map(([title, t]) => ({
-          title, icon: t.icon, daysCompleted: t.daysCompleted,
-          pointsPerDay: t.pointsPerDay, subtotal: t.daysCompleted * t.pointsPerDay,
+          title, icon: t.icon,
+          daysCompleted: t.daysCompleted,
+          missedDays: t.missedDays,
+          pointsPerDay: t.pointsPerDay,
+          subtotal: t.daysCompleted * t.pointsPerDay,
         })),
       }))
   }
@@ -323,7 +436,10 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   }
   const teams = Object.values(teamStatMap).sort((a, b) => b.total - a.total)
 
-  return { members, teams }
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const currentWeek = startDate ? calcWeek(todayStr) : 1
+
+  return { members, teams, currentWeek }
 }
 
 // ── Org Events ─────────────────────────────────────────────────────────────────
@@ -380,7 +496,7 @@ export interface InviteEntry {
   email: string
   teamId: string | null
   teamName: string
-  role: 'team_captain' | 'vice_captain' | 'member'
+  role: 'captain' | 'vice_captain' | 'member'
   addedAt: string
   status: 'pending' | 'accepted'
 }
@@ -419,40 +535,50 @@ export interface OrgApproval {
   taskPoints: number
   submittedAt: string
   submittedDate: string
-  status: 'pending' | 'approved' | 'rejected' | 'expired'
+  status: 'pending' | 'approved' | 'rejected'
   rejectionReason: string | null
-  notes: string | null
   pointsAwarded: number | null
-  proofType: 'image' | 'text'
   proofUrl: string | null
 }
 
 export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
   const client = await createAdminClient()
 
-  const [subsRes, teamMemsRes] = await Promise.all([
+  const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
     client
       .from('task_submissions')
-      .select('id, status, submitted_at, submitted_date, proof_type, proof_url, notes, rejection_reason, points_awarded, user_id, profiles(name), tasks(title, description, points)')
+      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, user_id, tasks!task_id(title, description, points)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
       .limit(200),
     client
       .from('team_members')
-      .select('user_id, teams(name)')
+      .select('user_id, teams!team_id(name)')
+      .eq('org_id', orgId),
+    client
+      .from('profiles')
+      .select('id, name')
       .eq('org_id', orgId),
   ])
 
-  const teamMap: Record<string, string> = {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (subsRes.error)   console.error('getOrgApprovals subs error:', subsRes.error)
+  if (teamMemsRes.error) console.error('getOrgApprovals teams error:', teamMemsRes.error)
+  if (profilesRes.error) console.error('getOrgApprovals profiles error:', profilesRes.error)
+
+  const teamMap: Record<string, string>    = {}
+  const profileMap: Record<string, string> = {}
+
   for (const tm of (teamMemsRes.data ?? []) as any[]) {
     teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
+  }
+  for (const p of (profilesRes.data ?? []) as any[]) {
+    profileMap[p.id] = p.name
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return ((subsRes.data ?? []) as any[]).map(s => ({
     id: s.id,
-    member: s.profiles?.name ?? 'Unknown',
+    member: profileMap[s.user_id] ?? 'Unknown',
     userId: s.user_id,
     teamName: teamMap[s.user_id] ?? 'Unassigned',
     taskTitle: s.tasks?.title ?? '—',
@@ -462,9 +588,7 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
     submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
     status: s.status as OrgApproval['status'],
     rejectionReason: s.rejection_reason ?? null,
-    notes: s.notes ?? null,
     pointsAwarded: s.points_awarded ?? null,
-    proofType: (s.proof_type ?? 'image') as OrgApproval['proofType'],
     proofUrl: s.proof_url ?? null,
   }))
 }
@@ -583,4 +707,205 @@ export async function getOrgsAdmin(): Promise<OrgSummaryAdmin[]> {
     })
   }
   return results
+}
+
+// ── Manual Points Adjustment ───────────────────────────────────────────────────
+
+export interface OrgMemberForAdjust {
+  id: string
+  name: string
+  teamName: string
+}
+
+export async function getOrgMembersForAdjust(orgId: string): Promise<OrgMemberForAdjust[]> {
+  const client = await createAdminClient()
+  const [membersRes, teamMemsRes] = await Promise.all([
+    client.from('org_members').select('user_id, profiles(id, name)').eq('org_id', orgId),
+    client.from('team_members').select('user_id, teams(name)').eq('org_id', orgId),
+  ])
+
+  const teamMap: Record<string, string> = {}
+  for (const tm of (teamMemsRes.data ?? []) as any[]) {
+    teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
+  }
+
+  return ((membersRes.data ?? []) as any[])
+    .filter((m: any) => m.profiles)
+    .map((m: any) => ({
+      id: m.profiles.id,
+      name: m.profiles.name,
+      teamName: teamMap[m.user_id] ?? 'Unassigned',
+    }))
+    .sort((a: OrgMemberForAdjust, b: OrgMemberForAdjust) => a.name.localeCompare(b.name))
+}
+
+// ── Breadcrumbs ────────────────────────────────────────────────────────────────
+
+export async function getAllOrgShortNames(): Promise<Record<string, string>> {
+  const client = await createAdminClient()
+  const { data } = await client.from('organizations').select('id, name')
+  if (!data) return {}
+
+  const map: Record<string, string> = {}
+  for (const org of data) {
+    map[org.id] = org.name
+  }
+  return map
+}
+
+// ── Challenge Detail ──────────────────────────────────────────────────────────
+
+export interface ChallengeDetailAdmin {
+  id: string
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  status: 'active' | 'inactive' | 'completed'
+}
+
+export interface ChallengeTaskAdmin {
+  id: string
+  week: number
+  title: string
+  points: number
+  status: 'active' | 'inactive'
+}
+
+export async function getChallengeDetailAdmin(challengeId: string): Promise<{ challenge: ChallengeDetailAdmin; tasks: ChallengeTaskAdmin[] } | null> {
+  const client = await createAdminClient()
+
+  const { data: challenge } = await client.from('challenges').select('*').eq('id', challengeId).single()
+  if (!challenge) return null
+
+  const { data: tasks } = await client
+    .from('tasks')
+    .select('id, week_number, title, points, status')
+    .eq('challenge_id', challengeId)
+    .order('week_number')
+    .order('created_at')
+
+  const parsedTasks: ChallengeTaskAdmin[] = (tasks ?? []).map((t: any) => ({
+    id: t.id,
+    week: t.week_number ?? 1,
+    title: t.title,
+    points: t.points,
+    status: t.status as 'active' | 'inactive',
+  }))
+
+  return {
+    challenge: {
+      id: challenge.id,
+      title: challenge.name,
+      description: challenge.description ?? '',
+      startDate: fmtDate(challenge.start_date),
+      endDate: fmtDate(challenge.end_date),
+      status: challenge.status as ChallengeDetailAdmin['status'],
+    },
+    tasks: parsedTasks,
+  }
+}
+
+// ── Member Detail ──────────────────────────────────────────────────────────────
+
+export interface MemberDetailAdmin {
+  id: string
+  name: string
+  email: string
+  team: string
+  role: 'team_captain' | 'vice_captain' | 'member'
+  totalPoints: number
+  rank: number
+  joinedAt: string
+  avatarColor: string
+  tasksCompleted: number
+  tasksRejected: number
+  tasksPending: number
+  submissions: Array<{
+    id: string
+    taskId: string
+    challengeId: string
+    taskTitle: string
+    challenge: string
+    week: number
+    submittedDate: string
+    status: 'pending' | 'approved' | 'rejected'
+    pointsAwarded: number
+    proofUrl: string | null
+    rejectionReason: string | null
+  }>
+}
+
+export async function getMemberDetail(orgId: string, memberId: string): Promise<MemberDetailAdmin | null> {
+  const client = await createAdminClient()
+
+  // Find user details via profile mapping
+  const { data: profile } = await client.from('profiles').select('*').eq('id', memberId).single()
+  if (!profile) return null
+
+  const { data: teamMember } = await client
+    .from('team_members')
+    .select('role, teams(name)')
+    .eq('user_id', memberId)
+    .maybeSingle()
+
+  // To find rank, sort everyone in the org. In a real highly-scaled app, we'd cache this.
+  const { data: allPoints } = await client
+    .from('task_submissions')
+    .select('user_id, points_awarded')
+    .eq('org_id', orgId)
+    .eq('status', 'approved')
+
+  const userPts: Record<string, number> = {}
+  for (const p of allPoints ?? []) {
+    userPts[p.user_id] = (userPts[p.user_id] ?? 0) + (p.points_awarded ?? 0)
+  }
+  const orderedUserIds = Object.keys(userPts).sort((a, b) => userPts[b] - userPts[a])
+  let rank = orderedUserIds.indexOf(memberId) + 1
+  if (rank === 0) rank = orderedUserIds.length + 1 // if no points, they are at the bottom
+
+  const { data: submissions } = await client
+    .from('task_submissions')
+    .select('id, task_id, challenge_id, status, submitted_date, points_awarded, proof_url, rejection_reason, tasks(title, start_week), challenges(name)')
+    .eq('user_id', memberId)
+    .order('submitted_date', { ascending: false })
+
+  let pending = 0, completed = 0, rejected = 0
+  const mappedSubmissions = (submissions ?? []).map((s: any) => {
+    if (s.status === 'pending') pending++
+    if (s.status === 'approved') completed++
+    if (s.status === 'rejected') rejected++
+
+    return {
+      id: s.id,
+      taskId: s.task_id ?? '',
+      challengeId: s.challenge_id ?? '',
+      taskTitle: s.tasks?.title ?? '—',
+      challenge: s.challenges?.name ?? '—',
+      week: s.tasks?.start_week ?? 1,
+      submittedDate: s.submitted_date ?? '—',
+      status: s.status,
+      pointsAwarded: s.points_awarded ?? 0,
+      proofUrl: s.proof_url ?? null,
+      rejectionReason: s.rejection_reason ?? null,
+    }
+  })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const teamInfo = teamMember?.teams as any
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: profile.email ?? '—',
+    team: teamInfo?.name ?? 'Unassigned',
+    role: teamMember?.role as MemberDetailAdmin['role'] ?? 'member',
+    totalPoints: userPts[memberId] ?? 0,
+    rank,
+    joinedAt: fmtDate(profile.created_at),
+    avatarColor: profile.avatar_color ?? '#94a3b8',
+    tasksCompleted: completed,
+    tasksRejected: rejected,
+    tasksPending: pending,
+    submissions: mappedSubmissions,
+  }
 }

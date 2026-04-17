@@ -68,6 +68,21 @@ class AuthService {
     );
   }
 
+  /// Initiates an email address change.
+  /// Supabase sends a 6-digit OTP to [newEmail] for confirmation.
+  static Future<void> sendEmailChangeOtp(String newEmail) async {
+    await _client.auth.updateUser(UserAttributes(email: newEmail.trim()));
+  }
+
+  /// Confirms an email change with the OTP sent to [newEmail].
+  static Future<void> verifyEmailChange(String newEmail, String token) async {
+    await _client.auth.verifyOTP(
+      email: newEmail.trim(),
+      token: token.trim(),
+      type: OtpType.emailChange,
+    );
+  }
+
   /// Returns the current Supabase session, or null if not logged in.
   static Session? get currentSession => _client.auth.currentSession;
 

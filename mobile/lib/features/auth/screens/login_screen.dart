@@ -92,19 +92,35 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      // 1. MUST BE WHITELISTED: The invitation is the master switch
+      final invite = await ProfileService.getInvite(_emailForOtp);
+      
+      if (invite == null) {
+        // Not in whitelist = NO ACCESS (even if they have an old profile)
+        if (mounted) {
+          setState(() {
+            _error = 'Access Denied. Your email is not whitelisted for this league.';
+            _loading = false;
+          });
+        }
+        return;
+      }
+
+      // 2. CHECK PROFILE: If whitelisted, check if they've finished setup
       final profile = await ProfileService.getProfile(authId);
-      if (profile == null) {
-        // New user from invite — go to signup with context
-        final invite = await ProfileService.getInvite(_emailForOtp);
+      
+      if (profile == null || profile['org_id'] == null) {
+        // Whitelisted BUT no profile yet -> Go to signup
         if (mounted) {
           context.go('/signup', extra: {
             'email': _emailForOtp,
-            'orgId': invite?['org_id'] ?? '',
-            'inviteId': invite?['id'],
-            'teamId': invite?['team_id'],
+            'orgId': invite['org_id'],
+            'inviteId': invite['id'],
+            'teamId': invite['team_id'],
           });
         }
       } else {
+        // Whitelisted AND has profile -> Welcome back!
         if (mounted) context.go('/home');
       }
     } catch (e) {

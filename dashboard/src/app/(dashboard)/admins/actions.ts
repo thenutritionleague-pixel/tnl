@@ -35,11 +35,30 @@ export async function removeSubSuperAdmin(adminId: string) {
     return { error: 'Only super admins can remove platform admins.' }
   }
   const client = await createAdminClient()
-  const { error } = await client
+  
+  // 1. Get the auth id before we delete
+  const { data: admin } = await client
     .from('admin_users')
-    .delete()
+    .select('user_id')
     .eq('id', adminId)
-    .eq('role', 'sub_super_admin') // safety: never delete super_admins
-  if (error) return { error: error.message }
+    .eq('role', 'sub_super_admin')
+    .maybeSingle()
+
+  if (!admin) return { error: 'Admin not found.' }
+
+  if (admin.user_id) {
+    // 2. Delete from Supabase Auth (This triggers the Nuclear Cascade on admin_users/profiles)
+    const { error: authErr } = await client.auth.admin.deleteUser(admin.user_id)
+    if (authErr) return { error: authErr.message }
+  } else {
+    // 3. Fallback: Delete from admin_users directly
+    const { error } = await client
+      .from('admin_users')
+      .delete()
+      .eq('id', adminId)
+      .eq('role', 'sub_super_admin')
+    if (error) return { error: error.message }
+  }
+
   return { success: true }
 }

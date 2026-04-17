@@ -110,56 +110,60 @@ function DatePicker({ value, onChange, placeholder = 'Pick a date' }: { value: s
 
 // ── Proof image viewer ────────────────────────────────────────────────────────
 
-function ProofViewer({ proofType, proofUrl }: { proofType: 'image' | 'text'; proofUrl: string | null }) {
+function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
-  const [loadingUrl, setLoadingUrl] = useState(false)
+  // 'loading' | 'loaded' | 'error' | 'none'
+  const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'none'>('none')
 
   useEffect(() => {
-    if (proofType !== 'image' || !proofUrl) return
-    setLoadingUrl(true)
+    if (!proofUrl) { setState('none'); return }
+    setState('loading')
+    setSignedUrl(null)
     getProofSignedUrl(proofUrl).then(url => {
-      setSignedUrl(url)
-      setLoadingUrl(false)
+      if (url) { setSignedUrl(url); setState('loaded') }
+      else setState('error')
     })
-  }, [proofType, proofUrl])
-
-  if (proofType === 'text') {
-    return (
-      <div className="rounded-lg bg-muted px-4 py-3 text-sm text-foreground whitespace-pre-wrap">
-        {proofUrl || 'No text proof provided.'}
-      </div>
-    )
-  }
-
-  if (!proofUrl) {
-    return (
-      <div className="rounded-lg bg-muted h-52 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-        <ImageIcon className="w-8 h-8" />
-        <span className="text-xs">No proof image uploaded.</span>
-      </div>
-    )
-  }
-
-  if (loadingUrl) {
-    return (
-      <div className="rounded-lg bg-muted h-52 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (!signedUrl) {
-    return (
-      <div className="rounded-lg bg-muted h-52 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-        <ImageIcon className="w-8 h-8" />
-        <span className="text-xs">Could not load proof image.</span>
-      </div>
-    )
-  }
+  }, [proofUrl])
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={signedUrl} alt="Submission proof" className="w-full rounded-lg object-contain max-h-72 bg-muted" />
+    // Fixed-height container — height never changes, no dialog resize
+    <div className="relative rounded-lg bg-muted h-56 overflow-hidden flex items-center justify-center">
+      {/* Shimmer while fetching the signed URL */}
+      {state === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/10 to-muted animate-pulse" />
+          <Loader2 className="relative w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {/* No proof uploaded */}
+      {state === 'none' && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+          <ImageIcon className="w-8 h-8" />
+          <span className="text-xs">No proof image uploaded.</span>
+        </div>
+      )}
+
+      {/* Could not load */}
+      {state === 'error' && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+          <ImageIcon className="w-8 h-8" />
+          <span className="text-xs">Could not load proof image.</span>
+        </div>
+      )}
+
+      {/* Image — crossfades in once the URL resolves */}
+      {signedUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={signedUrl}
+          alt="Submission proof"
+          className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
+          style={{ opacity: state === 'loaded' ? 1 : 0 }}
+          onLoad={() => setState('loaded')}
+        />
+      )}
+    </div>
   )
 }
 
@@ -205,20 +209,20 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
   const reviewed = applyFilters(allReviewed)
   const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter)
 
-  function openReview(a: OrgApproval) { setReviewTarget(a); setAdminNotes(a.notes ?? ''); setPointsOverride('') }
+  function openReview(a: OrgApproval) { setReviewTarget(a); setAdminNotes(''); setPointsOverride('') }
   function closeReview() { setReviewTarget(null) }
 
   async function handleApprove() {
     if (!reviewTarget) return
     setSubmitting(true)
     const pts = pointsOverride ? parseInt(pointsOverride) : null
-    const result = await approveSubmission(reviewTarget.id, orgId, pts, adminNotes)
+    const result = await approveSubmission(reviewTarget.id, orgId, pts)
     if (result.error) {
       toast.error(result.error)
     } else {
       toast.success('Submission approved.')
       setApprovals(prev => prev.map(a => a.id === reviewTarget.id
-        ? { ...a, status: 'approved' as const, notes: adminNotes || null, pointsAwarded: pts ?? a.taskPoints }
+        ? { ...a, status: 'approved' as const, pointsAwarded: pts ?? a.taskPoints }
         : a
       ))
       closeReview()
@@ -379,7 +383,7 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
 
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Submitted Proof</p>
-                  <ProofViewer proofType={reviewTarget.proofType} proofUrl={reviewTarget.proofUrl} />
+                  <ProofViewer proofUrl={reviewTarget.proofUrl} />
                 </div>
 
                 <div className="space-y-1.5">

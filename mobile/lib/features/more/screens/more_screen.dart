@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/services/invite_service.dart';
 import '../../../core/services/profile_service.dart';
-import '../../../core/widgets/user_avatar.dart';
+import '../../../core/utils/session_mixin.dart';
 
 class MoreScreen extends StatefulWidget {
   const MoreScreen({super.key});
@@ -12,14 +13,15 @@ class MoreScreen extends StatefulWidget {
   State<MoreScreen> createState() => _MoreScreenState();
 }
 
-class _MoreScreenState extends State<MoreScreen> {
+class _MoreScreenState extends State<MoreScreen>
+    with SessionAwareMixin {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _team;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    waitForSession(then: _load); // Wait for token refresh before loading
   }
 
   Future<void> _load() async {
@@ -43,15 +45,27 @@ class _MoreScreenState extends State<MoreScreen> {
     } catch (_) {}
   }
 
+  bool _isCaptainOrVC() {
+    final role = _team?['role'] as String? ?? '';
+    return role == 'captain' || role == 'vice_captain';
+  }
+
+  void _showInviteSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _InviteSheet(
+        orgId: _profile?['org_id'] as String? ?? '',
+        teamId: _team?['team_id'] as String?,
+        invitedBy: _profile?['id'] as String? ?? '',
+        teamName: (_team?['teams'] as Map?)?['name'] as String? ?? 'your team',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final name = _profile?['name'] as String? ?? '';
-    final email = _profile?['email'] as String? ?? '';
-    final avatarColor = _profile?['avatar_color'] as String?;
-    final teamId = (_team?['teams'] as Map?)?['id'] as String? ?? '';
-    final teamName = (_team?['teams'] as Map?)?['name'] as String? ?? 'Team';
-    final teamEmoji = (_team?['teams'] as Map?)?['emoji'] as String? ?? '🏃';
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -62,57 +76,31 @@ class _MoreScreenState extends State<MoreScreen> {
         padding: const EdgeInsets.all(20),
         children: [
           // Profile mini card
-          if (_profile != null)
-            GestureDetector(
-              onTap: () => context.go('/profile'),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  children: [
-                    UserAvatar(name: name, avatarColor: avatarColor, radius: 26),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(name,
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.textPrimary)),
-                          Text(email,
-                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right_rounded, color: AppColors.textHint),
-                  ],
-                ),
-              ),
-            ),
+          _MenuItem(
+            icon: '👤',
+            label: 'Profile',
+            onTap: () => context.push('/profile'),
+          ),
 
           const SizedBox(height: 24),
 
+          // Invite Member — captains and vice captains only
+          if (_isCaptainOrVC()) ...[
+            _SectionTitle(title: 'Team'),
+            _MenuItem(
+              icon: '➕',
+              label: 'Invite Member',
+              subtitle: 'Add someone to your team',
+              onTap: () => _showInviteSheet(context),
+            ),
+            const SizedBox(height: 20),
+          ],
+
           _SectionTitle(title: 'Community'),
-          _MenuItem(
-            icon: '💬',
-            label: 'Team Chat',
-            subtitle: '$teamEmoji $teamName',
-            onTap: teamId.isNotEmpty
-                ? () => context.go('/chat', extra: {'teamId': teamId, 'teamName': teamName})
-                : null,
-          ),
-          _MenuItem(
-            icon: '📅',
-            label: 'Events',
-            onTap: () => context.go('/events'),
-          ),
           _MenuItem(
             icon: '📋',
             label: 'Policies',
-            onTap: () => context.go('/policies'),
+            onTap: () => context.push('/policies'),
           ),
 
           const SizedBox(height: 20),
@@ -122,6 +110,228 @@ class _MoreScreenState extends State<MoreScreen> {
             label: 'About',
             onTap: () => context.go('/about'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Invite Member Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+class _InviteSheet extends StatefulWidget {
+  final String orgId;
+  final String? teamId;
+  final String invitedBy;
+  final String teamName;
+
+  const _InviteSheet({
+    required this.orgId,
+    required this.teamId,
+    required this.invitedBy,
+    required this.teamName,
+  });
+
+  @override
+  State<_InviteSheet> createState() => _InviteSheetState();
+}
+
+class _InviteSheetState extends State<_InviteSheet> {
+  final _emailController = TextEditingController();
+  bool _loading = false;
+  String? _error;
+  bool _success = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) return;
+
+    // Basic email format check
+    final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!emailRegex.hasMatch(email)) {
+      setState(() => _error = 'Please enter a valid email address.');
+      return;
+    }
+
+    setState(() { _loading = true; _error = null; });
+
+    final err = await InviteService.inviteMember(
+      email: email,
+      orgId: widget.orgId,
+      teamId: widget.teamId,
+      invitedBy: widget.invitedBy,
+    );
+
+    if (!mounted) return;
+    if (err != null) {
+      setState(() { _loading = false; _error = err; });
+    } else {
+      setState(() { _loading = false; _success = true; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+
+          if (_success) ...[
+            // Success state
+            Center(
+              child: Column(
+                children: [
+                  Container(
+                    width: 64, height: 64,
+                    decoration: BoxDecoration(
+                      color: AppColors.primarySurface,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Icon(Icons.check_rounded, color: AppColors.primary, size: 32),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Invite sent!',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${_emailController.text.trim()} can now sign up and join ${widget.teamName}.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text('Done', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            // Form state
+            Row(
+              children: [
+                Container(
+                  width: 40, height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySurface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.person_add_rounded, color: AppColors.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Invite Member',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                    Text('Joining ${widget.teamName}',
+                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            const Text('Email address',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
+              style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'member@example.com',
+                hintStyle: const TextStyle(color: AppColors.textHint),
+                filled: true,
+                fillColor: AppColors.background,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                ),
+              ),
+            ),
+
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, size: 14, color: AppColors.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(_error!,
+                        style: const TextStyle(fontSize: 12, color: AppColors.error)),
+                  ),
+                ],
+              ),
+            ],
+
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _loading ? null : _submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.5),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: _loading
+                    ? const SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Send Invite',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
         ],
       ),
     );

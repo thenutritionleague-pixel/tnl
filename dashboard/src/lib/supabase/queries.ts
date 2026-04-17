@@ -128,6 +128,8 @@ export interface TaskUI {
   icon: string
   teams: string[]
   isActive: boolean
+  startDate?: string
+  endDate?: string
 }
 
 export interface ChallengeUI {
@@ -173,6 +175,7 @@ export interface OrgSettings {
   country: string
   timezone: string
   isActive: boolean
+  logoUrl: string | null
 }
 
 // ── ORGANIZATIONS ─────────────────────────────────────────────────────────────
@@ -307,12 +310,12 @@ export async function getOrganization(id: string): Promise<OrgDetail | null> {
 // ── ORG SETTINGS ─────────────────────────────────────────────────────────────
 
 export async function getOrgSettings(id: string): Promise<OrgSettings | null> {
-  const { data } = await (await db()).from('organizations').select('id, name, country, timezone, is_active').eq('id', id).single()
+  const { data } = await (await db()).from('organizations').select('id, name, country, timezone, is_active, logo_url').eq('id', id).single()
   if (!data) return null
-  return { id: data.id, name: data.name, country: data.country, timezone: data.timezone, isActive: data.is_active }
+  return { id: data.id, name: data.name, country: data.country, timezone: data.timezone, isActive: data.is_active, logoUrl: data.logo_url ?? null }
 }
 
-export async function updateOrgSettings(id: string, patch: Partial<{ name: string; country: string; timezone: string }>) {
+export async function updateOrgSettings(id: string, patch: Partial<{ name: string; country: string; timezone: string; logo_url: string | null }>) {
   return (await db()).from('organizations').update(patch).eq('id', id)
 }
 
@@ -329,34 +332,40 @@ export async function deleteOrg(id: string) {
 export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
   const supabase = await db()
 
-  const { data: members } = await supabase
-    .from('org_members')
-    .select(`
-      id, role, joined_at,
-      profiles(id, name, email, avatar_color)
-    `)
+  // 1. Fetch all profiles linked to this Org (Primary Source of Truth)
+  const { data: profiles, error: pErr } = await supabase
+    .from('profiles')
+    .select('id, name, email, avatar_color, created_at')
     .eq('org_id', orgId)
-    .order('joined_at', { ascending: true })
+    .order('created_at', { ascending: true })
 
-  // Fetch team assignments separately (avoids invalid FK join path)
+  if (pErr || !profiles) return []
+
+  // 2. Fetch Org roles separately
+  const { data: orgRoles } = await supabase
+    .from('org_members')
+    .select('user_id, role, joined_at')
+    .eq('org_id', orgId)
+
+  // 3. Fetch Team assignments separately
   const { data: teamAssignments } = await supabase
     .from('team_members')
-    .select('user_id, role, teams(id, name)')
+    .select('user_id, role, team_id, teams(id, name)')
     .eq('org_id', orgId)
 
-  if (!members) return []
+  // 4. Fetch approved points
+  const { data: submissions } = await supabase
+    .from('task_submissions')
+    .select('user_id, tasks(points)')
+    .eq('org_id', orgId)
+    .eq('status', 'approved')
 
-  type MemberRaw = {
-    id: string
-    role: string
-    joined_at: string
-    profiles: { id: string; name: string; email: string; avatar_color: string } | null
+  const roleMap: Record<string, { role: string; joinedAt: string }> = {}
+  for (const or of (orgRoles ?? []) as any[]) {
+    roleMap[or.user_id] = { role: or.role, joinedAt: or.joined_at }
   }
 
-  // Build a team lookup by profile ID
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const teamLookup: Record<string, { role: string; teamId: string | null; teamName: string }> = {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const ta of (teamAssignments ?? []) as any[]) {
     teamLookup[ta.user_id] = {
       role: ta.role,
@@ -365,42 +374,134 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     }
   }
 
-  // Get approved points per user
-  const { data: submissions } = await supabase
-    .from('task_submissions')
-    .select('user_id, tasks(points)')
-    .eq('org_id', orgId)
-    .eq('status', 'approved')
-
   const pointsMap: Record<string, number> = {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const s of (submissions ?? []) as any[]) {
     if (!pointsMap[s.user_id]) pointsMap[s.user_id] = 0
     pointsMap[s.user_id] += s.tasks?.points ?? 0
   }
 
-  return (members as unknown as MemberRaw[]).map(m => {
-    const profile = m.profiles!
-    const tm = teamLookup[profile.id]
+  return profiles.map(p => {
+    const tm = teamLookup[p.id]
+    const om = roleMap[p.id]
     return {
-      id: profile.id,
-      name: profile.name,
-      email: profile.email ?? '—',
+      id: p.id,
+      name: p.name,
+      email: p.email ?? '—',
       team: tm?.teamName ?? 'Unassigned',
       teamId: tm?.teamId ?? null,
-      role: m.role as OrgMember['role'],
+      role: (om?.role as OrgMember['role']) ?? 'member', // Default to member if not specifically in org_members
       teamRole: (tm?.role as OrgMember['teamRole']) ?? null,
-      points: pointsMap[profile.id] ?? 0,
-      joinedAt: fmtDate(m.joined_at),
-      avatarColor: profile.avatar_color,
+      points: pointsMap[p.id] ?? 0,
+      joinedAt: fmtDate(om?.joinedAt ?? p.created_at),
+      avatarColor: p.avatar_color ?? '#059669',
     }
   })
 }
 
+export async function updateMember(orgId: string, userId: string, data: {
+  name: string
+  email: string
+  teamId: string | null
+  teamRole: 'captain' | 'vice_captain' | 'member'
+  orgRole: 'org_admin' | 'sub_admin' | 'member'
+  oldEmail?: string
+}) {
+  const supabase = await db()
+
+  // 1. Update Profile
+  const { error: pErr } = await supabase
+    .from('profiles')
+    .update({ name: data.name, email: data.email })
+    .eq('id', userId)
+  if (pErr) throw pErr
+
+  // 2. Update Whitelist (consistency for future lookups/audit)
+  if (data.oldEmail) {
+    await supabase.from('invite_whitelist')
+      .update({ email: data.email })
+      .eq('org_id', orgId)
+      .eq('email', data.oldEmail)
+  }
+
+  // 3. Update Team Assignment (Swap logic)
+  if (data.teamId && (data.teamRole === 'captain' || data.teamRole === 'vice_captain')) {
+    // Check if role is taken in this team (considering both active members and pending invites)
+    const { data: activeRole } = await supabase
+      .from('team_members')
+      .select('user_id')
+      .eq('org_id', orgId)
+      .eq('team_id', data.teamId)
+      .eq('role', data.teamRole)
+      .neq('user_id', userId)
+      .maybeSingle()
+
+    if (activeRole) {
+      throw new Error(`This team already has a ${data.teamRole === 'captain' ? 'Captain' : 'Vice Captain'}.`)
+    }
+
+    const { data: pendingRole } = await supabase
+      .from('invite_whitelist')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('team_id', data.teamId)
+      .eq('role', data.teamRole)
+      .is('used_at', null)
+      .maybeSingle()
+
+    if (pendingRole) {
+      throw new Error(`This team has a pending invite for a ${data.teamRole === 'captain' ? 'Captain' : 'Vice Captain'}.`)
+    }
+  }
+
+  // Always remove existing memberships in this org first to ensure clean state
+  await supabase.from('team_members').delete().eq('user_id', userId).eq('org_id', orgId)
+
+  if (data.teamId) {
+    const { error: tmErr } = await supabase.from('team_members')
+      .insert({
+        user_id: userId,
+        team_id: data.teamId,
+        org_id: orgId,
+        role: data.teamRole,
+      })
+    if (tmErr) throw tmErr
+  }
+
+  // 4. Update Org Role (Admin vs Member)
+  const { error: omErr } = await supabase.from('org_members')
+    .update({ role: data.orgRole })
+    .eq('org_id', orgId)
+    .eq('user_id', userId)
+  if (omErr) throw omErr
+
+  return { success: true }
+}
+
 export async function removeMember(orgId: string, userId: string) {
   const supabase = await db()
-  await supabase.from('team_members').delete().eq('org_id', orgId).eq('user_id', userId)
-  return supabase.from('org_members').delete().eq('org_id', orgId).eq('user_id', userId)
+  
+  // 1. Get the email and authId before we delete
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email, auth_id')
+    .eq('id', userId)
+    .single()
+  
+  if (profile?.email) {
+    // 2. Remove from whitelist so they can't re-signup/login
+    await supabase.from('invite_whitelist').delete().eq('org_id', orgId).eq('email', profile.email)
+  }
+
+  if (profile?.auth_id) {
+    // 3. Delete from Supabase Auth (This triggers the Nuclear Cascade on profiles/teams)
+    const { error: authErr } = await supabase.auth.admin.deleteUser(profile.auth_id)
+    if (authErr) throw authErr
+  } else {
+    // Fallback: Delete profile directly if no auth_id found
+    await supabase.from('profiles').delete().eq('id', userId)
+  }
+
+  return { success: true }
 }
 
 export async function updateMemberOrgRole(orgId: string, userId: string, role: string) {
@@ -689,7 +790,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, start_week, category, icon, is_active)
+      tasks(id, title, description, points, start_week, category, icon, is_active, task_teams(teams(name)))
     `)
     .eq('org_id', orgId)
     .order('created_at', { ascending: false })
@@ -697,19 +798,26 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   if (!challenges) return []
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean }
+  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const results: ChallengeUI[] = []
 
-  for (const ch of challenges as unknown as ChRaw[]) {
-    const { count } = await supabase
-      .from('task_submissions')
-      .select('id', { count: 'exact', head: true })
-      .eq('challenge_id', ch.id)
+  // Get submission counts for all challenges in one go
+  const { data: counts } = await supabase
+    .from('task_submissions')
+    .select('challenge_id')
+    .eq('org_id', orgId)
 
+  const countMap: Record<string, number> = {}
+  counts?.forEach((s: any) => {
+    countMap[s.challenge_id] = (countMap[s.challenge_id] || 0) + 1
+  })
+
+  for (const ch of challenges as unknown as ChRaw[]) {
     const computed = effectiveStatus(ch.status, ch.start_date, ch.end_date, ch.manually_closed)
-    // Sync stale DB status silently (e.g. future challenge marked active, or expired not yet closed)
+    
+    // Sync stale DB status silently 
     if (computed !== ch.status && ch.status !== 'completed') {
       supabase.from('challenges').update({ status: computed }).eq('id', ch.id).then(() => {})
     }
@@ -718,7 +826,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
       id: ch.id,
       name: ch.name,
       description: ch.description,
-      status: effectiveStatus(ch.status, ch.start_date, ch.end_date, ch.manually_closed),
+      status: computed,
       startDate: ch.start_date,
       endDate: ch.end_date >= NO_END_DATE ? '' : ch.end_date,
       manuallyClosed: ch.manually_closed,
@@ -732,10 +840,12 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
         weekNumber: t.start_week,
         category: t.category,
         icon: t.icon,
-        teams: [],
+        teams: t.task_teams?.map(tt => tt.teams?.name).filter(Boolean) as string[] || [],
         isActive: t.is_active,
+        startDate: t.start_date,
+        endDate: t.end_date,
       })),
-      submissions: count ?? 0,
+      submissions: countMap[ch.id] ?? 0,
     })
   }
 
@@ -778,9 +888,10 @@ export async function deleteChallenge(id: string) {
 }
 
 export async function addTask(challengeId: string, data: {
-  title: string; description: string; points: number; weekNumber: number; category: string; icon: string
+  title: string; description: string; points: number; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
 }) {
-  return (await db()).from('tasks').insert({
+  const supabase = await db()
+  const { data: newTask, error } = await supabase.from('tasks').insert({
     challenge_id: challengeId,
     title: data.title,
     description: data.description,
@@ -789,13 +900,27 @@ export async function addTask(challengeId: string, data: {
     week_number: data.weekNumber,
     category: data.category,
     icon: data.icon,
+    start_date: data.startDate || null,
+    end_date: data.endDate || null,
   }).select().single()
+
+  if (newTask && data.teams.length > 0) {
+    const { data: ctData } = await supabase.from('challenge_teams').select('team_id, teams!inner(name)').eq('challenge_id', challengeId)
+    // @ts-ignore
+    const teamNameMap = Object.fromEntries((ctData ?? []).map(x => [x.teams.name, x.team_id]))
+    const validIds = data.teams.map(name => teamNameMap[name]).filter(Boolean)
+    if (validIds.length > 0) {
+      await supabase.from('task_teams').insert(validIds.map(tid => ({ task_id: newTask.id, team_id: tid })))
+    }
+  }
+  return { data: newTask, error }
 }
 
 export async function updateTask(id: string, data: {
-  title: string; description: string; points: number; weekNumber: number; category: string; icon: string
+  title: string; description: string; points: number; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
 }) {
-  return (await db()).from('tasks').update({
+  const supabase = await db()
+  await supabase.from('tasks').update({
     title: data.title,
     description: data.description,
     points: data.points,
@@ -803,7 +928,24 @@ export async function updateTask(id: string, data: {
     week_number: data.weekNumber,
     category: data.category,
     icon: data.icon,
+    start_date: data.startDate || null,
+    end_date: data.endDate || null,
   }).eq('id', id)
+
+  const { data: taskData } = await supabase.from('tasks').select('challenge_id').eq('id', id).single()
+  const challengeId = taskData?.challenge_id
+  if (challengeId) {
+    await supabase.from('task_teams').delete().eq('task_id', id)
+    if (data.teams.length > 0) {
+      const { data: ctData } = await supabase.from('challenge_teams').select('team_id, teams!inner(name)').eq('challenge_id', challengeId)
+      // @ts-ignore
+      const teamNameMap = Object.fromEntries((ctData ?? []).map(x => [x.teams.name, x.team_id]))
+      const validIds = data.teams.map(name => teamNameMap[name]).filter(Boolean)
+      if (validIds.length > 0) {
+        await supabase.from('task_teams').insert(validIds.map(tid => ({ task_id: id, team_id: tid })))
+      }
+    }
+  }
 }
 
 export async function setTaskActive(id: string, isActive: boolean) {
@@ -949,7 +1091,7 @@ export interface ChallengeSub {
   avatarColor: string
   taskTitle: string
   submittedAt: string
-  status: 'pending' | 'approved' | 'rejected' | 'expired'
+  status: 'pending' | 'approved' | 'rejected'
 }
 
 function timeAgo(iso: string): string {
@@ -968,14 +1110,14 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, start_week, category, icon, is_active)
+      tasks(id, title, description, points, start_week, category, icon, is_active, task_teams(teams(name)))
     `)
     .eq('id', challengeId)
     .single()
   if (!ch) return null
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean }
+  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
@@ -992,7 +1134,9 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     tasks: raw.tasks.map(t => ({
       id: t.id, title: t.title, description: t.description,
       points: t.points, weekNumber: t.start_week, category: t.category,
-      icon: t.icon, teams: [], isActive: t.is_active,
+      icon: t.icon,
+      teams: t.task_teams?.map(tt => tt.teams?.name).filter(Boolean) as string[] || [],
+      isActive: t.is_active,
     })),
     submissions: count ?? 0,
   }

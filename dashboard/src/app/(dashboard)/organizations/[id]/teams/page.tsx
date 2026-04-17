@@ -349,13 +349,6 @@ export default function OrgTeamsPage({ params }: { params: Promise<{ id: string 
                       >
                         <Shield className="w-3.5 h-3.5" />
                       </button>
-                      <button
-                        onClick={() => requestRemoveMember(team.id, member)}
-                        title="Remove from team"
-                        className="p-1.5 rounded-lg text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   </div>
                 ))}

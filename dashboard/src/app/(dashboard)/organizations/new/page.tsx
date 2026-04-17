@@ -71,8 +71,16 @@ export default function NewOrganizationPage() {
   const [name, setName] = useState('')
   const [adminName, setAdminName] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
-  const [country, setCountry] = useState('IN')
-  const [timezone, setTimezone] = useState('Asia/Kolkata')
+  
+  // Use browser detection for defaults
+  const [country, setCountry] = useState('GB') // Default to GB or detect
+  const [timezone, setTimezone] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    } catch {
+      return 'UTC'
+    }
+  })
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e: { preventDefault(): void }) {

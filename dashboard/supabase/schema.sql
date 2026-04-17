@@ -15,7 +15,7 @@ create table if not exists organizations (
   slug       text not null unique,
   logo       text not null default '🏢',
   country    char(2) not null default 'IN',
-  timezone   text not null default 'Asia/Kolkata',
+  timezone   text not null default 'UTC',
   is_active  boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -56,15 +56,49 @@ create table if not exists profiles (
 -- Auto-create/link profile when a Supabase Auth user signs up
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_invite record;
+  v_profile_id uuid;
 begin
-  insert into public.profiles (auth_id, name, email, avatar_color)
+  -- 1. Look for invite
+  select * into v_invite 
+  from public.invite_whitelist 
+  where email = new.email and used_at is null 
+  limit 1;
+
+  -- 2. Create profile (with org_id if found)
+  insert into public.profiles (auth_id, name, email, org_id, avatar_color)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
     new.email,
+    v_invite.org_id, -- Can be null for now, but usually should be found
     coalesce(new.raw_user_meta_data->>'avatar_color', '#059669')
   )
-  on conflict (auth_id) do nothing;
+  on conflict (auth_id) do update 
+  set org_id = coalesce(profiles.org_id, v_invite.org_id)
+  returning id into v_profile_id;
+
+  -- 3. If invite found, perform auto-linkage
+  if v_invite.id is not null then
+    -- Add to org_members
+    insert into public.org_members (org_id, user_id, role)
+    values (v_invite.org_id, v_profile_id, 'member')
+    on conflict (org_id, user_id) do nothing;
+
+    -- Add to team_members if team_id exists
+    if v_invite.team_id is not null then
+      insert into public.team_members (team_id, user_id, org_id, role)
+      values (v_invite.team_id, v_profile_id, v_invite.org_id, v_invite.role)
+      on conflict (team_id, user_id) do nothing;
+    end if;
+
+    -- Mark invite as used
+    update public.invite_whitelist 
+    set used_at = now() 
+    where id = v_invite.id;
+  end if;
+
   return new;
 end;
 $$;
@@ -110,7 +144,8 @@ create table if not exists team_members (
   role      text not null default 'member'
             check (role in ('captain', 'vice_captain', 'member')),
   joined_at timestamptz not null default now(),
-  unique (team_id, user_id)
+  unique (team_id, user_id),
+  unique (org_id, user_id)
 );
 
 -- ────────────────────────────────────────────────────────────────
@@ -141,7 +176,7 @@ create table if not exists challenges (
   status           text not null default 'upcoming'
                    check (status in ('active', 'completed', 'upcoming')),
   start_date       date not null,
-  end_date         date not null,
+  end_date         date,
   manually_closed  boolean not null default false,
   created_at       timestamptz not null default now()
 );
@@ -176,6 +211,17 @@ create table if not exists tasks (
 );
 
 -- ────────────────────────────────────────────────────────────────
+-- TASK ↔ TEAM VISIBILITY
+-- (If empty, task is visible to all teams in the challenge)
+-- ────────────────────────────────────────────────────────────────
+create table if not exists task_teams (
+  id           uuid primary key default gen_random_uuid(),
+  task_id      uuid not null references tasks(id) on delete cascade,
+  team_id      uuid not null references teams(id) on delete cascade,
+  unique (task_id, team_id)
+);
+
+-- ────────────────────────────────────────────────────────────────
 -- TASK SUBMISSIONS  (renamed from 'submissions')
 -- proof_type: 'image' for photo proof, 'text' for written log
 -- points_awarded: set on approval (may differ from task.points if overridden)
@@ -189,7 +235,7 @@ create table if not exists task_submissions (
   submitted_at     timestamptz not null default now(),
   submitted_date   date not null default current_date,
   status           text not null default 'pending'
-                   check (status in ('pending', 'approved', 'rejected', 'expired')),
+                   check (status in ('pending', 'approved', 'rejected')),
   proof_url        text,
   proof_type       text not null default 'text' check (proof_type in ('image', 'text')),
   notes            text,

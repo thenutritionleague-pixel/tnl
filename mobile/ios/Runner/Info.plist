@@ -41,6 +41,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Yi Nutrition League needs access to your photo library to upload proof of your completed habits.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Yi Nutrition League needs camera access to take a proof photo of your completed habits.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Yi Nutrition League needs permission to save photos to your library.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

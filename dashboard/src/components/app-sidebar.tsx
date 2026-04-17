@@ -59,7 +59,7 @@ function orgNavSections(orgId: string) {
     {
       label: 'Engagement',
       items: [
-        { href: `${base}/points`,   label: 'Points',   icon: Star     },
+        { href: `${base}/points`,   label: 'Leaderboard',   icon: Star     },
         { href: `${base}/feed`,     label: 'Feed',     icon: Rss      },
         { href: `${base}/policies`, label: 'Policies', icon: FileText },
       ],
@@ -77,7 +77,7 @@ function orgNavSections(orgId: string) {
 const ORG_PATH_RE = /^\/organizations\/(?!new$)([^/]+)(\/.*)?$/
 
 // ─────────────────────────────────────────────────────────────────────────────
-export function AppSidebar({ profile, orgName, orgEmoji }: { profile: AdminUser; orgName?: string; orgEmoji?: string }) {
+export function AppSidebar({ profile, orgName, orgEmoji, orgLogoUrl }: { profile: AdminUser; orgName?: string; orgEmoji?: string; orgLogoUrl?: string }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -102,8 +102,11 @@ export function AppSidebar({ profile, orgName, orgEmoji }: { profile: AdminUser;
       <div className="border-b border-border px-5 h-14 flex items-center">
         {inOrgContext && orgId ? (
           <div className="flex items-center gap-3 w-full min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-base select-none shrink-0">
-              {orgEmoji ?? '🏢'}
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-base select-none shrink-0 overflow-hidden">
+              {orgLogoUrl
+                ? <img src={orgLogoUrl} alt={orgName ?? 'Org'} className="w-full h-full object-cover" />
+                : (orgEmoji ?? '🏢')
+              }
             </div>
             <div className="leading-tight min-w-0">
               <p className="text-sm font-bold text-foreground truncate">
