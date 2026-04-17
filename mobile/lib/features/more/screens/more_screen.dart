@@ -6,6 +6,7 @@ import '../../../core/services/invite_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class MoreScreen extends StatefulWidget {
   const MoreScreen({super.key});
@@ -68,10 +69,8 @@ class _MoreScreenState extends State<MoreScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('More'),
-        backgroundColor: AppColors.surface,
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
@@ -182,8 +181,8 @@ class _InviteSheetState extends State<_InviteSheet> {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
+      decoration: BoxDecoration(
+        color: context.surfaceColor,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + bottom),
@@ -197,7 +196,7 @@ class _InviteSheetState extends State<_InviteSheet> {
               width: 36, height: 4,
               margin: const EdgeInsets.only(bottom: 20),
               decoration: BoxDecoration(
-                color: AppColors.border,
+                color: context.borderColor,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -211,19 +210,19 @@ class _InviteSheetState extends State<_InviteSheet> {
                   Container(
                     width: 64, height: 64,
                     decoration: BoxDecoration(
-                      color: AppColors.primarySurface,
+                      color: context.primarySurface,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Icon(Icons.check_rounded, color: AppColors.primary, size: 32),
                   ),
                   const SizedBox(height: 16),
-                  const Text('Invite sent!',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                  Text('Invite sent!',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: context.textPrimary)),
                   const SizedBox(height: 6),
                   Text(
                     '${_emailController.text.trim()} can now sign up and join ${widget.teamName}.',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                    style: TextStyle(fontSize: 13, color: context.textSecondary),
                   ),
                   const SizedBox(height: 24),
                   SizedBox(
@@ -249,7 +248,7 @@ class _InviteSheetState extends State<_InviteSheet> {
                 Container(
                   width: 40, height: 40,
                   decoration: BoxDecoration(
-                    color: AppColors.primarySurface,
+                    color: context.primarySurface,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(Icons.person_add_rounded, color: AppColors.primary, size: 20),
@@ -258,18 +257,18 @@ class _InviteSheetState extends State<_InviteSheet> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Invite Member',
-                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                    Text('Invite Member',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: context.textPrimary)),
                     Text('Joining ${widget.teamName}',
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                        style: TextStyle(fontSize: 12, color: context.textSecondary)),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 24),
 
-            const Text('Email address',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+            Text('Email address',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.textSecondary)),
             const SizedBox(height: 8),
             TextField(
               controller: _emailController,
@@ -277,20 +276,20 @@ class _InviteSheetState extends State<_InviteSheet> {
               autofocus: true,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submit(),
-              style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
+              style: TextStyle(fontSize: 15, color: context.textPrimary),
               decoration: InputDecoration(
                 hintText: 'member@example.com',
-                hintStyle: const TextStyle(color: AppColors.textHint),
+                hintStyle: TextStyle(color: context.textHint),
                 filled: true,
-                fillColor: AppColors.background,
+                fillColor: context.bgColor,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.border),
+                  borderSide: BorderSide(color: context.borderColor),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.border),
+                  borderSide: BorderSide(color: context.borderColor),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
@@ -387,10 +386,10 @@ class _SectionTitle extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(title.toUpperCase(),
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: AppColors.textHint,
+              color: context.textHint,
               letterSpacing: 0.8)),
     );
   }
@@ -409,17 +408,17 @@ class _MenuItem extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: context.surfaceColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: context.borderColor),
       ),
       child: ListTile(
         leading: Text(icon, style: const TextStyle(fontSize: 22)),
         title: Text(label,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppColors.textPrimary)),
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: context.textPrimary)),
         subtitle: subtitle != null
             ? Text(subtitle!,
-                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary))
+                style: TextStyle(fontSize: 12, color: context.textSecondary))
             : null,
         trailing: Icon(
           onTap != null ? Icons.chevron_right_rounded : Icons.lock_outline_rounded,

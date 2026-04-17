@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class SignupScreen extends StatefulWidget {
   final String email;
@@ -93,34 +94,34 @@ class _SignupScreenState extends State<SignupScreen> {
                         child: Text('🥦', style: TextStyle(fontSize: 24))),
                   ),
                   const SizedBox(width: 12),
-                  const Text('Yi Nutrition League 2.0',
+                  Text('Yi Nutrition League 2.0',
                       style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,
-                          color: AppColors.textPrimary)),
+                          color: context.textPrimary)),
                 ],
               ),
 
               const SizedBox(height: 48),
 
-              const Text(
+              Text(
                 "You're in! 🎉",
                 style: TextStyle(
                     fontSize: 32,
                     fontWeight: FontWeight.w800,
-                    color: AppColors.textPrimary),
+                    color: context.textPrimary),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 "Just one more step — tell us your name.",
-                style: TextStyle(fontSize: 15, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 15, color: context.textSecondary),
               ),
 
               const SizedBox(height: 32),
 
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(24),
                   boxShadow: [
                     BoxShadow(
@@ -133,11 +134,11 @@ class _SignupScreenState extends State<SignupScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Full Name',
+                    Text('Full Name',
                         style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary)),
+                            color: context.textPrimary)),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _nameController,
@@ -152,9 +153,9 @@ class _SignupScreenState extends State<SignupScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
-                        color: AppColors.background,
+                        color: context.bgColor,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(color: context.borderColor),
                       ),
                       child: Row(
                         children: [
@@ -162,8 +163,8 @@ class _SignupScreenState extends State<SignupScreen> {
                               color: AppColors.textHint, size: 18),
                           const SizedBox(width: 10),
                           Text(widget.email,
-                              style: const TextStyle(
-                                  fontSize: 14, color: AppColors.textSecondary)),
+                              style: TextStyle(
+                                  fontSize: 14, color: context.textSecondary)),
                         ],
                       ),
                     ),

@@ -7,6 +7,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/widgets/user_avatar.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final Map<String, dynamic> profile;
@@ -56,7 +57,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 width: 36, height: 4,
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
-                    color: AppColors.border,
+                    color: context.borderColor,
                     borderRadius: BorderRadius.circular(2)),
               ),
               ListTile(
@@ -137,9 +138,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final avatarColor = widget.profile['avatar_color'] as String?;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.surface,
         title: const Text('Edit Profile',
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
         leading: IconButton(
@@ -215,19 +214,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           const SizedBox(height: 6),
           Container(
             decoration: BoxDecoration(
-              color: AppColors.surface,
+              color: context.surfaceColor,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: context.borderColor),
             ),
             child: TextField(
               controller: _nameCtrl,
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
-              decoration: const InputDecoration(
+              style: TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w500, color: context.textPrimary),
+              decoration: InputDecoration(
                 contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 border: InputBorder.none,
                 hintText: 'Enter your name',
-                hintStyle: TextStyle(color: AppColors.textHint),
+                hintStyle: TextStyle(color: context.textHint),
               ),
               textCapitalization: TextCapitalization.words,
             ),
@@ -240,22 +239,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: AppColors.surface,
+              color: context.surfaceColor,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: context.borderColor),
             ),
             child: Row(
               children: [
                 Expanded(
                   child: Text(email,
-                      style: const TextStyle(fontSize: 15, color: AppColors.textSecondary)),
+                      style: TextStyle(fontSize: 15, color: context.textSecondary)),
                 ),
                 GestureDetector(
                   onTap: _openEmailChange,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                     decoration: BoxDecoration(
-                      color: AppColors.primarySurface,
+                      color: context.primarySurface,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text('Change',
@@ -269,9 +268,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'A verification code will be sent to your new email.',
-            style: TextStyle(fontSize: 11, color: AppColors.textHint),
+            style: TextStyle(fontSize: 11, color: context.textHint),
           ),
         ],
       ),
@@ -378,8 +377,8 @@ class _EmailChangeSheetState extends State<_EmailChangeSheet> {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
     return Container(
       padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottom),
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
+      decoration: BoxDecoration(
+        color: context.surfaceColor,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
@@ -392,7 +391,7 @@ class _EmailChangeSheetState extends State<_EmailChangeSheet> {
               width: 40, height: 4,
               margin: const EdgeInsets.only(bottom: 20),
               decoration: BoxDecoration(
-                color: AppColors.border,
+                color: context.borderColor,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -400,35 +399,35 @@ class _EmailChangeSheetState extends State<_EmailChangeSheet> {
 
           Text(
             _step == 1 ? 'Change Email' : 'Verify New Email',
-            style: const TextStyle(
-                fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.w700, color: context.textPrimary),
           ),
           const SizedBox(height: 4),
           Text(
             _step == 1
                 ? 'Enter your new email address. We\'ll send a verification code.'
                 : 'Enter the 6-digit code sent to $_pendingEmail',
-            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: TextStyle(fontSize: 13, color: context.textSecondary),
           ),
           const SizedBox(height: 24),
 
           if (_step == 1) ...[
             Container(
               decoration: BoxDecoration(
-                color: AppColors.background,
+                color: context.bgColor,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.border),
+                border: Border.all(color: context.borderColor),
               ),
               child: TextField(
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
                 autocorrect: false,
-                style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
-                decoration: const InputDecoration(
+                style: TextStyle(fontSize: 15, color: context.textPrimary),
+                decoration: InputDecoration(
                   contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   border: InputBorder.none,
                   hintText: 'New email address',
-                  hintStyle: TextStyle(color: AppColors.textHint),
+                  hintStyle: TextStyle(color: context.textHint),
                 ),
               ),
             ),
@@ -510,8 +509,8 @@ class _OtpBox extends StatelessWidget {
         keyboardType: TextInputType.number,
         maxLength: 1,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        style: const TextStyle(
-            fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+        style: TextStyle(
+            fontSize: 20, fontWeight: FontWeight.w700, color: context.textPrimary),
         decoration: InputDecoration(
           counterText: '',
           contentPadding: EdgeInsets.zero,
@@ -519,7 +518,7 @@ class _OtpBox extends StatelessWidget {
           fillColor: AppColors.primarySurface,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.border, width: 1.5),
+            borderSide: BorderSide(color: context.borderColor, width: 1.5),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -541,10 +540,10 @@ class _FieldLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(label,
-        style: const TextStyle(
+        style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: AppColors.textSecondary,
+            color: context.textSecondary,
             letterSpacing: 0.3));
   }
 }

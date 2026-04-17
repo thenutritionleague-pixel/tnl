@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/policy_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class PoliciesScreen extends StatefulWidget {
   const PoliciesScreen({super.key});
@@ -56,11 +57,9 @@ class _PoliciesScreenState extends State<PoliciesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Policies',
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17)),
-        backgroundColor: AppColors.surface,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
@@ -88,9 +87,9 @@ class _PoliciesScreenState extends State<PoliciesScreen> {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       decoration: BoxDecoration(
-                        color: AppColors.surface,
+                        color: context.surfaceColor,
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(color: context.borderColor),
                       ),
                       child: Material(
                         color: Colors.transparent,
@@ -124,16 +123,16 @@ class _PoliciesScreenState extends State<PoliciesScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(title,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               fontSize: 15,
                                               fontWeight: FontWeight.w700,
-                                              color: AppColors.textPrimary)),
+                                              color: context.textPrimary)),
                                       if (preview.isNotEmpty) ...[
                                         const SizedBox(height: 3),
                                         Text(preview,
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                                 fontSize: 12,
-                                                color: AppColors.textHint,
+                                                color: context.textHint,
                                                 height: 1.4)),
                                       ],
                                     ],
@@ -172,21 +171,21 @@ class _EmptyState extends StatelessWidget {
             width: 72,
             height: 72,
             decoration: BoxDecoration(
-              color: AppColors.primarySurface,
+              color: context.primarySurface,
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Icon(Icons.description_outlined,
                 color: AppColors.primary, size: 36),
           ),
           const SizedBox(height: 16),
-          const Text('No policies yet',
+          Text('No policies yet',
               style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary)),
+                  color: context.textPrimary)),
           const SizedBox(height: 6),
-          const Text('Your organisation hasn\'t added any policies.',
-              style: TextStyle(fontSize: 13, color: AppColors.textHint)),
+          Text('Your organisation hasn\'t added any policies.',
+              style: TextStyle(fontSize: 13, color: context.textHint)),
         ],
       ),
     );

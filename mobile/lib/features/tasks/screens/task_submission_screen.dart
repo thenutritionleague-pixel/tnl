@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class TaskSubmissionScreen extends StatefulWidget {
   final Map<String, dynamic> task;
@@ -111,7 +112,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     // ── Success state ──────────────────────────────────────────────────────
     if (_done) {
       return Scaffold(
-        backgroundColor: const Color(0xFFF3FAF6),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: Stack(
           children: [
             // ── Confetti from top-center ───────────────────────────────────
@@ -153,19 +154,19 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     // Pulsing icon
                     _PulseIcon(),
                     const SizedBox(height: 28),
-                    const Text(
+                    Text(
                       'Submitted!',
                       style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.textPrimary),
+                          color: context.textPrimary),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                    Text(
                       'Your proof photo is waiting for\nadmin approval.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                          color: AppColors.textSecondary,
+                          color: context.textSecondary,
                           fontSize: 14,
                           height: 1.6),
                     ),
@@ -208,11 +209,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
     // ── Main submission screen ─────────────────────────────────────────────
     return Scaffold(
-      backgroundColor: const Color(0xFFF3FAF6),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: Text(_isResubmit ? 'Resubmit Proof' : 'Submit Proof'),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
         elevation: 0,
         leading: BackButton(onPressed: () => context.pop()),
       ),
@@ -235,7 +234,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                   Container(
                     width: 52, height: 52,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFECFDF5),
+                      color: context.primarySurface,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Center(child: Text(icon, style: const TextStyle(fontSize: 28))),
@@ -246,18 +245,18 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(title,
-                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.textPrimary)),
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: context.textPrimary)),
                         if (desc.isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(desc, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, height: 1.4)),
+                          Text(desc, style: TextStyle(fontSize: 13, color: context.textSecondary, height: 1.4)),
                         ],
                         const SizedBox(height: 10),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: AppColors.primarySurface,
+                            color: context.primarySurface,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: AppColors.primaryMint),
+                            border: Border.all(color: context.primaryMint),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -279,14 +278,14 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
             const SizedBox(height: 24),
 
             // ── Photo upload area ──────────────────────────────────────────
-            const Text(
+            Text(
               'Upload Your Proof Photo',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.textPrimary),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Take a photo or pick from your gallery as evidence.',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 12, color: context.textSecondary),
             ),
             const SizedBox(height: 12),
 
@@ -297,7 +296,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 height: 220,
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: context.surfaceColor,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
                     color: _selectedImage != null
@@ -346,15 +345,15 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                           Container(
                             width: 60, height: 60,
                             decoration: BoxDecoration(
-                              color: AppColors.primarySurface,
+                              color: context.primarySurface,
                               borderRadius: BorderRadius.circular(18),
                             ),
                             child: const Icon(Icons.add_photo_alternate_outlined, size: 30, color: AppColors.primary),
                           ),
                           const SizedBox(height: 12),
-                          const Text('Tap to upload from gallery', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.textPrimary)),
+                          Text('Tap to upload from gallery', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: context.textPrimary)),
                           const SizedBox(height: 4),
-                          const Text('or use the camera button below', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                          Text('or use the camera button below', style: TextStyle(fontSize: 12, color: context.textSecondary)),
                         ],
                       ),
               ),
@@ -371,7 +370,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.border),
+                    border: Border.all(color: context.borderColor),
                   ),
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -452,7 +451,7 @@ class _PulseIconState extends State<_PulseIcon>
           width: 110,
           height: 110,
           decoration: BoxDecoration(
-            color: AppColors.primarySurface,
+            color: context.primarySurface,
             shape: BoxShape.circle,
             border: Border.all(
                 color: AppColors.primary.withValues(alpha: 0.35), width: 2.5),

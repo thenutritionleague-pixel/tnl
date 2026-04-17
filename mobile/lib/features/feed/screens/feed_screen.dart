@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/feed_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -116,10 +117,8 @@ class _FeedScreenState extends State<FeedScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Feed'),
-        backgroundColor: AppColors.surface,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
@@ -137,10 +136,10 @@ class _FeedScreenState extends State<FeedScreen>
                           return Padding(
                             padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
                             child: Text(item.label,
-                                style: const TextStyle(
+                                style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: AppColors.textHint,
+                                    color: context.textHint,
                                     letterSpacing: 0.5)),
                           );
                         }
@@ -158,7 +157,7 @@ class _FeedScreenState extends State<FeedScreen>
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
-                            color: AppColors.surface,
+                            color: context.surfaceColor,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
                               color: isPinned
@@ -185,7 +184,7 @@ class _FeedScreenState extends State<FeedScreen>
                                     const Spacer(),
                                     Text(
                                       _formatTime(post['created_at'] as String? ?? ''),
-                                      style: const TextStyle(fontSize: 11, color: AppColors.textHint),
+                                      style: TextStyle(fontSize: 11, color: context.textHint),
                                     ),
                                   ],
                                 ),
@@ -198,24 +197,24 @@ class _FeedScreenState extends State<FeedScreen>
                                   children: [
                                     if (title.isNotEmpty)
                                       Text(title,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               fontSize: 15,
                                               fontWeight: FontWeight.w700,
-                                              color: AppColors.textPrimary)),
+                                              color: context.textPrimary)),
                                     if (content.isNotEmpty) ...[
                                       const SizedBox(height: 4),
                                       Text(content,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               fontSize: 13,
-                                              color: AppColors.textSecondary,
+                                              color: context.textSecondary,
                                               height: 1.5)),
                                     ],
                                     if (!isAuto && authorName != null) ...[
                                       const SizedBox(height: 6),
                                       Text('Posted by $authorName',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               fontSize: 11,
-                                              color: AppColors.textHint,
+                                              color: context.textHint,
                                               fontStyle: FontStyle.italic)),
                                     ],
                                   ],
@@ -330,19 +329,19 @@ class _EmptyFeed extends StatelessWidget {
           Container(
             width: 72, height: 72,
             decoration: BoxDecoration(
-              color: AppColors.primarySurface,
+              color: context.primarySurface,
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Icon(Icons.dynamic_feed_rounded,
                 color: AppColors.primary, size: 36),
           ),
           const SizedBox(height: 16),
-          const Text('Nothing here yet',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+          Text('Nothing here yet',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: context.textPrimary)),
           const SizedBox(height: 6),
-          const Text('Activity will appear as the challenge progresses.',
+          Text('Activity will appear as the challenge progresses.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: AppColors.textHint)),
+              style: TextStyle(fontSize: 13, color: context.textHint)),
         ],
       ),
     );

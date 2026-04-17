@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class PolicyDetailScreen extends StatelessWidget {
   final String title;
@@ -22,9 +23,7 @@ class PolicyDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.surface,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
@@ -74,18 +73,18 @@ class PolicyDetailScreen extends StatelessWidget {
             Container(
               width: double.infinity,
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: context.surfaceColor,
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.border),
+                border: Border.all(color: context.borderColor),
               ),
               child: content.trim().isEmpty
-                  ? const Padding(
+                  ? Padding(
                       padding: EdgeInsets.all(20),
                       child: Text(
                         'No content available.',
                         style: TextStyle(
                             fontSize: 14,
-                            color: AppColors.textHint,
+                            color: context.textHint,
                             fontStyle: FontStyle.italic),
                       ),
                     )

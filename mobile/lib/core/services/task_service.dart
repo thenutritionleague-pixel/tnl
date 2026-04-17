@@ -5,27 +5,15 @@ import 'package:path/path.dart' as p;
 class TaskService {
   static final _client = Supabase.instance.client;
 
-  /// Get all active tasks for an org's active challenge.
-  static Future<List<Map<String, dynamic>>> getActiveTasks(String orgId) async {
-    // First get active challenges for the org
-    final challenges = await _client
-        .from('challenges')
-        .select('id')
-        .eq('org_id', orgId)
-        .eq('status', 'active')
-        .eq('manually_closed', false);
-
-    if (challenges.isEmpty) return [];
-
-    final challengeIds = (challenges as List).map((c) => c['id']).toList();
-
-    final tasks = await _client
-        .from('tasks')
-        .select('id, challenge_id, title, description, points, week_number, category, icon, is_active')
-        .inFilter('challenge_id', challengeIds)
-        .eq('is_active', true)
-        .order('week_number');
-
+  /// Get all active tasks for a team's active challenge, respecting week progressive unlocking.
+  static Future<List<Map<String, dynamic>>> getActiveTasks(String orgId, String? teamId) async {
+    if (teamId == null) return []; // Must belong to a team to see and do tasks
+    
+    final tasks = await _client.rpc('get_mobile_tasks', params: {
+      'p_team_id': teamId,
+      'p_org_id': orgId,
+    });
+    
     return List<Map<String, dynamic>>.from(tasks);
   }
 
@@ -44,34 +32,18 @@ class TaskService {
     return List<Map<String, dynamic>>.from(data);
   }
 
-  /// Submit a text proof for a task.
-  static Future<void> submitTaskText({
-    required String taskId,
-    required String challengeId,
-    required String userId,
-    required String orgId,
-    required String text,
-  }) async {
-    await _client.from('task_submissions').insert({
-      'task_id': taskId,
-      'challenge_id': challengeId,
-      'user_id': userId,
-      'org_id': orgId,
-      'submitted_at': DateTime.now().toIso8601String(),
-      'submitted_date': DateTime.now().toIso8601String().substring(0, 10),
-      'status': 'pending',
-      'proof_type': 'text',
-      'notes': text.trim(),
-    });
-  }
 
   /// Upload an image proof and submit the task.
+  /// [submittedDate] overrides the submission date (YYYY-MM-DD).
+  /// Pass the original date when resubmitting a history item so the
+  /// admin breakdown stays accurate.
   static Future<void> submitTaskImage({
     required String taskId,
     required String challengeId,
     required String userId,
     required String orgId,
     required File imageFile,
+    String? submittedDate,
   }) async {
     final ext = p.extension(imageFile.path);
     final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$ext';
@@ -82,17 +54,46 @@ class TaskService {
       fileOptions: const FileOptions(upsert: false),
     );
 
+    // Use the provided date (history resubmit) or fall back to today (local)
+    final dateStr = submittedDate ??
+        DateTime.now().toLocal().toString().split(' ')[0];
+
     await _client.from('task_submissions').insert({
       'task_id': taskId,
       'challenge_id': challengeId,
       'user_id': userId,
       'org_id': orgId,
-      'submitted_at': DateTime.now().toIso8601String(),
-      'submitted_date': DateTime.now().toIso8601String().substring(0, 10),
+      'submitted_at': DateTime.now().toUtc().toIso8601String(),
+      'submitted_date': dateStr,
       'status': 'pending',
-      'proof_type': 'image',
       'proof_url': fileName,
     });
+  }
+
+  /// Get submissions from previous days (for Task History).
+  /// Returns pending (awaiting review) and rejected submissions from before today.
+  /// - pending: member already submitted, waiting for admin review (read-only card)
+  /// - rejected: member can resubmit (shows Resubmit button)
+  static Future<List<Map<String, dynamic>>> getPastSubmissions(
+    String userId,
+    String orgId,
+  ) async {
+    final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+
+    final data = await _client
+        .from('task_submissions')
+        .select(
+          'id, task_id, challenge_id, status, submitted_date, submitted_at, rejection_reason, '
+          'tasks!task_id(id, title, description, icon, points)',
+        )
+        .eq('user_id', userId)
+        .eq('org_id', orgId)
+        .inFilter('status', ['pending', 'rejected'])
+        .neq('submitted_date', todayStr) // exclude today — handled by Tasks screen
+        .order('submitted_date', ascending: false)
+        .limit(60);
+
+    return List<Map<String, dynamic>>.from(data);
   }
 
   /// Get a signed URL for a private task proof image.

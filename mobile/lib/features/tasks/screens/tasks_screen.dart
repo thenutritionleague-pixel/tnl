@@ -148,7 +148,6 @@ class _TasksScreenState extends State<TasksScreen>
     final currentWeekNum = weeks.isNotEmpty ? weeks.last : 1;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3FAF6),
       body: RefreshIndicator(
         onRefresh: _load,
         color: AppColors.primary,
@@ -158,7 +157,7 @@ class _TasksScreenState extends State<TasksScreen>
             // ── Header ─────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Container(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surface,
                 padding: EdgeInsets.only(
                   top: MediaQuery.of(context).padding.top + 16,
                   left: 18, right: 18, bottom: 0,
@@ -625,13 +624,12 @@ class _TaskSkeletonState extends State<_TaskSkeleton> with SingleTickerProviderS
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF3FAF6),
     body: SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

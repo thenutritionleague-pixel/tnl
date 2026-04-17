@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -183,15 +184,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Yi Nutrition League 2.0',
+                      Text('Yi Nutrition League 2.0',
                           style: TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 15,
-                              color: AppColors.textPrimary)),
+                              color: context.textPrimary)),
                       Text('Wellness Challenge',
                           style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.textPrimary.withValues(alpha: 0.6))),
+                              color: context.textPrimary.withValues(alpha: 0.6))),
                     ],
                   ),
                 ],
@@ -199,12 +200,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 40),
 
-              const Text(
+              Text(
                 'Build Healthy\nHabits.',
                 style: TextStyle(
                     fontSize: 36,
                     fontWeight: FontWeight.w800,
-                    color: AppColors.textPrimary,
+                    color: context.textPrimary,
                     height: 1.15),
               ),
               const SizedBox(height: 4),
@@ -221,7 +222,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(24),
                   boxShadow: [
                     BoxShadow(
@@ -276,20 +277,20 @@ class _LoginScreenState extends State<LoginScreen> {
       key: const ValueKey('email'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Sign In',
+        Text('Sign In',
             style: TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 18,
-                color: AppColors.textPrimary)),
+                color: context.textPrimary)),
         const SizedBox(height: 4),
-        const Text('Enter your email to receive a sign-in code.',
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        Text('Enter your email to receive a sign-in code.',
+            style: TextStyle(fontSize: 13, color: context.textSecondary)),
         const SizedBox(height: 24),
-        const Text('Email address',
+        Text('Email address',
             style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary)),
+                color: context.textPrimary)),
         const SizedBox(height: 8),
         TextField(
           controller: _emailController,
@@ -329,17 +330,17 @@ class _LoginScreenState extends State<LoginScreen> {
               constraints: const BoxConstraints(),
             ),
             const SizedBox(width: 8),
-            const Text('Check your inbox',
+            Text('Check your inbox',
                 style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 18,
-                    color: AppColors.textPrimary)),
+                    color: context.textPrimary)),
           ],
         ),
         const SizedBox(height: 4),
         Text('We sent a 6-digit code to\n$_emailForOtp',
-            style: const TextStyle(
-                fontSize: 13, color: AppColors.textSecondary, height: 1.5)),
+            style: TextStyle(
+                fontSize: 13, color: context.textSecondary, height: 1.5)),
         const SizedBox(height: 28),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -402,8 +403,8 @@ class _OtpBox extends StatelessWidget {
         keyboardType: TextInputType.number,
         maxLength: 1,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        style: const TextStyle(
-            fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+        style: TextStyle(
+            fontSize: 20, fontWeight: FontWeight.w700, color: context.textPrimary),
         decoration: InputDecoration(
           counterText: '',
           contentPadding: EdgeInsets.zero,
@@ -411,7 +412,7 @@ class _OtpBox extends StatelessWidget {
           fillColor: AppColors.primarySurface,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: AppColors.border, width: 1.5),
+            borderSide: BorderSide(color: context.borderColor, width: 1.5),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),

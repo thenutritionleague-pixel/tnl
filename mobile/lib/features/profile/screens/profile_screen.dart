@@ -7,6 +7,7 @@ import '../../../core/services/auth_service.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/widgets/points_badge.dart';
 import '../../../core/widgets/user_avatar.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -79,10 +80,8 @@ class _ProfileScreenState extends State<ProfileScreen>
     final role = _team?['role'] as String? ?? 'member';
 
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Profile'),
-        backgroundColor: AppColors.surface,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
           onPressed: () => context.pop(),
@@ -114,9 +113,9 @@ class _ProfileScreenState extends State<ProfileScreen>
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: AppColors.surface,
+                color: context.surfaceColor,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: AppColors.border),
+                border: Border.all(color: context.borderColor),
               ),
               child: Column(
                 children: [
@@ -128,18 +127,18 @@ class _ProfileScreenState extends State<ProfileScreen>
                   ),
                   const SizedBox(height: 16),
                   Text(name,
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: context.textPrimary)),
                   const SizedBox(height: 4),
-                  Text(email, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  Text(email, style: TextStyle(fontSize: 13, color: context.textSecondary)),
                   const SizedBox(height: 4),
-                  Text(orgName, style: const TextStyle(fontSize: 13, color: AppColors.textHint)),
+                  Text(orgName, style: TextStyle(fontSize: 13, color: context.textHint)),
                   const SizedBox(height: 16),
                   PointsBadge(points: points, fontSize: 15),
                   const SizedBox(height: 20),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
-                      color: AppColors.primarySurface,
+                      color: context.primarySurface,
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Row(
@@ -168,18 +167,18 @@ class _ProfileScreenState extends State<ProfileScreen>
             const SizedBox(height: 24),
 
             // Points history
-            const Text('Points History',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+            Text('Points History',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: context.textPrimary)),
             const SizedBox(height: 12),
 
             if (_history.isEmpty)
-              const Center(child: Text('No points yet — start submitting tasks!', style: TextStyle(color: AppColors.textSecondary)))
+              Center(child: Text('No points yet — start submitting tasks!', style: TextStyle(color: context.textSecondary)))
             else
               Container(
                 decoration: BoxDecoration(
-                  color: AppColors.surface,
+                  color: context.surfaceColor,
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
+                  border: Border.all(color: context.borderColor),
                 ),
                 child: Column(
                   children: _history.asMap().entries.map((entry) {
@@ -244,7 +243,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                                             color: isMissed ? AppColors.textSecondary : AppColors.textPrimary),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis),
-                                    Text(date, style: const TextStyle(fontSize: 11, color: AppColors.textHint)),
+                                    Text(date, style: TextStyle(fontSize: 11, color: context.textHint)),
                                   ],
                                 ),
                               ),
@@ -252,7 +251,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                                   ? const Text('Missed',
                                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error))
                                   : Text('+$amount 🥦',
-                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.pointsText)),
+                                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.pointsText)),
                             ],
                           ),
                         ),

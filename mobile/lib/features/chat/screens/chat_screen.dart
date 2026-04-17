@@ -4,6 +4,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/chat_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/widgets/user_avatar.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class ChatScreen extends StatefulWidget {
   final String teamId;
@@ -120,10 +121,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(widget.teamName),
-        backgroundColor: AppColors.surface,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
@@ -131,9 +130,9 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Expanded(
                   child: _messages.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text('No messages yet. Say hi! 👋',
-                              style: TextStyle(color: AppColors.textSecondary)))
+                              style: TextStyle(color: context.textSecondary)))
                       : ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -169,7 +168,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                           bottomLeft: Radius.circular(isMe ? 18 : 4),
                                           bottomRight: Radius.circular(isMe ? 4 : 18),
                                         ),
-                                        border: isMe ? null : Border.all(color: AppColors.border),
+                                        border: isMe ? null : Border.all(color: context.borderColor),
                                       ),
                                       child: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -208,9 +207,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
                       .add(EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom)),
-                  decoration: const BoxDecoration(
-                    color: AppColors.surface,
-                    border: Border(top: BorderSide(color: AppColors.border)),
+                  decoration: BoxDecoration(
+                    color: context.surfaceColor,
+                    border: Border(top: BorderSide(color: context.borderColor)),
                   ),
                   child: Row(
                     children: [
@@ -221,7 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           decoration: InputDecoration(
                             hintText: 'Message...',
                             filled: true,
-                            fillColor: AppColors.background,
+                            fillColor: context.bgColor,
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(24),

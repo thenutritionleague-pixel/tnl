@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/event_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -66,15 +67,14 @@ class _EventsScreenState extends State<EventsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Events'), backgroundColor: AppColors.surface),
+      appBar: AppBar(title: const Text('Events')),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
           : RefreshIndicator(
               onRefresh: _load,
               color: AppColors.primary,
               child: _events.isEmpty
-                  ? const Center(child: Text('No upcoming events.', style: TextStyle(color: AppColors.textSecondary)))
+                  ? Center(child: Text('No upcoming events.', style: TextStyle(color: context.textSecondary)))
                   : ListView.builder(
                       padding: const EdgeInsets.all(20),
                       itemCount: _events.length,
@@ -90,9 +90,9 @@ class _EventsScreenState extends State<EventsScreen> {
                         return Container(
                           margin: const EdgeInsets.only(bottom: 14),
                           decoration: BoxDecoration(
-                            color: AppColors.surface,
+                            color: context.surfaceColor,
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: AppColors.border),
+                            border: Border.all(color: context.borderColor),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -121,12 +121,12 @@ class _EventsScreenState extends State<EventsScreen> {
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                         decoration: BoxDecoration(
-                                          color: AppColors.pointsBadge,
+                                          color: context.pointsBadgeBg,
                                           borderRadius: BorderRadius.circular(20),
-                                          border: Border.all(color: AppColors.pointsBadgeBorder),
+                                          border: Border.all(color: context.pointsBadgeBorder),
                                         ),
                                         child: Text('🥦 $points pts',
-                                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.pointsText)),
+                                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: context.pointsText)),
                                       ),
                                   ],
                                 ),
@@ -137,11 +137,11 @@ class _EventsScreenState extends State<EventsScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(e['title'] as String? ?? '',
-                                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: context.textPrimary)),
                                     if ((e['description'] as String? ?? '').isNotEmpty) ...[
                                       const SizedBox(height: 4),
                                       Text(e['description'] as String,
-                                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                                          style: TextStyle(fontSize: 13, color: context.textSecondary)),
                                     ],
                                     const SizedBox(height: 12),
                                     Row(
@@ -149,12 +149,12 @@ class _EventsScreenState extends State<EventsScreen> {
                                         if (location.isNotEmpty) ...[
                                           const Icon(Icons.location_on_outlined, size: 14, color: AppColors.textHint),
                                           const SizedBox(width: 4),
-                                          Text(location, style: const TextStyle(fontSize: 12, color: AppColors.textHint)),
+                                          Text(location, style: TextStyle(fontSize: 12, color: context.textHint)),
                                           const SizedBox(width: 14),
                                         ],
                                         const Icon(Icons.people_outline_rounded, size: 14, color: AppColors.textHint),
                                         const SizedBox(width: 4),
-                                        Text('$attendeeCount joined', style: const TextStyle(fontSize: 12, color: AppColors.textHint)),
+                                        Text('$attendeeCount joined', style: TextStyle(fontSize: 12, color: context.textHint)),
                                       ],
                                     ),
                                     const SizedBox(height: 14),

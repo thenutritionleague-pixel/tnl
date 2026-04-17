@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Global theme mode notifier — a single source of truth for light/dark.
-final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.light);
+final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.dark);
 
 void toggleTheme() {
   themeNotifier.value = themeNotifier.value == ThemeMode.light

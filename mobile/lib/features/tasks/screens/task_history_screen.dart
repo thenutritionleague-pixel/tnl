@@ -60,7 +60,6 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3FAF6),
       body: RefreshIndicator(
         onRefresh: _load,
         color: AppColors.primary,
@@ -70,7 +69,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
             // ── Header ───────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Container(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surface,
                 padding: EdgeInsets.only(
                   top: MediaQuery.of(context).padding.top + 16,
                   left: 18,
@@ -301,8 +300,8 @@ class _HistoryCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             decoration: BoxDecoration(
               color: status == 'pending'
-                  ? const Color(0xFFFFF9EC)
-                  : const Color(0xFFF3FAF6),
+                  ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D2000) : const Color(0xFFFFF9EC))
+                  : Theme.of(context).scaffoldBackgroundColor,
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
               border: Border(
                 top: BorderSide(color: context.borderColor.withValues(alpha: 0.6)),

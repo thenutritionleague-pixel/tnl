@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../core/theme/theme_colors.dart';
 
 class MainShell extends StatelessWidget {
   final Widget child;

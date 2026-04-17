@@ -7,6 +7,7 @@ import '../../../core/services/leaderboard_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/widgets/user_avatar.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -180,7 +181,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F6F6),
       body: Stack(
         children: [
           // ── Column: sticky header + tab bar, scrollable body ──────────────
@@ -248,10 +248,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   }
 
   // ── Header ────────────────────────────────────────────────────────────────
-  Widget _buildHeader() => Container(
-        decoration: const BoxDecoration(
+  Widget _buildHeader() {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFFB2F0D8), Color(0xFFE8FAF2)],
+            colors: dark
+                ? [const Color(0xFF0F2416), const Color(0xFF162E1C)]
+                : [const Color(0xFFB2F0D8), const Color(0xFFE8FAF2)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -285,7 +289,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               child: Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
                     shape: BoxShape.circle),
                 child: const Icon(Icons.refresh_rounded,
                     size: 20, color: AppColors.primary),
@@ -294,14 +298,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           ],
         ),
       );
+  }
 
   // ── Tab bar ───────────────────────────────────────────────────────────────
   Widget _buildTabBar() => Container(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Container(
           decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(30)),
           child: Row(
             children: [
@@ -321,11 +326,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── Teams Tab ─────────────────────────────────────────────────────────────
   Widget _buildTeamTab() {
     if (_teams.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.all(40),
         child: Center(
             child: Text('No team data yet.',
-                style: TextStyle(color: AppColors.textHint))),
+                style: TextStyle(color: context.textHint))),
       );
     }
     return Column(
@@ -339,7 +344,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   }
 
   Widget _buildAllTeamsList() => Container(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         child: Column(
           children: _teams.asMap().entries.map((e) {
             final rank = e.key + 1;
@@ -435,9 +440,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 ),
 
                 if (!isLast)
-                  const Divider(
+                  Divider(
                       height: 1,
-                      color: Color(0xFFF1F5F9),
+                      color: Theme.of(context).colorScheme.outline,
                       indent: 18),
               ],
             );
@@ -456,14 +461,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
     final members = _teamMembersCache[teamId] ?? [];
     if (members.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.fromLTRB(18, 8, 18, 12),
         child: Text('No members found.',
-            style: TextStyle(color: AppColors.textHint, fontSize: 12)),
+            style: TextStyle(color: context.textHint, fontSize: 12)),
       );
     }
     return Container(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       child: Column(
         children: members.asMap().entries.map((e) {
           final member = e.value;
@@ -500,10 +505,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                           children: [
                             Text(
                               member['name'] as String? ?? 'Member',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary),
+                                  color: context.textPrimary),
                             ),
                             if ((member['role'] as String?) == 'captain')
                               _RoleBadge(label: 'Captain', color: AppColors.gold)
@@ -534,9 +539,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     : const SizedBox.shrink(),
               ),
               if (!isLast)
-                const Divider(
+                Divider(
                     height: 1,
-                    color: Color(0xFFEDF2F7),
+                    color: Theme.of(context).colorScheme.outline,
                     indent: 18),
             ],
           );
@@ -548,11 +553,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── My Team Tab ───────────────────────────────────────────────────────────
   Widget _buildMemberTab() {
     if (_myTeamId == null || _myTeamId!.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.all(40),
         child: Center(
             child: Text("You're not in a team yet.",
-                style: TextStyle(color: AppColors.textHint))),
+                style: TextStyle(color: context.textHint))),
       );
     }
     if (_loadingIds.contains(_myTeamId)) {
@@ -567,11 +572,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
         .toList();
 
     if (myTeamMembers.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.all(40),
         child: Center(
             child: Text('No members in your team yet.',
-                style: TextStyle(color: AppColors.textHint))),
+                style: TextStyle(color: context.textHint))),
       );
     }
     return Column(
@@ -586,7 +591,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   }
 
   Widget _buildMyTeamMembersList(List<Map<String, dynamic>> members) => Container(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         child: Column(
           children: members.asMap().entries.map((e) {
             final rank = e.key + 1;
@@ -661,7 +666,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       : const SizedBox.shrink(),
                 ),
                 if (!isLast)
-                  const Divider(height: 1, color: Color(0xFFF1F5F9), indent: 18),
+                  Divider(height: 1, color: Theme.of(context).colorScheme.outline, indent: 18),
               ],
             );
           }).toList(),
@@ -739,8 +744,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.textSecondary),
+                      style: TextStyle(
+                          fontSize: 12, color: context.textSecondary),
                       overflow: TextOverflow.ellipsis),
                   if (hasIssues)
                     Text(indicators,
@@ -754,8 +759,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(daysLabel,
-                    style: const TextStyle(
-                        fontSize: 10, color: AppColors.textHint)),
+                    style: TextStyle(
+                        fontSize: 10, color: context.textHint)),
                 Text('$earned 🥦',
                     style: TextStyle(
                         fontSize: 11,
@@ -784,15 +789,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     if (breakdown.isEmpty) {
       return Padding(
         padding: EdgeInsets.fromLTRB(indent, 8, 18, 12),
-        child: const Text('No submissions yet.',
-            style: TextStyle(color: AppColors.textHint, fontSize: 12)),
+        child: Text('No submissions yet.',
+            style: TextStyle(color: context.textHint, fontSize: 12)),
       );
     }
     final sortedWeeks = breakdown.keys.toList()..sort();
     final currentWeek = _currentWeek();
 
     return Container(
-      color: const Color(0xFFF0FDF4),
+      color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF0F2416) : const Color(0xFFF0FDF4),
       padding: EdgeInsets.fromLTRB(indent, 8, 18, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -884,16 +889,16 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(title,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 12,
-                                      color: AppColors.textSecondary),
+                                      color: context.textSecondary),
                                   overflow: TextOverflow.ellipsis),
                             ),
                             if (date.isNotEmpty) ...[
                               Text(date,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 10,
-                                      color: AppColors.textHint)),
+                                      color: context.textHint)),
                               const SizedBox(width: 6),
                             ],
                             if (status == 'approved')
@@ -930,7 +935,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return AnimatedBuilder(
       animation: _podiumAnim,
       builder: (context, _) => Container(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -941,7 +946,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 rank: 2,
                 animatedBase: 68 * _podiumAnim.value,
                 targetBase: 68,
-                bgColor: const Color(0xFFEFF6FF),
+                bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E2D3D) : const Color(0xFFEFF6FF),
                 rankColor: AppColors.silver,
                 rankLabel: '2nd',
                 isTeam: isTeam,
@@ -976,7 +981,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 rank: 3,
                 animatedBase: 48 * _podiumAnim.value,
                 targetBase: 48,
-                bgColor: const Color(0xFFFFF7ED),
+                bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D1F0E) : const Color(0xFFFFF7ED),
                 rankColor: AppColors.bronze,
                 rankLabel: '3rd',
                 isTeam: isTeam,
@@ -1156,7 +1161,7 @@ class _TabPill extends StatelessWidget {
             margin: const EdgeInsets.all(4),
             padding: const EdgeInsets.symmetric(vertical: 10),
             decoration: BoxDecoration(
-              color: selected ? Colors.white : const Color(0xFFF1F5F9),
+              color: selected ? Theme.of(context).colorScheme.surface : Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(26),
               boxShadow: selected
                   ? [
@@ -1189,7 +1194,7 @@ class _RankBadge extends StatelessWidget {
     if (rank == 1) return AppColors.gold;
     if (rank == 2) return AppColors.silver;
     if (rank == 3) return AppColors.bronze;
-    return const Color(0xFFCBD5E1);
+    return const Color(0xFF94A3B8);
   }
 
   @override
@@ -1219,9 +1224,9 @@ class _PointsPill extends StatelessWidget {
         padding: EdgeInsets.symmetric(
             horizontal: small ? 7 : 10, vertical: small ? 3 : 5),
         decoration: BoxDecoration(
-          color: AppColors.primarySurface,
+          color: context.primarySurface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.primaryMint),
+          border: Border.all(color: context.primaryMint),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1338,10 +1343,10 @@ class _TeamAvatarRow extends StatelessWidget {
             padding: const EdgeInsets.only(left: 4),
             child: Text(
               '+$extra',
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textHint),
+                  color: context.textHint),
             ),
           ),
       ],

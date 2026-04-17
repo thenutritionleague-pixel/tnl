@@ -718,7 +718,7 @@ class _SkeletonHomeState extends State<_SkeletonHome> with SingleTickerProviderS
       height: h,
       width: w,
       decoration: BoxDecoration(
-        color: Colors.grey.withValues(alpha: _anim.value * 0.25),
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: _anim.value * 0.1),
         borderRadius: BorderRadius.circular(r),
       ),
     ),
@@ -751,15 +751,15 @@ class _SkeletonHomeState extends State<_SkeletonHome> with SingleTickerProviderS
           ),
           // stat tiles skeleton
           Container(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             height: 80,
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
                 Expanded(child: Center(child: _box(h: 14, w: 60))),
-                Container(width: 1, height: 60, color: Colors.grey.shade200),
+                Container(width: 1, height: 60, color: Theme.of(context).colorScheme.outline),
                 Expanded(child: Center(child: _box(h: 14, w: 60))),
-                Container(width: 1, height: 60, color: Colors.grey.shade200),
+                Container(width: 1, height: 60, color: Theme.of(context).colorScheme.outline),
                 Expanded(child: Center(child: _box(h: 14, w: 60))),
               ],
             ),
@@ -767,7 +767,7 @@ class _SkeletonHomeState extends State<_SkeletonHome> with SingleTickerProviderS
           const SizedBox(height: 10),
           // tasks skeleton
           Container(
-            color: Colors.white,
+            color: Theme.of(context).colorScheme.surface,
             padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
