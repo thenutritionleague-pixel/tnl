@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/invite_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
 
 class MoreScreen extends StatefulWidget {
@@ -105,6 +106,7 @@ class _MoreScreenState extends State<MoreScreen>
 
           const SizedBox(height: 20),
           _SectionTitle(title: 'App'),
+          _DarkModeToggle(),
           _MenuItem(
             icon: 'ℹ️',
             label: 'About',
@@ -334,6 +336,44 @@ class _InviteSheetState extends State<_InviteSheet> {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _DarkModeToggle extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, mode, __) {
+        final dark = mode == ThemeMode.dark;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Theme.of(context).colorScheme.outline),
+          ),
+          child: ListTile(
+            leading: Text(dark ? '🌙' : '☀️', style: const TextStyle(fontSize: 22)),
+            title: Text(
+              dark ? 'Dark Mode' : 'Light Mode',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            trailing: Switch.adaptive(
+              value: dark,
+              activeThumbColor: AppColors.primary,
+              activeTrackColor: AppColors.primaryMint,
+              onChanged: (_) => toggleTheme(),
+            ),
+            onTap: toggleTheme,
+          ),
+        );
+      },
     );
   }
 }

@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/services/leaderboard_service.dart';
+import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -165,8 +167,23 @@ class _HomeScreenState extends State<HomeScreen>
         : '';
     final todayTasks = _tasks.take(6).toList();
 
+    final dark = isDark;
+    final heroGradient = dark
+        ? const LinearGradient(
+            colors: [Color(0xFF0F2416), Color(0xFF0A1A10)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          )
+        : const LinearGradient(
+            colors: [Color(0xFFB2F0D8), Color(0xFFE8FAF2)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          );
+    final greetingColor  = dark ? const Color(0xFF86EFAC) : const Color(0xFF3D6B58);
+    final nameColor      = dark ? const Color(0xFFF0FDF4) : const Color(0xFF0F2416);
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F6F6),
+      backgroundColor: dark ? const Color(0xFF0A1A10) : const Color(0xFFF6F6F6),
       body: RefreshIndicator(
         onRefresh: _load,
         color: AppColors.primary,
@@ -179,22 +196,17 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   // ── Hero gradient card ──────────────────────────────
                   Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFB2F0D8), Color(0xFFE8FAF2)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
+                    decoration: BoxDecoration(gradient: heroGradient),
                     padding: EdgeInsets.only(
                       top: MediaQuery.of(context).padding.top + 16,
-                      left: 20, right: 20, bottom: 20,
+                      left: 20, right: 20, bottom: 24,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Greeting row + points badge
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
                               child: Column(
@@ -202,28 +214,34 @@ class _HomeScreenState extends State<HomeScreen>
                                 children: [
                                   Text(
                                     _greeting(),
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      color: Color(0xFF3D6B58),
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: greetingColor,
                                       fontWeight: FontWeight.w400,
+                                      letterSpacing: 0.2,
                                     ),
                                   ),
+                                  const SizedBox(height: 2),
                                   Row(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Flexible(
                                         child: Text(
                                           firstName,
-                                          style: const TextStyle(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.w800,
-                                            color: Color(0xFF1A3A2B),
+                                          style: GoogleFonts.instrumentSerif(
+                                            fontSize: 42,
+                                            color: nameColor,
+                                            height: 1.1,
                                           ),
                                           overflow: TextOverflow.ellipsis,
                                           maxLines: 1,
                                         ),
                                       ),
                                       const SizedBox(width: 6),
-                                      const Text('👋', style: TextStyle(fontSize: 20)),
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 6),
+                                        child: Text('👋', style: TextStyle(fontSize: 26)),
+                                      ),
                                     ],
                                   ),
                                 ],
