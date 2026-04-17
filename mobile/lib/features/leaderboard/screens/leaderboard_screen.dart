@@ -373,7 +373,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   },
                   child: Container(
                     color: isMyTeam
-                        ? AppColors.primarySurface
+                        ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface)
                         : Colors.transparent,
                     padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
                     child: Row(
@@ -616,7 +616,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     });
                   },
                   child: Container(
-                    color: isMe ? AppColors.primarySurface : Colors.transparent,
+                    color: isMe ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface) : Colors.transparent,
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                     child: Row(
                       children: [
@@ -963,7 +963,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 rank: 1,
                 animatedBase: 96 * _podiumAnim.value,
                 targetBase: 96,
-                bgColor: AppColors.primarySurface,
+                bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface,
                 rankColor: AppColors.primary,
                 rankLabel: '1st',
                 isTeam: isTeam,

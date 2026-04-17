@@ -236,8 +236,8 @@ class _FeedScreenState extends State<FeedScreen>
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                         decoration: BoxDecoration(
                                           color: reacted
-                                              ? AppColors.primarySurface
-                                              : AppColors.background,
+                                              ? Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface
+                                              : Theme.of(context).colorScheme.surface,
                                           borderRadius: BorderRadius.circular(20),
                                           border: Border.all(
                                             color: reacted ? AppColors.primary.withValues(alpha: 0.4) : AppColors.border,

@@ -203,15 +203,16 @@ class _ProfileScreenState extends State<ProfileScreen>
                     // Icon + colours per type
                     final String iconEmoji;
                     final Color iconBg;
+                    final isDark = Theme.of(context).brightness == Brightness.dark;
                     if (isManual) {
                       iconEmoji = '🎁';
-                      iconBg = AppColors.primaryMint;
+                      iconBg = context.primaryMint;
                     } else if (isMissed) {
                       iconEmoji = '❌';
-                      iconBg = const Color(0xFFFEF2F2);
+                      iconBg = isDark ? const Color(0xFF3D1515) : const Color(0xFFFEF2F2);
                     } else {
                       iconEmoji = '✅';
-                      iconBg = AppColors.primarySurface;
+                      iconBg = context.primarySurface;
                     }
 
                     return Column(

@@ -362,7 +362,7 @@ class _WeekTab extends StatelessWidget {
           margin: const EdgeInsets.only(right: 8, bottom: 10),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? AppColors.primary : Colors.white,
+            color: selected ? AppColors.primary : Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: selected ? AppColors.primary : AppColors.border),
           ),
@@ -371,7 +371,7 @@ class _WeekTab extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: selected ? Colors.white : AppColors.textSecondary,
+              color: selected ? Colors.white : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
             ),
           ),
         ),
@@ -417,7 +417,7 @@ class _TaskCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: status == 'rejected' ? AppColors.rejected.withValues(alpha: 0.4) : AppColors.border,
@@ -437,7 +437,7 @@ class _TaskCard extends StatelessWidget {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: AppColors.divider,
+                    color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(child: Text(icon, style: const TextStyle(fontSize: 22))),
