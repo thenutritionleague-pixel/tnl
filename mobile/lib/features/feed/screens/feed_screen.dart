@@ -220,38 +220,7 @@ class _FeedScreenState extends State<FeedScreen>
                                   ],
                                 ),
                               ),
-                              // Reactions
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(12, 10, 16, 12),
-                                child: Row(
-                                  children: _reactions.map((emoji) {
-                                    final reactionKey = _emojiToKey(emoji);
-                                    final count = counts[reactionKey] ?? 0;
-                                    final reacted = _hasReacted(reactions, reactionKey);
-                                    return GestureDetector(
-                                      onTap: () => _toggleReaction(post['id'], reactionKey),
-                                      child: AnimatedContainer(
-                                        duration: const Duration(milliseconds: 200),
-                                        margin: const EdgeInsets.only(right: 8),
-                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                        decoration: BoxDecoration(
-                                          color: reacted
-                                              ? Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface
-                                              : Theme.of(context).colorScheme.surface,
-                                          borderRadius: BorderRadius.circular(20),
-                                          border: Border.all(
-                                            color: reacted ? AppColors.primary.withValues(alpha: 0.4) : Theme.of(context).colorScheme.outline,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          count > 0 ? '$emoji $count' : emoji,
-                                          style: const TextStyle(fontSize: 14),
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                ),
-                              ),
+                              // Reactions hidden for now
                             ],
                           ),
                         );

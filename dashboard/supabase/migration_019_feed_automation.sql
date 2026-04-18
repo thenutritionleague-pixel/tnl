@@ -237,8 +237,8 @@ select cron.schedule(
     select
       c.org_id,
       'announcement',
-      '🥦 New day, new points!',
-      'Don''t forget to log your healthy habits today. Every submission counts toward your team''s score!',
+      '🌟 New day, new points!',
+      'Don''t forget to complete today''s tasks. Every submission counts toward your team''s score!',
       c.id,
       true
     from challenges c
