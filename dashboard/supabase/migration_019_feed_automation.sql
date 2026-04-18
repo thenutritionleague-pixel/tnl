@@ -131,7 +131,7 @@ begin
   -- Current rank of this team (after this insert)
   select rank into v_new_rank from (
     select
-      team_id,
+      tm.team_id,
       rank() over (order by sum(t.points) desc) as rank
     from task_submissions s
     join tasks t on t.id = s.task_id
@@ -139,14 +139,14 @@ begin
     where s.challenge_id = v_challenge_id
       and s.org_id = NEW.org_id
       and s.status = 'approved'
-    group by team_id
+    group by tm.team_id
   ) ranked
-  where team_id = v_team_id;
+  where ranked.team_id = v_team_id;
 
   -- Rank before this point (approximate: subtract this transaction)
   select rank into v_prev_rank from (
     select
-      team_id,
+      tm.team_id,
       rank() over (order by
         sum(t.points) - (case when tm2.team_id = v_team_id then NEW.amount else 0 end) desc
       ) as rank
@@ -157,9 +157,9 @@ begin
     where s.challenge_id = v_challenge_id
       and s.org_id = NEW.org_id
       and s.status = 'approved'
-    group by team_id
+    group by tm.team_id
   ) ranked
-  where team_id = v_team_id;
+  where ranked.team_id = v_team_id;
 
   -- Post feed item only if rank actually improved
   if v_prev_rank is not null and v_new_rank < v_prev_rank then
