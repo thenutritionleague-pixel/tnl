@@ -264,7 +264,7 @@ export interface TeamStatAdmin {
   total: number
 }
 
-export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[] }> {
+export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[]; currentWeek: number }> {
   const client = await createAdminClient()
 
   const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes] = await Promise.all([

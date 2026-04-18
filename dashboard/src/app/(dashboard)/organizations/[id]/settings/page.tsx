@@ -107,7 +107,7 @@ export default function OrgSettingsPage({ params }: { params: Promise<{ id: stri
     if ('error' in result && result.error) {
       setLogoError(result.error)
     } else if ('publicUrl' in result) {
-      setLogoUrl(result.publicUrl)
+      setLogoUrl(result.publicUrl ?? null)
     }
     setLogoUploading(false)
     if (logoInputRef.current) logoInputRef.current.value = ''
