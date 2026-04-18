@@ -42,8 +42,13 @@ class PolicyDetailScreen extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: iconBg,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Theme.of(context).colorScheme.surface
+                    : iconBg,
                 borderRadius: BorderRadius.circular(20),
+                border: Theme.of(context).brightness == Brightness.dark
+                    ? Border.all(color: Theme.of(context).colorScheme.outline)
+                    : null,
               ),
               child: Row(
                 children: [
@@ -51,7 +56,7 @@ class PolicyDetailScreen extends StatelessWidget {
                     width: 52,
                     height: 52,
                     decoration: BoxDecoration(
-                      color: iconColor.withValues(alpha: 0.15),
+                      color: iconColor.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.2 : 0.15),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(icon, color: iconColor, size: 26),
@@ -62,7 +67,9 @@ class PolicyDetailScreen extends StatelessWidget {
                         style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w800,
-                            color: iconColor)),
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Theme.of(context).colorScheme.onSurface
+                                : iconColor)),
                   ),
                 ],
               ),

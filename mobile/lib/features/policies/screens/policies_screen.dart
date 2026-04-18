@@ -112,7 +112,9 @@ class _PoliciesScreenState extends State<PoliciesScreen> {
                                   width: 44,
                                   height: 44,
                                   decoration: BoxDecoration(
-                                    color: style.bg,
+                                    color: Theme.of(context).brightness == Brightness.dark
+                                        ? style.iconColor.withValues(alpha: 0.18)
+                                        : style.bg,
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Icon(style.icon, color: style.iconColor, size: 22),
