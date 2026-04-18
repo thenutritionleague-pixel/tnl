@@ -71,7 +71,7 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
                 const SizedBox(height: 24),
                 const Text(
-                  'Yi Nutrition League',
+                  'The Nutrition League',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 26,

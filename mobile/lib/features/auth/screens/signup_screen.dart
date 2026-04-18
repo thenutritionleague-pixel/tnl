@@ -94,7 +94,7 @@ class _SignupScreenState extends State<SignupScreen> {
                         child: Text('🥦', style: TextStyle(fontSize: 24))),
                   ),
                   const SizedBox(width: 12),
-                  Text('Yi Nutrition League 2.0',
+                  Text('The Nutrition League 2.0',
                       style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 15,

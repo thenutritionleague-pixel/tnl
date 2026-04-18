@@ -1,6 +1,6 @@
 'use server'
 /**
- * Yi Nutrition League — Supabase query functions
+ * The Nutrition League — Supabase query functions
  * All pages import from here; server-side admin client (bypasses RLS) is used throughout.
  */
 

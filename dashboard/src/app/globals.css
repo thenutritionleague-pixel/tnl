@@ -48,7 +48,7 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Yi Nutrition League — Light Mode */
+/* The Nutrition League — Light Mode */
 :root {
   --background: oklch(0.984 0.003 247.858);
   --foreground: oklch(0.228 0.023 264.364);
@@ -88,7 +88,7 @@
   --sidebar-ring: oklch(0.596 0.145 163.225);
 }
 
-/* Yi Nutrition League — Dark Mode */
+/* The Nutrition League — Dark Mode */
 .dark {
   --background: oklch(0.14 0.02 264);
   --foreground: oklch(0.95 0 0);

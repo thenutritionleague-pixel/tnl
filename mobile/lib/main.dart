@@ -27,7 +27,7 @@ class YiNutritionApp extends StatelessWidget {
       valueListenable: themeNotifier,
       builder: (_, mode, __) {
         return MaterialApp.router(
-          title: 'Yi Nutrition League',
+          title: 'The Nutrition League',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,

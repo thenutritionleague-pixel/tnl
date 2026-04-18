@@ -28,7 +28,7 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               Text(
-                'Yi Nutrition League',
+                'The Nutrition League',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: context.textPrimary),
                 textAlign: TextAlign.center,
               ),

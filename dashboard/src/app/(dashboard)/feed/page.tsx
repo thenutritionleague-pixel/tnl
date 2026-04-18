@@ -23,7 +23,7 @@ const feedItems: FeedItem[] = [
     source: "admin",
     timestamp: "Apr 7, 2026 · 9:00 AM",
     content:
-      "Welcome to Week 2 of the Yi Nutrition League! This week's bonus challenge is out — complete the Healthy Cooking Workshop for extra 🥦 40 pts.",
+      "Welcome to Week 2 of the The Nutrition League! This week's bonus challenge is out — complete the Healthy Cooking Workshop for extra 🥦 40 pts.",
     reactions: 14,
   },
   {

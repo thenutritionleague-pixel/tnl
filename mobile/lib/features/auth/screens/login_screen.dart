@@ -184,7 +184,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Yi Nutrition League 2.0',
+                      Text('The Nutrition League 2.0',
                           style: TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 15,

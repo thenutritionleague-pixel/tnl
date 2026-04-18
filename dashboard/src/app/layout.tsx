@@ -17,8 +17,8 @@ const instrumentSans = Instrument_Sans({
 })
 
 export const metadata: Metadata = {
-  title: 'Yi Nutrition League | Admin',
-  description: 'Yi Nutrition League Admin Dashboard',
+  title: 'The Nutrition League | Admin',
+  description: 'The Nutrition League Admin Dashboard',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

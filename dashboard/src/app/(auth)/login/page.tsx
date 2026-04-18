@@ -211,7 +211,7 @@ function LoginContent() {
         </div>
 
         <div className="relative z-10 mt-auto pt-12">
-          <p className="text-slate-600 text-xs">Yi Nutrition League · Admin Portal · 2026</p>
+          <p className="text-slate-600 text-xs">The Nutrition League · Admin Portal · 2026</p>
         </div>
       </div>
 

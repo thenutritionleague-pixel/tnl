@@ -245,7 +245,7 @@ export default function OrgTeamsPage({ params }: { params: Promise<{ id: string 
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-heading text-lg text-foreground leading-snug">{team.name}</p>
-                <p className="text-xs text-muted-foreground">Yi Nutrition League 2.0</p>
+                <p className="text-xs text-muted-foreground">The Nutrition League 2.0</p>
                 <p className="text-xs text-muted-foreground">{team.members.length} members</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">

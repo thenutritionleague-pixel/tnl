@@ -121,7 +121,7 @@ export function AppSidebar({ profile, orgName, orgEmoji, orgLogoUrl }: { profile
               🥦
             </div>
             <div className="leading-tight">
-              <p className="text-sm font-bold text-foreground">Yi Nutrition League</p>
+              <p className="text-sm font-bold text-foreground">The Nutrition League</p>
               <p className="text-xs text-muted-foreground">Admin</p>
             </div>
           </Link>
