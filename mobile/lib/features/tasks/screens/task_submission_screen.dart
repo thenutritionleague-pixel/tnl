@@ -301,7 +301,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                   border: Border.all(
                     color: _selectedImage != null
                         ? AppColors.primary
-                        : AppColors.border,
+                        : Theme.of(context).colorScheme.outline,
                     width: _selectedImage != null ? 2 : 1,
                   ),
                   boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8)],
@@ -394,7 +394,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 decoration: BoxDecoration(
                   color: _submitting
                       ? AppColors.primary.withValues(alpha: 0.6)
-                      : (_selectedImage != null ? AppColors.primary : AppColors.border),
+                      : (_selectedImage != null ? AppColors.primary : Theme.of(context).colorScheme.outline),
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Center(

@@ -162,7 +162,7 @@ class _FeedScreenState extends State<FeedScreen>
                             border: Border.all(
                               color: isPinned
                                   ? AppColors.primary.withValues(alpha: 0.35)
-                                  : AppColors.border,
+                                  : Theme.of(context).colorScheme.outline,
                             ),
                             boxShadow: isPinned
                                 ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.08), blurRadius: 12)]
@@ -240,7 +240,7 @@ class _FeedScreenState extends State<FeedScreen>
                                               : Theme.of(context).colorScheme.surface,
                                           borderRadius: BorderRadius.circular(20),
                                           border: Border.all(
-                                            color: reacted ? AppColors.primary.withValues(alpha: 0.4) : AppColors.border,
+                                            color: reacted ? AppColors.primary.withValues(alpha: 0.4) : Theme.of(context).colorScheme.outline,
                                           ),
                                         ),
                                         child: Text(

@@ -364,7 +364,7 @@ class _WeekTab extends StatelessWidget {
           decoration: BoxDecoration(
             color: selected ? AppColors.primary : Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: selected ? AppColors.primary : AppColors.border),
+            border: Border.all(color: selected ? AppColors.primary : Theme.of(context).colorScheme.outline),
           ),
           child: Text(
             label,
@@ -420,7 +420,7 @@ class _TaskCard extends StatelessWidget {
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: status == 'rejected' ? AppColors.rejected.withValues(alpha: 0.4) : AppColors.border,
+          color: status == 'rejected' ? AppColors.rejected.withValues(alpha: 0.4) : Theme.of(context).colorScheme.outline,
           width: status == 'rejected' ? 1.5 : 1,
         ),
       ),
