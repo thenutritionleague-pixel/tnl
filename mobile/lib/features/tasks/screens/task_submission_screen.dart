@@ -224,9 +224,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(18),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+                border: Border.all(color: Theme.of(context).colorScheme.outline),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -368,9 +368,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: context.borderColor),
+                    border: Border.all(color: Theme.of(context).colorScheme.outline),
                   ),
                   child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
