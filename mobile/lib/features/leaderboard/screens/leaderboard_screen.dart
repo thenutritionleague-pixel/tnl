@@ -273,11 +273,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Leaderboard',
+                  Text('Leaderboard',
                       style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFF1A3A2B))),
+                          color: dark ? const Color(0xFFF0FDF4) : const Color(0xFF1A3A2B))),
                 ],
               ),
             ),
@@ -302,11 +302,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 
   // ── Tab bar ───────────────────────────────────────────────────────────────
   Widget _buildTabBar() => Container(
-        color: Theme.of(context).colorScheme.surface,
+        color: Theme.of(context).scaffoldBackgroundColor,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Container(
           decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
+              color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(30)),
           child: Row(
             children: [
@@ -1161,7 +1161,9 @@ class _TabPill extends StatelessWidget {
             margin: const EdgeInsets.all(4),
             padding: const EdgeInsets.symmetric(vertical: 10),
             decoration: BoxDecoration(
-              color: selected ? Theme.of(context).colorScheme.surface : Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
+              color: selected
+                  ? AppColors.primary
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(26),
               boxShadow: selected
                   ? [
@@ -1178,7 +1180,7 @@ class _TabPill extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: selected ? AppColors.primary : context.textHint,
+                color: selected ? Colors.white : context.textSecondary,
               ),
             ),
           ),
