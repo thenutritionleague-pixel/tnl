@@ -50,7 +50,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 
   // ── Task breakdown display state ─────────────────────────────────────────
   DateTime? _challengeStartDate;
-  final Set<int> _expandedPastWeeks = {};
 
   // ── Init ──────────────────────────────────────────────────────────────────
   @override
@@ -808,8 +807,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           final weekTotal = entries.fold<int>(
               0, (sum, t) => sum + ((t['points'] as int?) ?? 0));
           final isPastWeek = week < currentWeek;
-          final isExpanded =
-              !isPastWeek || _expandedPastWeeks.contains(week);
 
           return Padding(
             padding: EdgeInsets.only(bottom: isLastWeek ? 4 : 12),
@@ -817,48 +814,29 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Week header
-                GestureDetector(
-                  onTap: isPastWeek
-                      ? () => setState(() {
-                            _expandedPastWeeks.contains(week)
-                                ? _expandedPastWeeks.remove(week)
-                                : _expandedPastWeeks.add(week);
-                          })
-                      : null,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Text('Week $week',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                      const SizedBox(width: 8),
-                      Text('🥦 $weekTotal pts',
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Text('Week $week',
                           style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.primary)),
-                      if (isPastWeek) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          isExpanded
-                              ? Icons.expand_less
-                              : Icons.expand_more,
-                          size: 14,
-                          color: context.textHint,
-                        ),
-                      ],
-                    ],
-                  ),
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('🥦 $weekTotal pts',
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary)),
+                  ],
                 ),
-                if (isExpanded) ...[
+                ...[
                   const SizedBox(height: 6),
                   // Past weeks: aggregate summary rows
                   if (isPastWeek) ..._buildAggregateRows(entries),
