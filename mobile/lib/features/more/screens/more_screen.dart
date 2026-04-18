@@ -19,6 +19,7 @@ class _MoreScreenState extends State<MoreScreen>
     with SessionAwareMixin {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _team;
+  bool _loaded = false;
 
   @override
   void initState() {
@@ -42,6 +43,7 @@ class _MoreScreenState extends State<MoreScreen>
         setState(() {
           _profile = profile;
           _team = team;
+          _loaded = true;
         });
       }
     } catch (_) {}
@@ -85,7 +87,27 @@ class _MoreScreenState extends State<MoreScreen>
           const SizedBox(height: 24),
 
           // Invite Member — captains and vice captains only
-          if (_isCaptainOrVC()) ...[
+          // While loading, keep an invisible placeholder so layout doesn't shift
+          if (!_loaded)
+            Visibility(
+              visible: false,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _SectionTitle(title: 'Team'),
+                  _MenuItem(
+                    icon: '➕',
+                    label: 'Invite Member',
+                    subtitle: 'Add someone to your team',
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            )
+          else if (_isCaptainOrVC()) ...[
             _SectionTitle(title: 'Team'),
             _MenuItem(
               icon: '➕',
