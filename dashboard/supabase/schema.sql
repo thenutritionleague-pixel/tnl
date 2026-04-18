@@ -355,7 +355,9 @@ create table if not exists policies (
 -- ────────────────────────────────────────────────────────────────
 
 -- Total approved points per team per challenge
-create or replace view team_points_view as
+create or replace view team_points_view
+with (security_invoker = on)
+as
 select
   tm.team_id,
   s.challenge_id,
@@ -369,7 +371,9 @@ left join tasks t on t.id = s.task_id
 group by tm.team_id, s.challenge_id;
 
 -- Approved points per member per week per challenge
-create or replace view member_week_points_view as
+create or replace view member_week_points_view
+with (security_invoker = on)
+as
 select
   s.user_id,
   s.challenge_id,

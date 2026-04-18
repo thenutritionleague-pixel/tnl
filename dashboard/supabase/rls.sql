@@ -312,12 +312,31 @@ create policy "invite_whitelist: read own invite"
   using (email = auth.jwt() ->> 'email');
 
 -- ────────────────────────────────────────────────────────────────
+-- TASK TEAMS
+-- Controls per-team task visibility. Dashboard uses service role.
+-- Mobile doesn't query this table directly, but add a read policy
+-- so authenticated users can read task_teams for their org's tasks.
+-- ────────────────────────────────────────────────────────────────
+alter table task_teams enable row level security;
+
+create policy "task_teams: read via task org"
+  on task_teams for select
+  to authenticated
+  using (
+    exists (
+      select 1 from tasks tk
+      join challenges c on c.id = tk.challenge_id
+      where tk.id = task_id
+        and c.org_id = auth_user_org_id()
+    )
+  );
+
+-- ────────────────────────────────────────────────────────────────
 -- ADMIN USERS
 -- Dashboard uses service role only. No mobile access.
 -- ────────────────────────────────────────────────────────────────
 alter table admin_users enable row level security;
 -- No authenticated policies — dashboard queries go through service role.
--- If you need anon to check admin status, add a specific policy here.
 
 -- ────────────────────────────────────────────────────────────────
 -- STORAGE: task-proofs bucket
