@@ -147,12 +147,12 @@ class _EventsScreenState extends State<EventsScreen> {
                                     Row(
                                       children: [
                                         if (location.isNotEmpty) ...[
-                                          const Icon(Icons.location_on_outlined, size: 14, color: AppColors.textHint),
+                                          Icon(Icons.location_on_outlined, size: 14, color: context.textHint),
                                           const SizedBox(width: 4),
                                           Text(location, style: TextStyle(fontSize: 12, color: context.textHint)),
                                           const SizedBox(width: 14),
                                         ],
-                                        const Icon(Icons.people_outline_rounded, size: 14, color: AppColors.textHint),
+                                        Icon(Icons.people_outline_rounded, size: 14, color: context.textHint),
                                         const SizedBox(width: 4),
                                         Text('$attendeeCount joined', style: TextStyle(fontSize: 12, color: context.textHint)),
                                       ],

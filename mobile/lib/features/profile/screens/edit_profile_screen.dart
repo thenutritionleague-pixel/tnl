@@ -163,7 +163,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 'Save',
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
-                  color: _nameDirty ? AppColors.primary : AppColors.textHint,
+                  color: _nameDirty ? AppColors.primary : context.textHint,
                 ),
               ),
             ),

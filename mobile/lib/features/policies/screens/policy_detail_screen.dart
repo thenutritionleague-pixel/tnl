@@ -95,25 +95,25 @@ class PolicyDetailScreen extends StatelessWidget {
                           margin: Margins.zero,
                           padding: HtmlPaddings.all(20),
                           fontSize: FontSize(14),
-                          color: AppColors.textSecondary,
+                          color: context.textSecondary,
                           lineHeight: const LineHeight(1.75),
                         ),
                         'h1': Style(
                           fontSize: FontSize(22),
                           fontWeight: FontWeight.w800,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                           margin: Margins.only(top: 8, bottom: 8),
                         ),
                         'h2': Style(
                           fontSize: FontSize(18),
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                           margin: Margins.only(top: 16, bottom: 6),
                         ),
                         'h3': Style(
                           fontSize: FontSize(15),
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                           margin: Margins.only(top: 12, bottom: 4),
                         ),
                         'p': Style(
@@ -130,7 +130,7 @@ class PolicyDetailScreen extends StatelessWidget {
                         ),
                         'strong': Style(
                           fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
+                          color: context.textPrimary,
                         ),
                         'a': Style(
                           color: AppColors.primary,
@@ -141,7 +141,7 @@ class PolicyDetailScreen extends StatelessWidget {
                             left: BorderSide(color: AppColors.primary, width: 3),
                           ),
                           padding: HtmlPaddings.only(left: 12),
-                          color: AppColors.textHint,
+                          color: context.textHint,
                           fontStyle: FontStyle.italic,
                         ),
                       },

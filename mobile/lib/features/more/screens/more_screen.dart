@@ -422,7 +422,7 @@ class _MenuItem extends StatelessWidget {
             : null,
         trailing: Icon(
           onTap != null ? Icons.chevron_right_rounded : Icons.lock_outline_rounded,
-          color: AppColors.textHint,
+          color: context.textHint,
           size: 20,
         ),
         onTap: onTap,

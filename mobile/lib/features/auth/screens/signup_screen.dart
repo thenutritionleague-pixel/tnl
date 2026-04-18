@@ -159,8 +159,8 @@ class _SignupScreenState extends State<SignupScreen> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.email_outlined,
-                              color: AppColors.textHint, size: 18),
+                          Icon(Icons.email_outlined,
+                              color: context.textHint, size: 18),
                           const SizedBox(width: 10),
                           Text(widget.email,
                               style: TextStyle(

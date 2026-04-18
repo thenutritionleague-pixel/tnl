@@ -83,8 +83,8 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                       children: [
                         GestureDetector(
                           onTap: () => context.pop(),
-                          child: const Icon(Icons.arrow_back_ios_new_rounded,
-                              size: 18, color: AppColors.textPrimary),
+                          child: Icon(Icons.arrow_back_ios_new_rounded,
+                              size: 18, color: context.textPrimary),
                         ),
                         const SizedBox(width: 10),
                         Text(
@@ -252,8 +252,8 @@ class _HistoryCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Row(
                         children: [
-                          const Icon(Icons.calendar_today_outlined,
-                              size: 11, color: AppColors.textHint),
+                          Icon(Icons.calendar_today_outlined,
+                              size: 11, color: context.textHint),
                           const SizedBox(width: 3),
                           Text(
                             displayDate,
@@ -337,7 +337,7 @@ class _HistoryCard extends StatelessWidget {
                               fontSize: 11.5,
                               color: hasRejectionReason
                                   ? AppColors.rejected
-                                  : AppColors.textSecondary,
+                                  : context.textSecondary,
                               height: 1.4,
                             ),
                           ),

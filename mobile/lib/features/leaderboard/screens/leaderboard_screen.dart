@@ -399,7 +399,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                         fontSize: 14,
                                         color: isMyTeam
                                             ? AppColors.primary
-                                            : AppColors.textPrimary,
+                                            : context.textPrimary,
                                       ),
                                     ),
                                   ),
@@ -422,8 +422,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         AnimatedRotation(
                           turns: isExpanded ? 0.5 : 0,
                           duration: const Duration(milliseconds: 250),
-                          child: const Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 20, color: AppColors.textHint),
+                          child: Icon(Icons.keyboard_arrow_down_rounded,
+                              size: 20, color: context.textHint),
                         ),
                       ],
                     ),
@@ -524,8 +524,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       AnimatedRotation(
                         turns: isExpanded ? 0.5 : 0,
                         duration: const Duration(milliseconds: 220),
-                        child: const Icon(Icons.keyboard_arrow_down_rounded,
-                            size: 16, color: AppColors.textHint),
+                        child: Icon(Icons.keyboard_arrow_down_rounded,
+                            size: 16, color: context.textHint),
                       ),
                     ],
                   ),
@@ -636,7 +636,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                   style: TextStyle(
                                       fontWeight: FontWeight.w700,
                                       fontSize: 14,
-                                      color: isMe ? AppColors.primary : AppColors.textPrimary),
+                                      color: isMe ? AppColors.primary : context.textPrimary),
                                 ),
                               ),
                               if (isMe) ...[
@@ -651,8 +651,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         AnimatedRotation(
                           turns: isExpanded ? 0.5 : 0,
                           duration: const Duration(milliseconds: 250),
-                          child: const Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 20, color: AppColors.textHint),
+                          child: Icon(Icons.keyboard_arrow_down_rounded,
+                              size: 20, color: context.textHint),
                         ),
                       ],
                     ),
@@ -852,7 +852,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               ? Icons.expand_less
                               : Icons.expand_more,
                           size: 14,
-                          color: AppColors.textHint,
+                          color: context.textHint,
                         ),
                       ],
                     ],
@@ -874,7 +874,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       final (statusIcon, statusColor) = switch (status) {
                         'approved' => ('✅', AppColors.primary),
                         'rejected' => ('❌', AppColors.rejected),
-                        _ => ('⏳', AppColors.textHint),
+                        _ => ('⏳', context.textHint),
                       };
 
                       return Padding(
@@ -1062,7 +1062,7 @@ class _PodiumCard extends StatelessWidget {
             style: TextStyle(
               fontSize: rank == 1 ? 13 : 11,
               fontWeight: FontWeight.w700,
-              color: isHighlighted ? AppColors.primary : AppColors.textPrimary,
+              color: isHighlighted ? AppColors.primary : context.textPrimary,
             ),
             textAlign: TextAlign.center,
             maxLines: 2,
@@ -1178,7 +1178,7 @@ class _TabPill extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: selected ? AppColors.primary : AppColors.textHint,
+                color: selected ? AppColors.primary : context.textHint,
               ),
             ),
           ),

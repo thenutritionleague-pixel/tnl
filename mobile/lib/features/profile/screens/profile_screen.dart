@@ -241,7 +241,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                                         style: TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w600,
-                                            color: isMissed ? AppColors.textSecondary : AppColors.textPrimary),
+                                            color: isMissed ? context.textSecondary : context.textPrimary),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis),
                                     Text(date, style: TextStyle(fontSize: 11, color: context.textHint)),

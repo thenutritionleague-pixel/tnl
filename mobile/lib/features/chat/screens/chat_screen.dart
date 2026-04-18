@@ -184,7 +184,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                           Text(content,
                                               style: TextStyle(
                                                   fontSize: 14,
-                                                  color: isMe ? Colors.white : AppColors.textPrimary)),
+                                                  color: isMe ? Colors.white : context.textPrimary)),
                                         ],
                                       ),
                                     ),

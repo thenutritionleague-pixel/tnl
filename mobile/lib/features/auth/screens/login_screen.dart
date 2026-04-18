@@ -324,8 +324,8 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             IconButton(
               onPressed: () => setState(() { _step = 1; _error = ''; }),
-              icon: const Icon(Icons.arrow_back_rounded,
-                  color: AppColors.textPrimary),
+              icon: Icon(Icons.arrow_back_rounded,
+                  color: context.textPrimary),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
             ),
