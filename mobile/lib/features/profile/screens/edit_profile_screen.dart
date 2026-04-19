@@ -23,12 +23,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _nameDirty = false;
   bool _uploadingAvatar = false;
   String? _avatarUrl;
+  late String _email;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.profile['name'] as String? ?? '');
     _avatarUrl = widget.profile['avatar_url'] as String?;
+    _email = widget.profile['email'] as String? ?? '';
     _nameCtrl.addListener(() {
       final dirty = _nameCtrl.text.trim() != (widget.profile['name'] as String? ?? '').trim();
       if (dirty != _nameDirty) setState(() => _nameDirty = dirty);
@@ -119,22 +121,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  void _openEmailChange() {
-    showModalBottomSheet(
+  Future<void> _openEmailChange() async {
+    final newEmail = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _EmailChangeSheet(
         profileId: widget.profile['id'] as String,
-        currentEmail: widget.profile['email'] as String? ?? '',
+        currentEmail: _email,
       ),
     );
+    if (newEmail != null && mounted) {
+      setState(() => _email = newEmail);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final name = widget.profile['name'] as String? ?? '';
-    final email = widget.profile['email'] as String? ?? '';
     final avatarColor = widget.profile['avatar_color'] as String?;
 
     return Scaffold(
@@ -193,7 +197,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       decoration: BoxDecoration(
                         color: _uploadingAvatar ? AppColors.border : AppColors.primary,
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
+                        border: Border.all(
+                            color: Theme.of(context).scaffoldBackgroundColor,
+                            width: 2),
                       ),
                       child: _uploadingAvatar
                           ? const Padding(
@@ -246,7 +252,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(email,
+                  child: Text(_email,
                       style: TextStyle(fontSize: 15, color: context.textSecondary)),
                 ),
                 GestureDetector(
@@ -343,7 +349,7 @@ class _EmailChangeSheetState extends State<_EmailChangeSheet> {
       await AuthService.verifyEmailChange(_pendingEmail, code);
       await ProfileService.updateEmail(widget.profileId, _pendingEmail);
       if (mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(_pendingEmail); // return new email to parent
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Email updated successfully'),
@@ -515,7 +521,7 @@ class _OtpBox extends StatelessWidget {
           counterText: '',
           contentPadding: EdgeInsets.zero,
           filled: true,
-          fillColor: AppColors.primarySurface,
+          fillColor: context.primarySurface,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: context.borderColor, width: 1.5),

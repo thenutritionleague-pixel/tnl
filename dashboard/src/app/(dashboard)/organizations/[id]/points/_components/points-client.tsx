@@ -80,16 +80,18 @@ function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWee
             {/* Rows */}
             {isExpanded && isPastWeek && agg && Object.entries(agg).map(([taskTitle, data]) => {
               const approvedCount = data.approved.length
-              const totalDays = approvedCount + data.missed + data.rejected
               const ptsPerDay = data.approved[0]?.points ?? wk.tasks.find(t => t.title === taskTitle)?.pointsPerDay ?? 0
               const earned = data.approved.reduce((s, e) => s + e.points, 0)
-              const hasIssues = data.missed > 0 || data.rejected > 0
+              const totalDays = 7 // past weeks always have 7 calendar days
+              const implicitMissed = Math.max(0, 7 - approvedCount - data.rejected - data.missed)
+              const totalMissed = data.missed + implicitMissed
+              const hasIssues = totalMissed > 0 || data.rejected > 0
               const daysLabel = hasIssues
                 ? `${approvedCount}/${totalDays} days × ${ptsPerDay} pts`
                 : `${totalDays} days × ${ptsPerDay} pts`
               const indicators = [
                 data.rejected > 0 ? `${data.rejected} rejected` : '',
-                data.missed > 0 ? `${data.missed} missed` : '',
+                totalMissed > 0 ? `${totalMissed} missed` : '',
               ].filter(Boolean).join(' · ')
               return (
                 <div key={taskTitle} className="flex items-center justify-between px-5 py-2.5 border-t border-border/40">

@@ -154,74 +154,87 @@ class _FeedScreenState extends State<FeedScreen>
                         final content = post['content'] as String? ?? '';
                         final authorName = (post['profiles'] as Map?)?['name'] as String?;
 
+                        final accentColor = _TypeChip.colorFor(type);
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
+                          margin: const EdgeInsets.only(bottom: 8),
                           decoration: BoxDecoration(
                             color: context.surfaceColor,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: isPinned
-                                  ? AppColors.primary.withValues(alpha: 0.35)
-                                  : Theme.of(context).colorScheme.outline,
-                            ),
-                            boxShadow: isPinned
-                                ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.08), blurRadius: 12)]
-                                : null,
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Header row
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                                child: Row(
-                                  children: [
-                                    if (isPinned) ...[
-                                      const Icon(Icons.push_pin_rounded, size: 14, color: AppColors.primary),
-                                      const SizedBox(width: 4),
-                                    ],
-                                    _TypeChip(type: type, isAuto: isAuto),
-                                    const Spacer(),
-                                    Text(
-                                      _formatTime(post['created_at'] as String? ?? ''),
-                                      style: TextStyle(fontSize: 11, color: context.textHint),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(13),
+                            child: IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // Content
+                                  Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          // Top row: type label + pin + time
+                                          Row(
+                                            children: [
+                                              if (isPinned) ...[
+                                                const Icon(Icons.push_pin_rounded,
+                                                    size: 11, color: AppColors.primary),
+                                                const SizedBox(width: 3),
+                                              ],
+                                              Text(
+                                                _TypeChip.labelFor(type),
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: accentColor),
+                                              ),
+                                              const Spacer(),
+                                              Text(
+                                                _formatTime(post['created_at'] as String? ?? ''),
+                                                style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: context.textHint),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          // Title
+                                          if (title.isNotEmpty)
+                                            Text(
+                                              title,
+                                              style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: context.textPrimary),
+                                            ),
+                                          if (content.isNotEmpty) ...[
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              content,
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: context.textSecondary,
+                                                  height: 1.45),
+                                            ),
+                                          ],
+                                          if (!isAuto && authorName != null) ...[
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'by $authorName',
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: context.textHint,
+                                                  fontStyle: FontStyle.italic),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                              // Content
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (title.isNotEmpty)
-                                      Text(title,
-                                          style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w700,
-                                              color: context.textPrimary)),
-                                    if (content.isNotEmpty) ...[
-                                      const SizedBox(height: 4),
-                                      Text(content,
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              color: context.textSecondary,
-                                              height: 1.5)),
-                                    ],
-                                    if (!isAuto && authorName != null) ...[
-                                      const SizedBox(height: 6),
-                                      Text('Posted by $authorName',
-                                          style: TextStyle(
-                                              fontSize: 11,
-                                              color: context.textHint,
-                                              fontStyle: FontStyle.italic)),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              // Reactions hidden for now
-                            ],
+                            ),
                           ),
                         );
                       },
@@ -323,7 +336,7 @@ class _TypeChip extends StatelessWidget {
 
   const _TypeChip({required this.type, required this.isAuto});
 
-  Color get _color {
+  static Color colorFor(String type) {
     switch (type) {
       case 'announcement': return const Color(0xFF3B82F6);
       case 'achievement': return AppColors.gold;
@@ -336,7 +349,7 @@ class _TypeChip extends StatelessWidget {
     }
   }
 
-  String get _label {
+  static String labelFor(String type) {
     switch (type) {
       case 'announcement': return '📢 Announcement';
       case 'achievement': return '🏆 Achievement';
@@ -351,14 +364,15 @@ class _TypeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final color = colorFor(type);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: _color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(_label,
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _color)),
+      child: Text(labelFor(type),
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
     );
   }
 }

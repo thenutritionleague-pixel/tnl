@@ -15,6 +15,8 @@ Future<void> main() async {
     anonKey: SupabaseConfig.anonKey,
   );
 
+  await loadSavedTheme();
+
   runApp(const YiNutritionApp());
 }
 

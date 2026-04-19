@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/theme/theme_colors.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -48,8 +49,19 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDarkMode;
+    final bgColor = isDark ? Theme.of(context).scaffoldBackgroundColor : AppColors.primary;
+    final iconContainerColor = isDark
+        ? AppColors.primary.withValues(alpha: 0.15)
+        : Colors.white.withValues(alpha: 0.15);
+    final titleColor = isDark ? AppColors.primary : Colors.white;
+    final subtitleColor = isDark
+        ? context.textSecondary
+        : Colors.white.withValues(alpha: 0.75);
+    final spinnerColor = isDark ? AppColors.primary : Colors.white.withValues(alpha: 0.6);
+
     return Scaffold(
-      backgroundColor: AppColors.primary,
+      backgroundColor: bgColor,
       body: Center(
         child: FadeTransition(
           opacity: _fadeAnim,
@@ -62,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen>
                   width: 96,
                   height: 96,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: iconContainerColor,
                     borderRadius: BorderRadius.circular(28),
                   ),
                   child: const Center(
@@ -70,10 +82,10 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
                 const SizedBox(height: 24),
-                const Text(
+                Text(
                   'The Nutrition League',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: titleColor,
                     fontSize: 26,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,
@@ -83,7 +95,7 @@ class _SplashScreenState extends State<SplashScreen>
                 Text(
                   'Build Healthy Habits. Win Together.',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.75),
+                    color: subtitleColor,
                     fontSize: 14,
                     fontWeight: FontWeight.w400,
                   ),
@@ -94,8 +106,7 @@ class _SplashScreenState extends State<SplashScreen>
                   height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                        Colors.white.withValues(alpha: 0.6)),
+                    valueColor: AlwaysStoppedAnimation<Color>(spinnerColor),
                   ),
                 ),
               ],

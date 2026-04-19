@@ -159,7 +159,7 @@ class _HomeScreenState extends State<HomeScreen>
     final name = _profile?['name'] as String? ?? 'Member';
     final firstName = name.split(' ').first;
     final points = (_profile?['total_points'] as int?) ?? 0;
-    final challengeName = _activeChallenge?['name'] as String? ?? 'No active challenge';
+    final challengeName = _activeChallenge != null ? 'Active Challenge' : 'No active challenge';
     final weekLabel = _currentWeekLabel();
     final progress = _challengeProgress();
     final endDateStr = _activeChallenge?['end_date'] != null

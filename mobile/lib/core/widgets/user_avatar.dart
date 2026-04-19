@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
+import '../theme/theme_colors.dart';
 
 /// Avatar widget — shows a real photo if [avatarUrl] is set,
 /// otherwise falls back to a colored circle with initials.
@@ -37,10 +38,15 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bgAlpha = context.isDarkMode ? 0.28 : 0.15;
+    final textColor = context.isDarkMode
+        ? bgColor.withValues(alpha: 0.95)
+        : bgColor;
+
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
       return CircleAvatar(
         radius: radius,
-        backgroundColor: bgColor.withValues(alpha: 0.15),
+        backgroundColor: bgColor.withValues(alpha: bgAlpha),
         backgroundImage: NetworkImage(avatarUrl!),
         onBackgroundImageError: (_, __) {},
         child: null,
@@ -48,13 +54,13 @@ class UserAvatar extends StatelessWidget {
     }
     return CircleAvatar(
       radius: radius,
-      backgroundColor: bgColor.withValues(alpha: 0.15),
+      backgroundColor: bgColor.withValues(alpha: bgAlpha),
       child: Text(
         initials,
         style: TextStyle(
           fontSize: radius * 0.7,
           fontWeight: FontWeight.w700,
-          color: bgColor,
+          color: textColor,
         ),
       ),
     );

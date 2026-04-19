@@ -145,7 +145,6 @@ class _TasksScreenState extends State<TasksScreen>
     final weeks = _weeks;
     final grouped = _grouped;
     final sortedWeeks = grouped.keys.toList()..sort();
-    final currentWeekNum = weeks.isNotEmpty ? weeks.last : 1;
 
     return Scaffold(
       body: RefreshIndicator(
@@ -199,11 +198,6 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Week $currentWeekNum • ${'$_todayCount habit${_todayCount == 1 ? '' : 's'} to complete today'}',
-                      style: TextStyle(fontSize: 13, color: context.textSecondary),
                     ),
                     const SizedBox(height: 14),
 
@@ -555,7 +549,6 @@ class _TaskCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
               decoration: BoxDecoration(
                 color: AppColors.rejected.withValues(alpha: 0.07),
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
                 border: Border(
                   top: BorderSide(
                     color: AppColors.rejected.withValues(alpha: 0.2),

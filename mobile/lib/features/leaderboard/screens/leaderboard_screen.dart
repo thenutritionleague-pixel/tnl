@@ -397,7 +397,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                         fontWeight: FontWeight.w700,
                                         fontSize: 14,
                                         color: isMyTeam
-                                            ? AppColors.primary
+                                            ? (context.isDarkMode
+                                                ? Colors.white
+                                                : AppColors.primary)
                                             : context.textPrimary,
                                       ),
                                     ),
@@ -489,7 +491,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   });
                 },
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(18, 10, 18, (isExpanded || isLast) ? 0 : 10),
+                  padding: EdgeInsets.fromLTRB(18, 10, 18, isExpanded ? 0 : 10),
                   child: Row(
                     children: [
                       UserAvatar(
@@ -635,7 +637,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                   style: TextStyle(
                                       fontWeight: FontWeight.w700,
                                       fontSize: 14,
-                                      color: isMe ? AppColors.primary : context.textPrimary),
+                                      color: isMe
+                                          ? (context.isDarkMode ? Colors.white : AppColors.primary)
+                                          : context.textPrimary),
                                 ),
                               ),
                               if (isMe) ...[
@@ -682,6 +686,16 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return max(1, (diff / 7).floor() + 1);
   }
 
+  int _elapsedDaysInWeek(int weekNum) {
+    final s = _challengeStartDate;
+    if (s == null || weekNum < _currentWeek()) return 7; // past week = full 7 days
+    // Current week — count only days that have elapsed so far
+    final weekStart = DateTime(s.year, s.month, s.day)
+        .add(Duration(days: (weekNum - 1) * 7));
+    final elapsed = DateTime.now().difference(weekStart).inDays + 1;
+    return elapsed.clamp(1, 7);
+  }
+
   // ── Aggregate entries by task title ──────────────────────────────────────
   Map<String, Map<String, dynamic>> _aggregateWeekEntries(
       List<Map<String, dynamic>> entries) {
@@ -707,27 +721,29 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   }
 
   // ── Aggregate row widgets (past weeks) ───────────────────────────────────
-  List<Widget> _buildAggregateRows(List<Map<String, dynamic>> entries) {
+  List<Widget> _buildAggregateRows(List<Map<String, dynamic>> entries, {int elapsedDays = 7}) {
     final agg = _aggregateWeekEntries(entries);
     return agg.entries.map((e) {
       final title = e.key;
       final data = e.value;
       final approved = data['approved'] as List<Map<String, dynamic>>;
-      final missed = data['missed'] as int;
+      final explicitMissed = data['missed'] as int;
       final rejected = data['rejected'] as int;
       final ptsPerDay = approved.isNotEmpty
           ? (approved.first['points'] as int? ?? 0)
           : 0;
       final earned =
           approved.fold<int>(0, (s, x) => s + (x['points'] as int? ?? 0));
-      final totalDays = approved.length + missed + rejected;
-      final hasIssues = missed > 0 || rejected > 0;
+      final implicitMissed = max(0, elapsedDays - approved.length - rejected - explicitMissed);
+      final totalMissed = explicitMissed + implicitMissed;
+      final totalDays = elapsedDays;
+      final hasIssues = totalMissed > 0 || rejected > 0;
       final daysLabel = hasIssues
           ? '${approved.length}/$totalDays days × $ptsPerDay pts'
           : '$totalDays days × $ptsPerDay pts';
       final indicators = [
         if (rejected > 0) '$rejected rejected',
-        if (missed > 0) '$missed missed',
+        if (totalMissed > 0) '$totalMissed missed',
       ].join(' · ');
 
       return Padding(
@@ -765,8 +781,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: hasIssues
-                            ? Colors.amber.shade700
-                            : AppColors.primary)),
+                            ? Colors.amber.shade400
+                            : context.isDarkMode
+                                ? Colors.white.withValues(alpha: 0.9)
+                                : context.pointsText)),
               ],
             ),
           ],
@@ -830,16 +848,18 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     ),
                     const SizedBox(width: 8),
                     Text('🥦 $weekTotal pts',
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
-                            color: AppColors.primary)),
+                            color: context.isDarkMode
+                                ? Colors.white.withValues(alpha: 0.9)
+                                : context.pointsText)),
                   ],
                 ),
                 ...[
                   const SizedBox(height: 6),
                   // Past weeks: aggregate summary rows
-                  if (isPastWeek) ..._buildAggregateRows(entries),
+                  if (isPastWeek) ..._buildAggregateRows(entries, elapsedDays: _elapsedDaysInWeek(week)),
                   // Current week: individual daily rows
                   if (!isPastWeek)
                     ...entries.map((t) {
@@ -1204,9 +1224,9 @@ class _PointsPill extends StatelessWidget {
         padding: EdgeInsets.symmetric(
             horizontal: small ? 7 : 10, vertical: small ? 3 : 5),
         decoration: BoxDecoration(
-          color: context.primarySurface,
+          color: context.pointsBadgeBg,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: context.primaryMint),
+          border: Border.all(color: context.pointsBadgeBorder),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1216,7 +1236,9 @@ class _PointsPill extends StatelessWidget {
             Text(
               '$pts',
               style: TextStyle(
-                  color: AppColors.primary,
+                  color: context.isDarkMode
+                      ? Colors.white.withValues(alpha: 0.9)
+                      : context.pointsText,
                   fontSize: small ? 10 : 12,
                   fontWeight: FontWeight.w700),
             ),
@@ -1297,8 +1319,10 @@ class _TeamAvatarRow extends StatelessWidget {
                   height: _radius * 2,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    // Solid white ring so the circle behind cannot bleed through
-                    border: Border.all(color: Colors.white, width: 1.5),
+                    // Ring matches scaffold bg so circles separate cleanly
+                    border: Border.all(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        width: 1.5),
                   ),
                   child: CircleAvatar(
                     radius: _radius,
