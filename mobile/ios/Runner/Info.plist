@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Yi Nutrition League</string>
+	<string>The Nutrition League</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>yi_nutrition_league</string>
+	<string>The Nutrition League</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -28,12 +28,13 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+
+	<!-- Portrait only on iPhone -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Allow all orientations on iPad -->
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -41,12 +42,22 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Yi Nutrition League needs access to your photo library to upload proof of your completed habits.</string>
+
+	<!-- Camera & Photo permissions (proof upload) -->
 	<key>NSCameraUsageDescription</key>
-	<string>Yi Nutrition League needs camera access to take a proof photo of your completed habits.</string>
+	<string>The Nutrition League needs camera access to take a proof photo of your completed habits.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The Nutrition League needs access to your photo library to upload proof of your completed habits.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Yi Nutrition League needs permission to save photos to your library.</string>
+	<string>The Nutrition League needs permission to save photos to your library.</string>
+
+	<!-- Network (App Transport Security — HTTPS only) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
