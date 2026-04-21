@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/invite_service.dart';
@@ -72,7 +73,7 @@ class _MoreScreenState extends State<MoreScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('More'),
+        title: Text('More', style: GoogleFonts.instrumentSerif(fontSize: 36)),
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
@@ -133,6 +134,10 @@ class _MoreScreenState extends State<MoreScreen>
             label: 'About',
             onTap: () => context.go('/about'),
           ),
+
+          const SizedBox(height: 32),
+          const _BrandheroBadge(),
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -413,6 +418,71 @@ class _SectionTitle extends StatelessWidget {
               fontWeight: FontWeight.w700,
               color: context.textHint,
               letterSpacing: 0.8)),
+    );
+  }
+}
+
+class _BrandheroBadge extends StatelessWidget {
+  const _BrandheroBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          'DESIGNED & DEVELOPED BY',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.2,
+            color: context.textHint,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: context.surfaceColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: context.borderColor),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'assets/images/brandhero_logo.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Brandhero',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: context.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    'Brand strategy, design & storytelling',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: context.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

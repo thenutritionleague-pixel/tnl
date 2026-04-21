@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/theme/theme_colors.dart';
 
-const String _appVersion = '2.0.0';
+const String _appVersion = '1.0.0';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
@@ -10,7 +11,15 @@ class AboutScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('About')),
+      appBar: AppBar(
+        title: Text('About', style: GoogleFonts.instrumentSerif(fontSize: 36)),
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ),
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -57,8 +66,54 @@ class AboutScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 40),
-              Text('Powered by Supabase ⚡',
-                  style: TextStyle(fontSize: 12, color: context.textHint)),
+
+              // Brandhero credit
+              Divider(color: context.borderColor),
+              const SizedBox(height: 20),
+              Text(
+                'DESIGNED & DEVELOPED BY',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                  color: context.textHint,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.asset(
+                      'assets/images/brandhero_logo.png',
+                      width: 44,
+                      height: 44,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Brandhero',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: context.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Brand strategy, design & storytelling —\nyour dedicated design & marketing arm.',
+                        style: TextStyle(fontSize: 12, color: context.textSecondary, height: 1.4),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),

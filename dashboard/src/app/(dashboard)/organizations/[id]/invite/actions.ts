@@ -111,6 +111,37 @@ export async function bulkAddToWhitelist(orgId: string, emails: string[], teamId
   }
 }
 
+// Returns which captain/vice_captain roles are already taken per team
+// (checks both active team_members and pending invite_whitelist)
+export async function getTeamRoleStatus(orgId: string): Promise<Record<string, { captain: boolean; vice_captain: boolean }>> {
+  try {
+    const profile = await checkAccess(orgId)
+    if (!profile) return {}
+    const client = await createAdminClient()
+
+    const [{ data: activeMembers }, { data: pendingInvites }, { data: existingEmails }] = await Promise.all([
+      client.from('team_members').select('team_id, role').eq('org_id', orgId).in('role', ['captain', 'vice_captain']),
+      client.from('invite_whitelist').select('team_id, role').eq('org_id', orgId).is('used_at', null).in('role', ['captain', 'vice_captain']),
+      client.from('invite_whitelist').select('email').eq('org_id', orgId),
+    ])
+
+    const result: Record<string, { captain: boolean; vice_captain: boolean }> = {}
+    const setTaken = (teamId: string, role: string) => {
+      if (!teamId) return
+      if (!result[teamId]) result[teamId] = { captain: false, vice_captain: false }
+      if (role === 'captain') result[teamId].captain = true
+      if (role === 'vice_captain') result[teamId].vice_captain = true
+    }
+    for (const r of activeMembers ?? []) setTaken(r.team_id, r.role)
+    for (const r of pendingInvites ?? []) setTaken(r.team_id, r.role)
+
+    const emails = (existingEmails ?? []).map((r: any) => (r.email as string).toLowerCase().trim())
+    return { ...result, __existingEmails: emails as any }
+  } catch {
+    return {}
+  }
+}
+
 export async function removeFromWhitelist(orgId: string, id: string) {
   try {
     const profile = await checkAccess(orgId)
@@ -124,6 +155,39 @@ export async function removeFromWhitelist(orgId: string, id: string) {
     return { success: true }
   } catch (e: any) {
     console.error('removeFromWhitelist error:', e)
+    return { error: e.message || 'An unexpected error occurred.' }
+  }
+}
+
+export async function csvImportToWhitelist(
+  orgId: string,
+  rows: Array<{ email: string; teamId: string | null; role: string }>
+) {
+  try {
+    const profile = await checkAccess(orgId)
+    if (!profile) return { error: 'Unauthorized.' }
+
+    const client = await createAdminClient()
+
+    const dbRows = rows.map(r => ({
+      org_id: orgId,
+      email: r.email.toLowerCase().trim(),
+      team_id: r.teamId || null,
+      role: r.role.toLowerCase().trim(),
+      invited_by: profile.id,
+    }))
+
+    const { data, error } = await client
+      .from('invite_whitelist')
+      .upsert(dbRows, { onConflict: 'org_id,email' })
+      .select('id, email')
+
+    if (error) return { error: error.message }
+
+    revalidatePath(`/organizations/${orgId}/invite`)
+    return { success: true, data }
+  } catch (e: any) {
+    console.error('csvImportToWhitelist error:', e)
     return { error: e.message || 'An unexpected error occurred.' }
   }
 }

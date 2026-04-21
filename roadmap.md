@@ -110,7 +110,7 @@ Platform (Super Admin)
     ├── Members (org-level pool → assigned to teams)
     ├── Teams (captain + vice captain per team, emoji + color)
     ├── Challenges & Tasks (week-grouped, points per task)
-    ├── Approvals (proof review: image or text, points override)
+    ├── Approvals (proof review: image only, points override)
     ├── Leaderboard (individual weekly breakdown + team view)
     ├── Invite Whitelist (single + bulk, team + role pre-assignment)
     ├── Feed (org-scoped, auto-generated + manual, reactions)
@@ -126,19 +126,31 @@ Platform (Super Admin)
 ### Automatic (no manual trigger)
 | Trigger | Action | Method |
 |---|---|---|
-| `start_date` reached | Challenge auto-activates (midnight in org's timezone) | pg_cron daily |
-| `end_date` passed | Challenge auto-deactivates (midnight in org's timezone) | pg_cron daily |
-| Midnight in org's timezone | Lock all open submissions (mark expired) | pg_cron daily per org timezone |
-| Submit attempt after midnight | Rejected with "Submissions closed" | Client + server validation |
+| `start_date` reached | Challenge auto-activates when org local date ≥ `start_date` | pg_cron **hourly** |
+| `end_date` passed | Challenge auto-deactivates when org local date > `end_date` | pg_cron **hourly** |
+| Daily at 00:05 UTC | Insert 0-pt `points_transactions` rows for every (member × task) where member never submitted that day | pg_cron daily (`write_missed_transactions_for_date`) |
 | Submission approved | Auto-award points + update `profiles.total_points` | DB trigger |
 | Submission approved | Auto-generate `submission_approved` feed item | DB trigger |
+| task_submissions INSERT | `submitted_date` auto-set to `(submitted_at AT TIME ZONE org.timezone)::date` | DB trigger (`trg_set_submitted_date`) |
 
-### Manual Override (Super Admin + Org Admin + Sub Admin)
+> **Note — `expired` status removed (migration_018):** The hourly pg_cron job that marked pending submissions as `expired` has been removed. Admins use the date filter on the approvals page to find old submissions. Pending submissions stay `pending` until an admin acts. Future plan: AI-assisted review will process submissions automatically.
+
+### 0-pt Missed Transaction Rules
+A 0-pt row is inserted **only when the member never submitted at all** for that task on that day:
+
+| Scenario | 0-pt row? |
+|---|---|
+| Never submitted | ✅ Yes — truly missed |
+| Submitted → pending (admin hasn't reviewed) | ❌ No — not the member's fault |
+| Submitted → approved | ❌ No — points already awarded |
+| Submitted → rejected | ❌ No — member can resubmit any time from Task History |
+
+### Manual Override (Super Admin, Sub Super Admin, Org Admin, Sub Admin)
 - Manually close/reopen a challenge (independent of dates)
-- Manually add/deduct points for any member (with reason)
+- Manually add/deduct points for any member (with required reason) — visible in their breakdown
 - Manually post announcements to feed (pin/unpin)
 - Move members between teams, change roles (captain/vice captain/member)
-- Approve/reject any submission (with optional notes + points override)
+- Approve/reject any submission (with optional rejection reason + points override)
 
 ---
 
@@ -151,6 +163,20 @@ Organizations can be in any country/timezone. Challenge dates are entered as `YY
 - **Default timezone:** `Asia/Kolkata`
 - **Country field:** Selecting a country auto-fills timezone. Admin can override.
 - **Curated list:** 19+ IANA timezones (Asia/Pacific, Middle East, Europe, Americas, UTC)
+
+### Timezone Safety Architecture (Multi-tenant)
+
+All date logic runs **server-side using the org's IANA timezone** — never the mobile device's local time or UTC-fallback:
+
+| Operation | Where computed | How |
+|---|---|---|
+| "Today's tasks" for mobile | DB RPC `get_mobile_tasks` | `current_timestamp AT TIME ZONE org.timezone` |
+| Challenge activation / completion | pg_cron hourly | `current_timestamp AT TIME ZONE org.timezone` |
+| Daily missed-task audit | pg_cron daily (00:05 UTC) | `write_missed_transactions_for_date(current_date - 1)` |
+| `submitted_date` stored on INSERT | DB trigger `trg_set_submitted_date` | Overwrites any client-sent value with `(submitted_at AT TIME ZONE org.timezone)::date` |
+| Mobile `submitted_at` sent | Flutter `TaskService` | Always `DateTime.now().toUtc()` — pure UTC timestamp |
+
+**Key rule:** The mobile app (or any client) never computes the local date itself. It sends UTC timestamps; the DB trigger converts them to the org's local date. This is safe for users in any country.
 
 ---
 
@@ -200,10 +226,14 @@ tasks: id, challenge_id, title, description, points,
 -- task_submissions
 task_submissions: id, task_id, challenge_id, user_id(→profiles), org_id,
                   submitted_at(timestamptz), submitted_date(date),
-                  status(pending|approved|rejected|expired),
-                  proof_url, proof_type(image|text),
-                  notes, rejection_reason, points_awarded,
+                  status(pending|approved|rejected),
+                  -- NOTE: 'expired' status REMOVED (migration_018). No more auto-expiry cron.
+                  -- Pending submissions stay pending until admin acts.
+                  proof_url(text),
+                  rejection_reason, points_awarded,
                   reviewed_by(→profiles), reviewed_at
+                  -- NOTE: proof_type and notes columns REMOVED (migration_013/014)
+                  -- All submissions are image-only. notes replaced by rejection_reason.
 
 -- points_transactions (ledger)
 points_transactions: id, user_id, org_id, amount(+award/-deduct),
@@ -217,8 +247,9 @@ feed_items: id, org_id, type(announcement|achievement|leaderboard_change|quiz_re
 
 -- feed_reactions (one row per user × reaction × post)
 feed_reactions: id, post_id(→feed_items), user_id(→profiles),
-                reaction(broccoli|fire|star|heart), created_at
+                reaction(broccoli|fire|star|heart|🥦|🔥|⭐|❤️), created_at
                 UNIQUE(post_id, user_id, reaction)
+                -- NOTE: constraint accepts BOTH emoji chars AND string names (migration_007)
 
 -- messages (team chat — mobile)
 messages: id, team_id, user_id(→profiles), content, media_url, media_type, created_at
@@ -246,6 +277,11 @@ handle_submission_approved():
   → INSERT points_transactions
   → UPDATE profiles.total_points
   → INSERT feed_items (type: submission_approved, is_auto_generated: true)
+
+-- DB TRIGGER (fires on task_submissions BEFORE INSERT)
+trg_set_submitted_date → set_submitted_date_local():
+  → Computes submitted_date = (submitted_at AT TIME ZONE org.timezone)::date
+  → Overrides any client-sent submitted_date value
 ```
 
 **RLS:** Org-scoped tables filter by `org_id`. `super_admin`/`sub_super_admin` use service role (bypasses RLS). `sub_admin` has same read/write scope as `org_admin`.
@@ -272,7 +308,8 @@ handle_submission_approved():
 | `/organizations/[id]/challenges/new` | Create challenge form + task builder (week groups, points, add/remove tasks per week) |
 | `/organizations/[id]/challenges/[cid]` | Challenge detail: tasks by week, open/close toggle |
 | `/organizations/[id]/approvals` | Pending + reviewed sections, search/team filter/date picker, review modal (proof image/text, notes, points override, approve/reject) |
-| `/organizations/[id]/points` | Individual/team toggle, weekly breakdown table (Week 1-4 cols), expandable task breakdown, search + team filter |
+| `/organizations/[id]/points` | Individual/team toggle, weekly breakdown table (Week 1-4 cols), expandable task breakdown (completed days + missed days + manual adjustments), search + team filter, "Adjust Points" button |
+| `/organizations/[id]/points/adjust` | Manual points adjustment form: select member, enter amount (+/-), required reason → inserts `points_transactions` with `is_manual=true`; accessible by all admin roles |
 | `/organizations/[id]/invite` | Single + bulk add, team + role pre-assignment, pending/accepted tables, remove option |
 | `/organizations/[id]/events` | Event cards (type, date/time, location, attendee count, status), create/edit modal |
 | `/organizations/[id]/feed` | Post cards (type, reactions 🥦🔥⭐❤️, pinned indicator), create/edit modal, type + challenge filters, stat cards |
@@ -354,7 +391,8 @@ is_test boolean not null default false  -- added via migration_001_is_test.sql
 | Login | — | Whitelist-only OTP access |
 | Signup | — | Via invite whitelist only |
 | Home | Bottom nav | Points, team rank, today's tasks, leaderboard snapshot |
-| Tasks | Bottom nav | Daily tasks, submit proof (image or text), view states |
+| Tasks | Bottom nav | Daily tasks, submit proof (**image only**), group by week (Week 1/2/3), countdown to midnight, "History" button |
+| Task History | From Tasks | Rejected tasks from previous days — resubmit any time; no status labels shown to member |
 | Leaderboard | Bottom nav | Team + individual ranking (realtime) |
 | Feed | Bottom nav | Activity feed (auto + admin posts), reactions (🥦🔥⭐❤️) |
 | More | Bottom nav | Links to Profile, Events, Chat, Policies, About |
@@ -504,26 +542,98 @@ Pages already wired (do NOT touch unless specifically asked):
 
 ---
 
-### Phase 4 — Mobile App (Flutter) ⏳ NOT STARTED
+### Phase 4 — Mobile App (Flutter) ✅ COMPLETE
+- [x] Foundation + Supabase integration
+- [x] Auth (OTP flow + whitelist check)
+- [x] All core screens built (Home, Tasks, Leaderboard, Feed, Chat, Profile)
+- [x] Service layer for all features
+- [x] Manual testing of core flows
 
-- [ ] Project setup (theme, colors, fonts, routing)
-- [ ] Splash screen
-- [ ] Login (whitelist-only OTP)
-- [ ] Signup (invite whitelist check)
-- [ ] On login: detect org from `profiles.org_id` → load branding
-- [ ] Home screen (points, team rank, today's tasks, leaderboard snapshot)
-- [ ] Tasks screen (daily tasks, midnight IST validation, proof submission)
-- [ ] Task submission flow (image upload to `task-proofs` bucket or text log)
-- [ ] Leaderboard screen (team + individual, realtime via Supabase Realtime)
-- [ ] Feed screen (auto + admin posts, reactions 🥦🔥⭐❤️, realtime)
-- [ ] More screen (links: Profile, Events, Chat, Policies, About)
-- [ ] Profile screen (points, rank, stats, points history)
-- [ ] Events screen (view + participate, points awarded)
-- [ ] Chat screen (team chat, realtime messages, image/media support)
-- [ ] Policies screen (read-only org policies)
-- [ ] About screen
+### Phase 6 — Mobile App Hardening + UI Redesign ✅ COMPLETE (ongoing polish)
 
-**Exit criteria:** Full member journey works on mobile, org-scoped, realtime.
+#### Database Fixes
+- [x] `migration_007` — Expanded `feed_reactions` check constraint to accept both emoji chars and string names
+- [x] `migration_008` — Added explicit `start_date`/`end_date` to tasks table
+- [x] `migration_009` — Fixed ambiguous `id` column reference in `get_mobile_tasks` RPC (table alias `o.id`)
+- [x] `migration_010` — Set `abdulquadir828@gmail.com` as `super_admin`
+- [x] `migration_011` — Fixed RLS on `challenges` table + added `get_active_challenge` SECURITY DEFINER RPC
+- [x] `migration_012` — Added `trg_set_submitted_date` trigger (timezone-correct `submitted_date`), fixed 2 bad existing rows, upgraded expiry cron to use `submitted_at AT TIME ZONE` directly
+- [x] `migration_013` — Forced image-only proof: constrained `proof_type = 'image'`, set default; dropped `notes` as text-proof field
+- [x] `migration_014` — Storage RLS policies for `task-proofs` bucket (INSERT/SELECT/DELETE scoped to own folder); dropped `proof_type` + `notes` columns from `task_submissions`
+- [x] `migration_015` — Rewrote `get_mobile_tasks` RPC to show ALL active tasks immediately (removed progressive week date-gate)
+
+#### Mobile Service Fixes
+- [x] `ProfileService` — resilient JSON parsing (`firstIfList`) for Supabase List vs Map responses
+- [x] `HomeScreen._load` — outer join approach, fallback on missing org/team metadata
+- [x] `LeaderboardService.getTeamLeaderboard` — now fetches **all org teams** first, shows 0 for teams without submissions
+- [x] `TaskService.submitTaskText/submitTaskImage` — removed device-local `submitted_date`, sends pure UTC `submitted_at`; DB trigger handles org-timezone date
+- [x] `TaskService` — removed `submitTaskText` (text submissions removed); cleaned insert payload (no proof_type/notes)
+- [x] `SessionAwareMixin` — new shared mixin for all screens; waits for Supabase token refresh before loading data, prevents stuck skeleton loader (8s safety timeout)
+
+#### Tasks Screen Redesign
+- [x] Header: "Today's Habits" + Week N · X habits count
+- [x] Dark countdown bar: `Xh Xm until midnight` (live tick every minute)
+- [x] Week filter tabs: `All (N)`, `Week 1`, `Week 2` ... (simplified from "Week 1 habit")
+- [x] Group headers: `WEEK 1`, `WEEK 2`, `WEEK 3` (simplified from "FOUNDING HABIT" / "WEEK N ADDITION")
+- [x] Task cards: full description (3 lines), 🥦 pts pill, status-aware Submit Proof button
+- [x] Shimmer skeleton while loading
+- [x] "History" pill button in header → navigates to Task History screen
+
+#### Task History Screen (new)
+- [x] Lists rejected submissions from previous days (resubmittable any time)
+- [x] No status labels shown to member — `expired` concept removed entirely
+- [x] Shows rejection reason if admin provided one; otherwise neutral prompt
+- [x] Resubmit opens the same submission screen with original `submitted_date` preserved
+- [x] Empty state: "No tasks from previous days need resubmission"
+
+#### Task Submission Screen Redesign (image-only)
+- [x] Large photo preview area (gallery tap + camera button)
+- [x] Submit button greyed out until photo selected
+- [x] Success state after upload (🎉 + "Back to Habits" button)
+- [x] Removed text/image toggle entirely
+- [x] Accepts optional `submittedDate` extra so history resubmits stamp the original date
+
+#### Home Screen UI Redesign
+- [x] Mint gradient header with greeting + 🥦 points badge
+- [x] Active challenge name + week indicator + progress bar
+- [x] 3-stat grid: Team Rank / Today Done % / Team 🥦 points
+- [x] Today's Challenges rows with icon, "Since week X", 🥦 point pill
+- [x] Team leaderboard with gold/silver/bronze rank circles + 🥦 point pill
+- [x] Shimmer skeleton loader while data loads
+- [x] Pull-to-refresh on full page
+
+#### Dashboard Bug Fixes + New Features
+- [x] **Approvals — notes column error fixed:** Removed `notes: auditNotes` from `approveSubmission` update (column doesn't exist on `task_submissions`); approval now only sets `status`, `points_awarded`, `reviewed_at`
+- [x] **Approvals — ProofViewer no layout jump:** Fixed-height `h-56` container always; shimmer while URL loads, then crossfade — dialog never resizes
+- [x] **Points — Manual Adjustment page** (`/points/adjust`): select member, enter +/- amount, required reason → inserts `points_transactions (is_manual=true)`; accessible by all admin roles
+- [x] **Points — Manual rows in breakdown:** Violet-styled "Manual Adjustments" section in expandable task breakdown
+- [x] **0-pt missed transactions — corrected logic:** `write_missed_transactions_for_date` creates 0-pt row only when member never submitted at all; any submission (pending/approved/rejected) blocks it
+- [x] **`expired` status removed (migration_018):** Hourly cron removed; existing rows converted to `pending`; check constraint updated; all types/queries/UI cleaned up
+
+---
+
+## Migration Log
+
+| File | What it does |
+|---|---|
+| `migration_001_is_test.sql` | Added `is_test` column to `profiles` |
+| `migration_002_rpc_check_access.sql` | Added `check_user_access` RPC |
+| `migration_003_rpc_claim_invite.sql` | Added `claim_invite` RPC |
+| `migration_004_missing_rls.sql` | Added missing RLS policies |
+| `migration_005_fix_org_members.sql` | Fixed `org_members` table issues |
+| `migration_006_*.sql` | Feed/reaction fixes |
+| `migration_007_*.sql` | Expanded `feed_reactions` constraint (emoji + string) |
+| `migration_008_task_dates.sql` | Added `start_date`/`end_date` to tasks |
+| `migration_009_fix_mobile_tasks_rpc.sql` | Fixed ambiguous `id` in `get_mobile_tasks` |
+| `migration_010_set_super_admin.sql` | Set super admin user |
+| `migration_011_fix_challenges_rls.sql` | Fixed challenges RLS + `get_active_challenge` RPC |
+| `migration_012_fix_timezone_submitted_date.sql` | Timezone-correct `submitted_date` trigger; upgraded expiry cron to use `submitted_at AT TIME ZONE` |
+| `migration_013_image_only_proof.sql` | Constrained `proof_type = 'image'`; set default; dropped `notes` as text-proof field |
+| `migration_014_storage_rls_and_schema_cleanup.sql` | Storage RLS policies for `task-proofs` bucket; dropped `proof_type` + `notes` columns |
+| `migration_015_fix_mobile_tasks_show_all.sql` | Rewrote `get_mobile_tasks` RPC — shows ALL active tasks (removed progressive week date-gate) |
+| `migration_016_pg_cron_jobs.sql` | Added pg_cron jobs (challenge auto-activate/complete, daily missed-task audit at 00:05 UTC) |
+| `migration_017_missed_task_transactions.sql` | `write_missed_transactions_for_date` helper + daily cron + backfill RPC — inserts 0-pt rows only when member never submitted |
+| `migration_018_remove_expired_status.sql` | Removed `expired` submission status: unscheduled `expire-stale-submissions` cron, converted existing `expired`→`pending`, updated check constraint to `(pending\|approved\|rejected)` |
 
 ---
 
@@ -532,12 +642,20 @@ Pages already wired (do NOT touch unless specifically asked):
 | Phase | Status |
 |---|---|
 | Phase 0 — Architecture | ✅ Complete |
-| Phase 1 — Dashboard UI | ✅ Complete (all pages built with mock data) |
+| Phase 1 — Dashboard UI | ✅ Complete |
 | Phase 2 — Supabase Setup | ✅ Complete |
-| Phase 3 — Dashboard Integration | ✅ Complete (Step 3.6 verification with real data in progress) |
-| Phase 4 — Mobile App | 🔄 In Progress (foundation + all screens built, manual testing pending) |
+| Phase 3 — Dashboard Integration | ✅ Complete |
+| Phase 4 — Mobile App (core) | ✅ Complete |
+| Phase 5 — Dynamic Management | ✅ Complete |
+| Phase 6 — Mobile Hardening + UI | ✅ Complete (ongoing polish) |
+| Phase 7 — Points System + Task History | ✅ Complete |
 
 **Next immediate steps:**
-1. ⏳ Run Step 3.6 verification checklist with real Supabase data (dashboard)
-2. 📱 Test mobile app with `flutter run` on device/simulator
-3. ✅ Mark Phase 4 complete once manual testing passes
+1. ▶️ Run `migration_017_missed_task_transactions.sql` in Supabase SQL editor (missed-task 0-pt cron)
+2. ▶️ Run `migration_018_remove_expired_status.sql` in Supabase SQL editor (removes `expired`)
+3. 🧪 Approve a submission → confirm no `notes` column error
+4. 🧪 Open approvals proof image → confirm dialog height stays fixed (no jump)
+5. 🧪 Add manual point adjustment via `/points/adjust` → confirm shows in member breakdown
+6. 🧪 On mobile: reject a submission as admin → member sees it in Task History → resubmit → appears in approvals queue
+7. 🧪 Miss a task entirely → next day run `write_missed_transactions_for_date` → confirm 0-pt row appears in breakdown
+8. 🚀 Launch Beta to initial org admins

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
@@ -89,9 +90,8 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                         const SizedBox(width: 10),
                         Text(
                           'Task History',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
+                          style: GoogleFonts.instrumentSerif(
+                            fontSize: 36,
                             color: context.textPrimary,
                           ),
                         ),

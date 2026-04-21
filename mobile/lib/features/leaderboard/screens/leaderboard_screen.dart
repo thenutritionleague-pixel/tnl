@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/leaderboard_service.dart';
@@ -273,9 +274,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Leaderboard',
-                      style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
+                      style: GoogleFonts.instrumentSerif(
+                          fontSize: 36,
                           color: dark ? const Color(0xFFF0FDF4) : const Color(0xFF1A3A2B))),
                 ],
               ),
@@ -708,7 +708,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
         'approved': <Map<String, dynamic>>[],
         'missed': 0,
         'rejected': 0,
+        'basePts': 0,
       });
+      // Keep the highest known base points for this task
+      final incoming = e['points'] as int? ?? 0;
+      if (incoming > (byTask[title]!['basePts'] as int)) {
+        byTask[title]!['basePts'] = incoming;
+      }
       if (status == 'approved') {
         (byTask[title]!['approved'] as List<Map<String, dynamic>>).add(e);
       } else if (status == 'missed') {
@@ -731,7 +737,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final rejected = data['rejected'] as int;
       final ptsPerDay = approved.isNotEmpty
           ? (approved.first['points'] as int? ?? 0)
-          : 0;
+          : (data['basePts'] as int? ?? 0);
       final earned =
           approved.fold<int>(0, (s, x) => s + (x['points'] as int? ?? 0));
       final implicitMissed = max(0, elapsedDays - approved.length - rejected - explicitMissed);
@@ -872,6 +878,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       final (statusIcon, statusColor) = switch (status) {
                         'approved' => ('✅', AppColors.primary),
                         'rejected' => ('❌', AppColors.rejected),
+                        'missed'   => ('❌', AppColors.rejected),
                         _ => ('⏳', context.textHint),
                       };
 
@@ -909,7 +916,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               Text(
                                   status == 'rejected'
                                       ? 'Rejected'
-                                      : 'Pending',
+                                      : status == 'missed'
+                                          ? 'Missed'
+                                          : 'Pending',
                                   style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,

@@ -123,7 +123,12 @@ class _LoginScreenState extends State<LoginScreen> {
   void _onOtpPaste(String pasted) {
     final digits = pasted.replaceAll(RegExp(r'\D'), '');
     if (digits.length >= 6) {
-      for (int i = 0; i < 6; i++) _otpControllers[i].text = digits[i];
+      for (int i = 0; i < 6; i++) {
+        _otpControllers[i].text = digits[i];
+        _otpControllers[i].selection = TextSelection.fromPosition(
+          TextPosition(offset: 1),
+        );
+      }
       _otpFocusNodes[5].requestFocus();
       _handleVerifyOtp();
     }
@@ -133,86 +138,76 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.primaryMint,
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
-        child: Column(
-          children: [
-            // ── Top bar ──────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: _step == 1 ? _buildLogoBar() : _buildBackBar(),
-              ),
-            ),
-
-            // ── Hero headline ────────────────────────────────────────────
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Spacer(flex: 2),
-
-                    // Serif headline — changes per step
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      transitionBuilder: (child, anim) => FadeTransition(
-                        opacity: anim,
-                        child: SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, 0.06),
-                            end: Offset.zero,
-                          ).animate(anim),
-                          child: child,
-                        ),
-                      ),
-                      child: _step == 1
-                          ? _buildEmailHeadline()
-                          : _buildOtpHeadline(),
-                    ),
-
-                    const SizedBox(height: 32),
-
-                    // ── Form ─────────────────────────────────────────────
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      transitionBuilder: (child, anim) => FadeTransition(
-                        opacity: anim,
-                        child: child,
-                      ),
-                      child: _step == 1
-                          ? _buildEmailForm()
-                          : _buildOtpForm(),
-                    ),
-
-                    // ── Error ─────────────────────────────────────────────
-                    if (_error.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          const Icon(Icons.error_outline_rounded,
-                              color: AppColors.error, size: 15),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              _error,
-                              style: const TextStyle(
-                                  color: AppColors.error,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-
-                    const Spacer(flex: 3),
-                  ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Top bar ───────────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: _step == 1 ? _buildLogoBar() : _buildBackBar(),
                 ),
               ),
-            ),
-          ],
+
+              const SizedBox(height: 48),
+
+              // ── Headline ──────────────────────────────────────────────
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (child, anim) => FadeTransition(
+                  opacity: anim,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.06),
+                      end: Offset.zero,
+                    ).animate(anim),
+                    child: child,
+                  ),
+                ),
+                child: _step == 1
+                    ? _buildEmailHeadline()
+                    : _buildOtpHeadline(),
+              ),
+
+              const Spacer(),
+
+              // ── Form ──────────────────────────────────────────────────
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: _step == 1 ? _buildEmailForm() : _buildOtpForm(),
+              ),
+
+              // ── Error ─────────────────────────────────────────────────
+              if (_error.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded,
+                        color: AppColors.error, size: 15),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        _error,
+                        style: const TextStyle(
+                            color: AppColors.error,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 40),
+            ],
+          ),
         ),
       ),
     );
@@ -224,13 +219,13 @@ class _LoginScreenState extends State<LoginScreen> {
       key: const ValueKey('logo'),
       children: [
         Container(
-          width: 36,
-          height: 36,
+          width: 34,
+          height: 34,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
+            color: Colors.white.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: const Center(child: Text('🥦', style: TextStyle(fontSize: 19))),
+          child: const Center(child: Text('🥦', style: TextStyle(fontSize: 18))),
         ),
         const SizedBox(width: 10),
         Text(
@@ -238,7 +233,7 @@ class _LoginScreenState extends State<LoginScreen> {
           style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: context.textPrimary),
+              color: Colors.white.withValues(alpha: 0.85)),
         ),
       ],
     );
@@ -251,13 +246,14 @@ class _LoginScreenState extends State<LoginScreen> {
       onTap: () => setState(() { _step = 1; _error = ''; }),
       child: Row(
         children: [
-          Icon(Icons.arrow_back_rounded, color: context.textPrimary, size: 20),
+          Icon(Icons.arrow_back_rounded,
+              color: Colors.white.withValues(alpha: 0.8), size: 20),
           const SizedBox(width: 8),
           Text('Back',
               style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: context.textPrimary)),
+                  color: Colors.white.withValues(alpha: 0.8))),
         ],
       ),
     );
@@ -272,19 +268,19 @@ class _LoginScreenState extends State<LoginScreen> {
         Text(
           'Build Healthy\nHabits.',
           style: GoogleFonts.instrumentSerif(
-            fontSize: 52,
+            fontSize: 54,
             fontStyle: FontStyle.italic,
-            color: context.textPrimary,
+            color: Colors.white,
             height: 1.05,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
           'Win Together.',
           style: GoogleFonts.instrumentSerif(
-            fontSize: 52,
+            fontSize: 54,
             fontStyle: FontStyle.italic,
-            color: AppColors.primary,
+            color: Colors.white.withValues(alpha: 0.45),
             height: 1.05,
           ),
         ),
@@ -301,28 +297,83 @@ class _LoginScreenState extends State<LoginScreen> {
         Text(
           'Check your\ninbox.',
           style: GoogleFonts.instrumentSerif(
-            fontSize: 52,
+            fontSize: 54,
             fontStyle: FontStyle.italic,
-            color: context.textPrimary,
+            color: Colors.white,
             height: 1.05,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         RichText(
           text: TextSpan(
-            style: TextStyle(fontSize: 14, color: context.textSecondary),
+            style: TextStyle(
+                fontSize: 14, color: Colors.white.withValues(alpha: 0.6)),
             children: [
               const TextSpan(text: 'Code sent to '),
               TextSpan(
                 text: _emailForOtp,
-                style: TextStyle(
-                    color: context.textPrimary,
-                    fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  // ── Frosted input decoration ──────────────────────────────────────────────
+  InputDecoration _frostedInput(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 15),
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.10),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.5), width: 1.5),
+        ),
+      );
+
+  // ── White pill button ─────────────────────────────────────────────────────
+  Widget _whiteButton({required String label, required VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedOpacity(
+        opacity: onTap == null ? 0.5 : 1.0,
+        duration: const Duration(milliseconds: 150),
+        child: Container(
+          width: double.infinity,
+          height: 56,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Center(
+            child: _loading
+                ? const SizedBox(
+                    height: 20, width: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: AppColors.primary))
+                : Text(
+                    label,
+                    style: GoogleFonts.instrumentSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF0A1A10),
+                    ),
+                  ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -332,31 +383,19 @@ class _LoginScreenState extends State<LoginScreen> {
       key: const ValueKey('f-email'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Email address',
-          style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: context.textSecondary,
-              letterSpacing: 0.4),
-        ),
-        const SizedBox(height: 8),
         TextField(
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,
           autofocus: true,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _handleSendOtp(),
-          decoration: const InputDecoration(hintText: 'you@example.com'),
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+          decoration: _frostedInput('you@example.com'),
         ),
-        const SizedBox(height: 16),
-        ElevatedButton(
-          onPressed: _loading ? null : _handleSendOtp,
-          child: _loading
-              ? const SizedBox(
-                  height: 20, width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Send Code'),
+        const SizedBox(height: 14),
+        _whiteButton(
+          label: 'Continue',
+          onTap: _loading ? null : _handleSendOtp,
         ),
       ],
     );
@@ -378,24 +417,21 @@ class _LoginScreenState extends State<LoginScreen> {
           )),
         ),
         const SizedBox(height: 20),
-        ElevatedButton(
-          onPressed: _loading ? null : _handleVerifyOtp,
-          child: _loading
-              ? const SizedBox(
-                  height: 20, width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Verify Code'),
+        _whiteButton(
+          label: 'Verify Code',
+          onTap: _loading ? null : _handleVerifyOtp,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Center(
-          child: TextButton(
-            onPressed: _loading ? null : _handleSendOtp,
-            child: const Text(
+          child: GestureDetector(
+            onTap: _loading ? null : _handleSendOtp,
+            child: Text(
               'Resend code',
               style: TextStyle(
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 14),
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),
@@ -428,7 +464,6 @@ class _OtpBox extends StatelessWidget {
         focusNode: focusNode,
         textAlign: TextAlign.center,
         keyboardType: TextInputType.number,
-        maxLength: 1,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         style: TextStyle(
             fontSize: 22,
@@ -449,7 +484,13 @@ class _OtpBox extends StatelessWidget {
             borderSide: const BorderSide(color: AppColors.primary, width: 2),
           ),
         ),
-        onChanged: onChanged,
+        onChanged: (v) {
+          if (v.length > 1) {
+            onPaste(v);
+          } else {
+            onChanged(v);
+          }
+        },
       ),
     );
   }

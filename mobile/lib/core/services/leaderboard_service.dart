@@ -138,7 +138,7 @@ class LeaderboardService {
   }
 
   /// Get a member's full submission history grouped by week.
-  /// Returns approved, rejected, and pending entries — each with date and status.
+  /// Returns approved, rejected, pending, and missed entries — each with date and status.
   /// Also returns the challenge start date so the caller can compute the current week.
   static Future<(Map<int, List<Map<String, dynamic>>>, DateTime?)> getMemberWeeklyBreakdown(
     String userId,
@@ -160,13 +160,41 @@ class LeaderboardService {
         .eq('challenge_id', challengeId)
         .order('submitted_date', ascending: true);
 
-    final results = await Future.wait<dynamic>([challengeFuture, subsFuture]);
+    // Missed-day penalty entries from points_transactions (amount=0)
+    final missedFuture = _client
+        .from('points_transactions')
+        .select('reason, created_at, task_submissions(submitted_date, tasks(title, icon, points))')
+        .eq('user_id', userId)
+        .eq('amount', 0)
+        .ilike('reason', 'Task missed:%')
+        .order('created_at', ascending: true);
+
+    final results = await Future.wait<dynamic>([challengeFuture, subsFuture, missedFuture]);
 
     final challengeData = results[0] as Map<String, dynamic>;
     final subs = results[1] as List;
+    final missedTxns = results[2] as List;
 
     final DateTime? startDate =
         DateTime.tryParse(challengeData['start_date'] as String? ?? '');
+
+    int weekFor(String dateStr) {
+      if (startDate == null || dateStr.isEmpty) return 1;
+      final d = DateTime.tryParse(dateStr);
+      if (d == null) return 1;
+      final diff = d.difference(DateTime(startDate.year, startDate.month, startDate.day)).inDays;
+      return max(1, (diff / 7).floor() + 1);
+    }
+
+    String fmtDate(String dateStr) {
+      try {
+        final d = DateTime.parse(dateStr);
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return '${months[d.month - 1]} ${d.day}';
+      } catch (_) {
+        return dateStr;
+      }
+    }
 
     final Map<int, List<Map<String, dynamic>>> grouped = {};
 
@@ -174,40 +202,57 @@ class LeaderboardService {
       final task = s['tasks'] as Map;
       final status = s['status'] as String? ?? 'pending';
       final dateStr = s['submitted_date'] as String? ?? '';
-
-      int week;
-      if (startDate != null && dateStr.isNotEmpty) {
-        final submittedDate = DateTime.tryParse(dateStr);
-        if (submittedDate != null) {
-          final diffDays = submittedDate
-              .difference(DateTime(startDate.year, startDate.month, startDate.day))
-              .inDays;
-          week = max(1, (diffDays / 7).floor() + 1);
-        } else {
-          week = (task['week_number'] as int?) ?? 1;
-        }
-      } else {
-        week = (task['week_number'] as int?) ?? 1;
-      }
-
-      // Format display date e.g. "Apr 13"
-      String displayDate = dateStr;
-      try {
-        final d = DateTime.parse(dateStr);
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        displayDate = '${months[d.month - 1]} ${d.day}';
-      } catch (_) {}
+      final week = dateStr.isNotEmpty ? weekFor(dateStr) : ((task['week_number'] as int?) ?? 1);
 
       grouped.putIfAbsent(week, () => []).add({
         'title': task['title'] ?? '',
         'icon': task['icon'] ?? '📋',
-        'date': displayDate,
+        'date': fmtDate(dateStr),
         'status': status,
         'points': status == 'approved'
             ? ((s['points_awarded'] as int?) ?? (task['points'] as int?) ?? 0)
             : 0,
       });
     }
+
+    // Merge missed transactions, filtering to on/after challenge start
+    for (final t in missedTxns) {
+      final createdAt = t['created_at'] as String? ?? '';
+      if (startDate != null && createdAt.isNotEmpty) {
+        final d = DateTime.tryParse(createdAt);
+        if (d != null && d.isBefore(DateTime(startDate.year, startDate.month, startDate.day))) {
+          continue; // skip entries before this challenge started
+        }
+      }
+
+      // Try to get title/icon from joined task_submission
+      final sub = t['task_submissions'] as Map?;
+      final task = sub?['tasks'] as Map?;
+      final subDate = sub?['submitted_date'] as String? ?? '';
+      final dateForWeek = subDate.isNotEmpty ? subDate : createdAt;
+
+      String title = task?['title'] as String? ?? '';
+      if (title.isEmpty) {
+        // Fall back: parse "Task missed: Meal Photo (2026-04-15)" → "Meal Photo"
+        final reason = t['reason'] as String? ?? '';
+        title = reason
+            .replaceFirst(RegExp(r'^Task missed:\s*', caseSensitive: false), '')
+            .replaceAll(RegExp(r'\s*\(\d{4}-\d{2}-\d{2}\)\s*$'), '')
+            .trim();
+      }
+      final icon = task?['icon'] as String? ?? '📋';
+      final basePts = task?['points'] as int? ?? 0;
+      final week = weekFor(dateForWeek.isNotEmpty ? dateForWeek : createdAt);
+
+      grouped.putIfAbsent(week, () => []).add({
+        'title': title,
+        'icon': icon,
+        'date': fmtDate(subDate.isNotEmpty ? subDate : createdAt),
+        'status': 'missed',
+        'points': basePts, // base task points (not earned — earned stays 0 for missed)
+      });
+    }
+
     return (grouped, startDate);
   }
 }
