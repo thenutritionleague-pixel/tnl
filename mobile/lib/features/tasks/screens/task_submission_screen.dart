@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -18,7 +18,8 @@ class TaskSubmissionScreen extends StatefulWidget {
 }
 
 class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
-  File? _selectedImage;
+  XFile? _selectedImage;
+  Uint8List? _imageBytes;
   bool _submitting = false;
   bool _done = false;
 
@@ -39,23 +40,11 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   /// Original submitted_date from Task History — null means use today.
   String? get _submittedDate => widget.task['submittedDate'] as String?;
 
-  Future<void> _pickFromGallery() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 82,
-    );
+  Future<void> _pickImage(ImageSource source) async {
+    final picked = await ImagePicker().pickImage(source: source, imageQuality: 82);
     if (picked != null && mounted) {
-      setState(() => _selectedImage = File(picked.path));
-    }
-  }
-
-  Future<void> _pickFromCamera() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.camera,
-      imageQuality: 82,
-    );
-    if (picked != null && mounted) {
-      setState(() => _selectedImage = File(picked.path));
+      final bytes = await picked.readAsBytes();
+      setState(() { _selectedImage = picked; _imageBytes = bytes; });
     }
   }
 
@@ -81,7 +70,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         challengeId: challengeId,
         userId: _profileId,
         orgId: _orgId,
-        imageFile: _selectedImage!,
+        imageFile: _selectedImage!,  // XFile — works on mobile and web
         submittedDate: _submittedDate,
       );
       if (mounted) {
@@ -291,7 +280,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
             // Photo preview / upload area
             GestureDetector(
-              onTap: _pickFromGallery,
+              onTap: () => _pickImage(ImageSource.gallery),
               child: Container(
                 height: 220,
                 width: double.infinity,
@@ -311,11 +300,11 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     ? Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.file(_selectedImage!, fit: BoxFit.cover),
+                          Image.memory(_imageBytes!, fit: BoxFit.cover),
                           Positioned(
                             top: 10, right: 10,
                             child: GestureDetector(
-                              onTap: () => setState(() => _selectedImage = null),
+                              onTap: () => setState(() { _selectedImage = null; _imageBytes = null; }),
                               child: Container(
                                 padding: const EdgeInsets.all(6),
                                 decoration: BoxDecoration(
@@ -364,7 +353,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
             // Camera button alternative
             if (_selectedImage == null)
               GestureDetector(
-                onTap: _pickFromCamera,
+                onTap: () => _pickImage(ImageSource.camera),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(

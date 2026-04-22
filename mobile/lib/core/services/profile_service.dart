@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -36,14 +36,18 @@ class ProfileService {
 
   /// Upload a new avatar image and save the public URL to the profile.
   /// Returns the new public URL.
-  static Future<String> uploadAvatar(String profileId, File imageFile) async {
-    final ext = p.extension(imageFile.path).toLowerCase();
+  static Future<String> uploadAvatar(String profileId, XFile imageFile) async {
+    final ext = p.extension(imageFile.name).toLowerCase();
     final path = '$profileId/${DateTime.now().millisecondsSinceEpoch}$ext';
+    final bytes = await imageFile.readAsBytes();
+    final mime = switch (ext) {
+      '.png' => 'image/png', '.gif' => 'image/gif', '.webp' => 'image/webp', _ => 'image/jpeg'
+    };
 
-    await _client.storage.from('avatars').upload(
+    await _client.storage.from('avatars').uploadBinary(
       path,
-      imageFile,
-      fileOptions: const FileOptions(upsert: true),
+      bytes,
+      fileOptions: FileOptions(upsert: true, contentType: mime),
     );
 
     final publicUrl = _client.storage.from('avatars').getPublicUrl(path);

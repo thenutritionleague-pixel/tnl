@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -85,7 +84,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _uploadingAvatar = true);
     try {
       final newUrl = await ProfileService.uploadAvatar(
-          widget.profile['id'] as String, File(picked.path));
+          widget.profile['id'] as String, picked);
       if (mounted) setState(() { _avatarUrl = newUrl; _uploadingAvatar = false; });
     } catch (e) {
       if (mounted) {

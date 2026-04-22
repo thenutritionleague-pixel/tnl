@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 
@@ -42,16 +42,17 @@ class TaskService {
     required String challengeId,
     required String userId,
     required String orgId,
-    required File imageFile,
+    required XFile imageFile,
     String? submittedDate,
   }) async {
-    final ext = p.extension(imageFile.path);
+    final ext = p.extension(imageFile.name).toLowerCase();
     final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$ext';
+    final bytes = await imageFile.readAsBytes();
 
-    await _client.storage.from('task-proofs').upload(
+    await _client.storage.from('task-proofs').uploadBinary(
       fileName,
-      imageFile,
-      fileOptions: const FileOptions(upsert: false),
+      bytes,
+      fileOptions: FileOptions(upsert: false, contentType: _mimeType(ext)),
     );
 
     // Use the provided date (history resubmit) or fall back to today (local)
@@ -69,6 +70,13 @@ class TaskService {
       'proof_url': fileName,
     });
   }
+
+  static String _mimeType(String ext) => switch (ext) {
+    '.png'  => 'image/png',
+    '.gif'  => 'image/gif',
+    '.webp' => 'image/webp',
+    _       => 'image/jpeg',
+  };
 
   /// Get submissions from previous days (for Task History).
   /// Returns pending (awaiting review) and rejected submissions from before today.
