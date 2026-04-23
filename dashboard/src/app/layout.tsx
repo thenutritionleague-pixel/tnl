@@ -19,6 +19,11 @@ const instrumentSans = Instrument_Sans({
 export const metadata: Metadata = {
   title: 'The Nutrition League | Admin',
   description: 'The Nutrition League Admin Dashboard',
+  manifest: '/manifest.json',
+  icons: {
+    icon: '/broccoli.svg',
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
