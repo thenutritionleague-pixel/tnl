@@ -176,7 +176,7 @@ function LoginContent() {
       <div className="hidden lg:flex lg:w-[45%] bg-emerald-600 flex-col justify-between px-12 py-10">
         <div className="flex items-center gap-2.5">
           <Image src="/broccoli.svg" alt="Broccoli logo" width={28} height={28} />
-          <span className="text-sm font-semibold text-white/90 tracking-tight">Yi Nutrition League</span>
+          <span className="text-sm font-semibold text-white/90 tracking-tight">The Nutrition League</span>
         </div>
 
         <div className="space-y-8">
@@ -206,7 +206,7 @@ function LoginContent() {
         {/* Mobile logo */}
         <div className="flex lg:hidden items-center gap-2 px-6 pt-6">
           <Image src="/broccoli.svg" alt="Broccoli logo" width={24} height={24} />
-          <span className="text-sm font-semibold text-stone-800">Yi Nutrition League</span>
+          <span className="text-sm font-semibold text-stone-800">The Nutrition League</span>
         </div>
 
         <div className="flex-1 flex items-center justify-center px-8 py-12">
