@@ -62,8 +62,14 @@ class _LoginScreenState extends State<LoginScreen> {
       });
     } catch (e) {
       debugPrint('[LoginScreen] sendOtp error: $e');
+      final msg = e.toString();
+      final secondsMatch = RegExp(r'after (\d+) second').firstMatch(msg);
       setState(() {
-        _error = 'Failed to send code. Please try again.';
+        _error = secondsMatch != null
+            ? 'Too many requests — please wait ${secondsMatch.group(1)} seconds before trying again.'
+            : msg.toLowerCase().contains('rate')
+                ? 'Too many requests — please wait a moment before trying again.'
+                : 'Failed to send code. Please try again.';
         _loading = false;
       });
     }

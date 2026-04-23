@@ -63,7 +63,15 @@ function LoginContent() {
     })
 
     if (error) {
-      setError('Failed to send sign-in code. Please try again.')
+      if (error.message?.includes('rate') || (error as any).code === 'over_email_send_rate_limit') {
+        const seconds = error.message?.match(/after (\d+) second/)?.[1]
+        setError(seconds
+          ? `Too many requests — please wait ${seconds} seconds before trying again.`
+          : 'Too many requests — please wait a moment before trying again.'
+        )
+      } else {
+        setError('Failed to send sign-in code. Please try again.')
+      }
       setLoading(false)
       return
     }
@@ -134,7 +142,14 @@ function LoginContent() {
       email,
       options: { shouldCreateUser: true },
     })
-    if (error) { setError('Failed to resend. Try again.'); return }
+    if (error) {
+      const seconds = error.message?.match(/after (\d+) second/)?.[1]
+      setError(seconds
+        ? `Too many requests — please wait ${seconds} seconds before trying again.`
+        : 'Failed to resend. Try again.'
+      )
+      return
+    }
     setResendCooldown(60)
     toast.success('New OTP sent')
   }
