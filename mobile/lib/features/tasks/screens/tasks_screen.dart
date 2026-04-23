@@ -314,26 +314,36 @@ class _WeekHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final allDone = completedCount == taskCount && taskCount > 0;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
       child: Row(
         children: [
-          Text(
-            'WEEK $week',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: context.textHint,
-              letterSpacing: 1.4,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Week $week',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
+          Expanded(child: Container(height: 1, color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.4))),
+          const SizedBox(width: 10),
           Text(
-            '$completedCount / $taskCount',
+            allDone ? '✓ All done' : '$completedCount / $taskCount done',
             style: TextStyle(
               fontSize: 11,
-              color: context.textHint,
-              letterSpacing: 0.2,
+              fontWeight: FontWeight.w600,
+              color: allDone ? AppColors.success : context.textHint,
             ),
           ),
         ],
