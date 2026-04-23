@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, Suspense } from 'react'
+import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -174,7 +175,7 @@ function LoginContent() {
       {/* ── Left panel — flat solid, no gradients ── */}
       <div className="hidden lg:flex lg:w-[45%] bg-emerald-600 flex-col justify-between px-12 py-10">
         <div className="flex items-center gap-2.5">
-          <span className="text-2xl select-none">🥦</span>
+          <Image src="/broccoli.svg" alt="Broccoli logo" width={28} height={28} />
           <span className="text-sm font-semibold text-white/90 tracking-tight">Yi Nutrition League</span>
         </div>
 
@@ -204,7 +205,7 @@ function LoginContent() {
 
         {/* Mobile logo */}
         <div className="flex lg:hidden items-center gap-2 px-6 pt-6">
-          <span className="text-xl select-none">🥦</span>
+          <Image src="/broccoli.svg" alt="Broccoli logo" width={24} height={24} />
           <span className="text-sm font-semibold text-stone-800">Yi Nutrition League</span>
         </div>
 
