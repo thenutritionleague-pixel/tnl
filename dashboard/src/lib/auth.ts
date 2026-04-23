@@ -23,16 +23,17 @@ export const getAdminProfile = cache(async () => {
     .single()
   if (data) return data
 
-  // First-time login for an invited admin: user_id is still NULL, match by email
-  const { data: invited } = await adminClient
+  // Fallback: match by email and sync user_id (handles first-time login or auth re-creation)
+  const { data: byEmail } = await adminClient
     .from('admin_users')
     .select('id, user_id, org_id, name, email, role, status, created_by, created_at')
     .eq('email', user.email!)
-    .is('user_id', null)
     .single()
-  if (invited) {
-    await adminClient.from('admin_users').update({ user_id: user.id }).eq('id', invited.id)
-    return { ...invited, user_id: user.id }
+  if (byEmail) {
+    if (byEmail.user_id !== user.id) {
+      await adminClient.from('admin_users').update({ user_id: user.id }).eq('id', byEmail.id)
+    }
+    return { ...byEmail, user_id: user.id }
   }
 
   return null

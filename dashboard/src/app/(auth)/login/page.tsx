@@ -29,6 +29,8 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [resendCooldown, setResendCooldown] = useState(0)
+  const [adminRole, setAdminRole] = useState<string | null>(null)
+  const [adminOrgId, setAdminOrgId] = useState<string | null>(null)
 
   const otpRefs = useRef<(HTMLInputElement | null)[]>([])
 
@@ -56,6 +58,9 @@ function LoginContent() {
       setLoading(false)
       return
     }
+
+    setAdminRole(check.role)
+    setAdminOrgId(check.orgId ?? null)
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -103,32 +108,9 @@ function LoginContent() {
     }
 
     if (data.user) {
-      const { data: adminUser, error: adminError } = await supabase
-        .from('admin_users')
-        .select('role, status, org_id')
-        .eq('email', email)
-        .single()
-
-      console.log('[login] adminUser:', adminUser, 'error:', adminError)
-
-      if (!adminUser) {
-        await supabase.auth.signOut()
-        setError('Access denied. This dashboard is for admins only.')
-        setLoading(false)
-        return
-      }
-
-      if (adminUser.status !== 'active') {
-        await supabase.auth.signOut()
-        setError('Your account is pending approval.')
-        setLoading(false)
-        return
-      }
-
       toast.success('Welcome back!')
-
-      if (adminUser.role === 'org_admin' || adminUser.role === 'sub_admin') {
-        window.location.href = `/organizations/${adminUser.org_id}`
+      if (adminRole === 'org_admin' || adminRole === 'sub_admin') {
+        window.location.href = `/organizations/${adminOrgId}`
       } else {
         window.location.href = '/dashboard'
       }
