@@ -24,7 +24,7 @@ class TaskService {
   ) async {
     final data = await _client
         .from('task_submissions')
-        .select('id, task_id, status, submitted_at, points_awarded, rejection_reason')
+        .select('id, task_id, status, submitted_at, submitted_date, points_awarded, rejection_reason')
         .eq('user_id', userId)
         .eq('org_id', orgId)
         .order('submitted_at', ascending: false);
