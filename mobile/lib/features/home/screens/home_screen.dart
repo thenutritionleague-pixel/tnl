@@ -27,6 +27,11 @@ class _HomeScreenState extends State<HomeScreen>
 
   String? _teamId;
 
+  // Precomputed per-load (avoids O(tasks×submissions) on every build)
+  Map<String, String> _submissionStatusCache = {};
+  double _cachedProgress = 0.0;
+  String _cachedWeekLabel = '';
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +87,36 @@ class _HomeScreenState extends State<HomeScreen>
       final submissions = orgId != null ? await TaskService.getUserSubmissions(profile['id'], orgId) : <Map<String, dynamic>>[];
 
       if (mounted) {
+        // Precompute status cache before setState so build uses fresh values
+        final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+        final Map<String, List<Map<String, dynamic>>> byTask = {};
+        for (final s in submissions) {
+          final tid = s['task_id'] as String?;
+          if (tid == null || (s['submitted_date'] as String?) != todayStr) continue;
+          (byTask[tid] ??= []).add(s);
+        }
+        final statusCache = <String, String>{};
+        for (final entry in byTask.entries) {
+          final sorted = [...entry.value]
+            ..sort((a, b) => (b['submitted_at'] as String? ?? '')
+                .compareTo(a['submitted_at'] as String? ?? ''));
+          statusCache[entry.key] = sorted.first['status'] as String? ?? 'pending';
+        }
+        // Precompute progress and week label
+        double progress = 0.0;
+        String weekLabel = '';
+        if (activeChallenge != null) {
+          final start = DateTime.tryParse(activeChallenge['start_date'] ?? '');
+          final end   = DateTime.tryParse(activeChallenge['end_date']   ?? '');
+          if (start != null && end != null) {
+            final total   = end.difference(start).inDays;
+            final elapsed = DateTime.now().difference(start).inDays;
+            progress = (elapsed / total).clamp(0.0, 1.0);
+            final weekNum   = ((DateTime.now().difference(start).inDays) / 7).floor() + 1;
+            final totalWeeks = (activeChallenge['week_duration'] as int?) ?? 0;
+            weekLabel = 'Week $weekNum/$totalWeeks';
+          }
+        }
         setState(() {
           _profile = normalizedProfile;
           _activeChallenge = activeChallenge;
@@ -89,6 +124,9 @@ class _HomeScreenState extends State<HomeScreen>
           _submissions = submissions;
           _teamLeaderboard = teamLeaderboard.take(5).toList();
           _teamId = teamId;
+          _submissionStatusCache = statusCache;
+          _cachedProgress = progress;
+          _cachedWeekLabel = weekLabel;
           _loading = false;
         });
       }
@@ -98,20 +136,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  String _submissionStatus(String taskId) {
-    final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
-    final todayMatch = _submissions.where(
-      (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
-    ).toList();
-    if (todayMatch.isEmpty) return 'none';
-    todayMatch.sort((a, b) =>
-        (b['submitted_at'] as String? ?? '').compareTo(a['submitted_at'] as String? ?? ''));
-    return todayMatch.first['status'] as String? ?? 'pending';
-  }
+  String _submissionStatus(String taskId) => _submissionStatusCache[taskId] ?? 'none';
 
-  int get _todayApproved {
-    return _tasks.where((t) => _submissionStatus(t['id']) == 'approved').length;
-  }
+  int get _todayApproved =>
+      _tasks.where((t) => _submissionStatusCache[t['id']] == 'approved').length;
 
   int get _todayDonePct {
     if (_tasks.isEmpty) return 0;
@@ -130,25 +158,9 @@ class _HomeScreenState extends State<HomeScreen>
     return (t['total_points'] as int?) ?? 0;
   }
 
-  String _currentWeekLabel() {
-    if (_activeChallenge == null) return '';
-    final start = DateTime.tryParse(_activeChallenge!['start_date'] ?? '');
-    if (start == null) return '';
-    final now = DateTime.now();
-    final weekNum = ((now.difference(start).inDays) / 7).floor() + 1;
-    final totalWeeks = (_activeChallenge!['week_duration'] as int?) ?? 0;
-    return 'Week $weekNum/$totalWeeks';
-  }
+  String _currentWeekLabel() => _cachedWeekLabel;
 
-  double _challengeProgress() {
-    if (_activeChallenge == null) return 0.0;
-    final start = DateTime.tryParse(_activeChallenge!['start_date'] ?? '');
-    final end = DateTime.tryParse(_activeChallenge!['end_date'] ?? '');
-    if (start == null || end == null) return 0.0;
-    final total = end.difference(start).inDays;
-    final elapsed = DateTime.now().difference(start).inDays;
-    return (elapsed / total).clamp(0.0, 1.0);
-  }
+  double _challengeProgress() => _cachedProgress;
 
   String _greeting() {
     final hour = DateTime.now().hour;

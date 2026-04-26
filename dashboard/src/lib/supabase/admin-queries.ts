@@ -533,8 +533,8 @@ export async function getInviteWhitelist(orgId: string): Promise<{ invites: Invi
     client.from('teams').select('id, name').eq('org_id', orgId).order('name'),
   ])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const invites: InviteEntry[] = ((invitesRes.data ?? []) as any[]).map(i => ({
+  type InviteRow = { id: string; email: string; team_id: string | null; role: string; used_at: string | null; created_at: string; teams: { name: string } | null }
+  const invites: InviteEntry[] = ((invitesRes.data ?? []) as unknown as InviteRow[]).map(i => ({
     id: i.id,
     email: i.email,
     teamId: i.team_id ?? null,
@@ -549,6 +549,22 @@ export async function getInviteWhitelist(orgId: string): Promise<{ invites: Invi
 }
 
 // ── Org Approvals ──────────────────────────────────────────────────────────────
+
+type SubmissionRow = {
+  id: string
+  status: string
+  submitted_at: string
+  submitted_date: string | null
+  proof_url: string | null
+  rejection_reason: string | null
+  points_awarded: number | null
+  note: string | null
+  ai_status: string | null
+  ai_feedback: string | null
+  ai_confidence: number | null
+  user_id: string
+  tasks: { title: string; description: string; points: number } | null
+}
 
 export interface OrgApproval {
   id: string
@@ -601,18 +617,18 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
   const teamMap: Record<string, string>    = {}
   const profileMap: Record<string, string> = {}
 
-  for (const tm of (teamMemsRes.data ?? []) as any[]) {
+  type TeamMemberRow = { user_id: string; teams: { name: string } | null }
+  for (const tm of (teamMemsRes.data ?? []) as unknown as TeamMemberRow[]) {
     teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
   }
-  for (const p of (profilesRes.data ?? []) as any[]) {
+  for (const p of (profilesRes.data ?? []) as { id: string; name: string }[]) {
     profileMap[p.id] = p.name
   }
 
-  const rawRows = (subsRes.data ?? []) as any[]
+  const rawRows = (subsRes.data ?? []) as unknown as SubmissionRow[]
   const hasMore = rawRows.length > APPROVALS_PAGE_SIZE
   const rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const approvals = rows.map(s => ({
     id: s.id,
     member: profileMap[s.user_id] ?? 'Unknown',

@@ -71,6 +71,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 
   // ── Load top-level data ───────────────────────────────────────────────────
   Future<void> _load() async {
+    _teamMembersCache.clear();
+    _breakdownCache.clear();
     final authId = Supabase.instance.client.auth.currentUser?.id;
     if (authId == null) {
       if (mounted) setState(() => _loading = false);
@@ -188,8 +190,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: () async {
-                    _teamMembersCache.clear();
-                    _breakdownCache.clear();
                     _expandedMemberInTeam = null;
                     _expandedIndividualId = null;
                     await _load();

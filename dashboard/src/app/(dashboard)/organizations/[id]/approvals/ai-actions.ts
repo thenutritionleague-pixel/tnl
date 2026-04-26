@@ -4,6 +4,13 @@ import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/server'
 import { approveSubmission } from './actions'
 
+type SubmissionWithTask = {
+  user_id: string
+  task_id: string
+  proof_url: string | null
+  tasks: { title: string; description: string } | null
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 interface AiResult {
@@ -51,8 +58,7 @@ export async function runAiAnalysis(
     return { aiStatus: 'needs_review', aiFeedback: 'No proof image found.', aiConfidence: 0 }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sd = sub as any
+  const sd = sub as unknown as SubmissionWithTask
   const taskTitle: string = sd.tasks?.title ?? 'wellness task'
   const taskDesc: string = sd.tasks?.description ?? ''
 
