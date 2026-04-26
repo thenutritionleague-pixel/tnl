@@ -30,15 +30,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   bool _loading = true;
   int _selectedTab = 0;
   List<Map<String, dynamic>> _teams = [];
-  List<Map<String, dynamic>> _members = [];
   String? _myProfileId;
   String? _myTeamId;
 
   String _challengeId = '';
 
   // ── Expansion state ───────────────────────────────────────────────────────
-  String? _expandedTeamId;       // which team row is open
-  String? _expandedMemberInTeam; // which member under a team is open
+  String? _expandedMemberInTeam; // which member under a team is open (My Team tab)
   String? _expandedIndividualId; // which individual row is open
 
   // ── Pre-loaded team member previews (avatars in rows) ────────────────────
@@ -105,13 +103,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final teamsFuture = challengeId.isNotEmpty
           ? LeaderboardService.getTeamLeaderboard(orgId, challengeId)
           : Future.value(<Map<String, dynamic>>[]);
-      final membersFuture = LeaderboardService.getMemberLeaderboard(orgId);
       final previewsFuture = LeaderboardService.getTeamMemberPreviews(orgId);
 
-      final loaded = await Future.wait([teamsFuture, membersFuture, previewsFuture]);
+      final loaded = await Future.wait([teamsFuture, previewsFuture]);
       final teams   = loaded[0] as List<Map<String, dynamic>>;
-      final members = loaded[1] as List<Map<String, dynamic>>;
-      final previews = loaded[2] as Map<String, List<Map<String, dynamic>>>;
+      final previews = loaded[1] as Map<String, List<Map<String, dynamic>>>;
 
       final myTeamId = team?['id'] as String?;
 
@@ -121,7 +117,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           _myTeamId = myTeamId;
           _challengeId = challengeId;
           _teams = teams;
-          _members = members;
           _teamMemberPreviews = previews;
           _loading = false;
         });
@@ -195,7 +190,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   onRefresh: () async {
                     _teamMembersCache.clear();
                     _breakdownCache.clear();
-                    _expandedTeamId = null;
                     _expandedMemberInTeam = null;
                     _expandedIndividualId = null;
                     await _load();
@@ -349,7 +343,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             final rank = e.key + 1;
             final team = e.value;
             final teamId = team['team_id'] as String;
-            final isExpanded = _expandedTeamId == teamId;
             final isMyTeam = teamId == _myTeamId;
             final pts = team['total_points'] as int? ?? 0;
             final isLast = e.key == _teams.length - 1;
@@ -357,87 +350,56 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             return Column(
               children: [
                 // ── Team row ────────────────────────────────────────────
-                InkWell(
-                  onTap: () {
-                    setState(() {
-                      if (isExpanded) {
-                        _expandedTeamId = null;
-                        _expandedMemberInTeam = null;
-                      } else {
-                        _expandedTeamId = teamId;
-                        _expandedMemberInTeam = null;
-                        _loadTeamMembers(teamId);
-                      }
-                    });
-                  },
-                  child: Container(
-                    color: isMyTeam
-                        ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface)
-                        : Colors.transparent,
-                    padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        _RankBadge(rank: rank),
-                        const SizedBox(width: 12),
-                        Text(team['emoji'] as String? ?? '🏃',
-                            style: const TextStyle(fontSize: 26)),
-                        const SizedBox(width: 12),
-                        // Name + avatars column
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      team['name'] as String? ?? 'Team',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14,
-                                        color: isMyTeam
-                                            ? (context.isDarkMode
-                                                ? Colors.white
-                                                : AppColors.primary)
-                                            : context.textPrimary,
-                                      ),
+                Container(
+                  color: isMyTeam
+                      ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface)
+                      : Colors.transparent,
+                  padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _RankBadge(rank: rank),
+                      const SizedBox(width: 12),
+                      Text(team['emoji'] as String? ?? '🏃',
+                          style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    team['name'] as String? ?? 'Team',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                      color: isMyTeam
+                                          ? (context.isDarkMode
+                                              ? Colors.white
+                                              : AppColors.primary)
+                                          : context.textPrimary,
                                     ),
                                   ),
-                                  if (isMyTeam) ...[
-                                    const SizedBox(width: 6),
-                                    _YouBadge(label: 'Your Team'),
-                                  ],
+                                ),
+                                if (isMyTeam) ...[
+                                  const SizedBox(width: 6),
+                                  _YouBadge(label: 'Your Team'),
                                 ],
-                              ),
-                              const SizedBox(height: 5),
-                              _TeamAvatarRow(
-                                members: _teamMemberPreviews[teamId] ?? [],
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
+                            const SizedBox(height: 5),
+                            _TeamAvatarRow(
+                              members: _teamMemberPreviews[teamId] ?? [],
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        _PointsPill(pts: pts),
-                        const SizedBox(width: 8),
-                        AnimatedRotation(
-                          turns: isExpanded ? 0.5 : 0,
-                          duration: const Duration(milliseconds: 250),
-                          child: Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 20, color: context.textHint),
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 8),
+                      _PointsPill(pts: pts),
+                    ],
                   ),
-                ),
-
-                // ── Expanded: members list ──────────────────────────────
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 280),
-                  curve: Curves.easeInOut,
-                  child: isExpanded
-                      ? _buildTeamMembersPanel(teamId)
-                      : const SizedBox.shrink(),
                 ),
 
                 if (!isLast)
@@ -745,8 +707,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final totalDays = elapsedDays;
       final hasIssues = totalMissed > 0 || rejected > 0;
       final daysLabel = hasIssues
-          ? '${approved.length}/$totalDays days × $ptsPerDay pts'
-          : '$totalDays days × $ptsPerDay pts';
+          ? '${approved.length}/$totalDays days × 🥦 $ptsPerDay'
+          : '$totalDays days × 🥦 $ptsPerDay';
       final indicators = [
         if (rejected > 0) '$rejected rejected',
         if (totalMissed > 0) '$totalMissed missed',
@@ -853,7 +815,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               fontWeight: FontWeight.w700)),
                     ),
                     const SizedBox(width: 8),
-                    Text('🥦 $weekTotal pts',
+                    Text('🥦 $weekTotal',
                         style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,

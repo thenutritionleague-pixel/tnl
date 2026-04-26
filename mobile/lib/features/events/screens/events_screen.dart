@@ -125,7 +125,7 @@ class _EventsScreenState extends State<EventsScreen> {
                                           borderRadius: BorderRadius.circular(20),
                                           border: Border.all(color: context.pointsBadgeBorder),
                                         ),
-                                        child: Text('🥦 $points pts',
+                                        child: Text('🥦 $points',
                                             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: context.pointsText)),
                                       ),
                                   ],

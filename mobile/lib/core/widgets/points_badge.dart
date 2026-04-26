@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../constants/app_colors.dart';
+import '../theme/theme_colors.dart';
 
 /// Green pill displaying a 🥦 broccoli emoji and point count.
 class PointsBadge extends StatelessWidget {
@@ -13,16 +13,16 @@ class PointsBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: AppColors.pointsBadge,
+        color: context.pointsBadgeBg,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.pointsBadgeBorder),
+        border: Border.all(color: context.pointsBadgeBorder),
       ),
       child: Text(
-        '🥦 $points pts',
+        '🥦 $points',
         style: TextStyle(
           fontSize: fontSize,
           fontWeight: FontWeight.w600,
-          color: AppColors.pointsText,
+          color: context.pointsText,
         ),
       ),
     );

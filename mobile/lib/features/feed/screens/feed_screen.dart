@@ -156,83 +156,104 @@ class _FeedScreenState extends State<FeedScreen>
                         final authorName = (post['profiles'] as Map?)?['name'] as String?;
 
                         final accentColor = _TypeChip.colorFor(type);
+                        final isApproval = type == 'submission_approved';
+                        final isMine = isApproval && post['author_id'] == _profileId;
+
+                        // For old generic items, build a richer title from profiles join
+                        final displayTitle = (isApproval && (title == 'Task Completed' || title.isEmpty) && authorName != null)
+                            ? '$authorName completed a task'
+                            : title;
+
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
                           decoration: BoxDecoration(
-                            color: context.surfaceColor,
+                            color: isApproval && isMine
+                                ? (Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFF052E16)
+                                    : const Color(0xFFF0FDF4))
+                                : context.surfaceColor,
                             borderRadius: BorderRadius.circular(14),
+                            border: isApproval && isMine
+                                ? Border.all(color: AppColors.primary.withValues(alpha: 0.35), width: 1)
+                                : null,
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(13),
-                            child: IntrinsicHeight(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // Content
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          // Top row: type label + pin + time
-                                          Row(
-                                            children: [
-                                              if (isPinned) ...[
-                                                const Icon(Icons.push_pin_rounded,
-                                                    size: 11, color: AppColors.primary),
-                                                const SizedBox(width: 3),
-                                              ],
-                                              Text(
-                                                _TypeChip.labelFor(type),
-                                                style: TextStyle(
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: accentColor),
-                                              ),
-                                              const Spacer(),
-                                              Text(
-                                                _formatTime(post['created_at'] as String? ?? ''),
-                                                style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: context.textHint),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          // Title
-                                          if (title.isNotEmpty)
-                                            Text(
-                                              title,
-                                              style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: context.textPrimary),
-                                            ),
-                                          if (content.isNotEmpty) ...[
-                                            const SizedBox(height: 3),
-                                            Text(
-                                              content,
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: context.textSecondary,
-                                                  height: 1.45),
-                                            ),
-                                          ],
-                                          if (!isAuto && authorName != null) ...[
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              'by $authorName',
-                                              style: TextStyle(
-                                                  fontSize: 10,
-                                                  color: context.textHint,
-                                                  fontStyle: FontStyle.italic),
-                                            ),
-                                          ],
-                                        ],
+                                  // Top row: type label + mine badge + time
+                                  Row(
+                                    children: [
+                                      if (isPinned) ...[
+                                        const Icon(Icons.push_pin_rounded,
+                                            size: 11, color: AppColors.primary),
+                                        const SizedBox(width: 3),
+                                      ],
+                                      Text(
+                                        _TypeChip.labelFor(type),
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: accentColor),
                                       ),
-                                    ),
+                                      if (isMine) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primary,
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: const Text('YOU',
+                                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),
+                                        ),
+                                      ],
+                                      const Spacer(),
+                                      Text(
+                                        _formatTime(post['created_at'] as String? ?? ''),
+                                        style: TextStyle(fontSize: 11, color: context.textHint),
+                                      ),
+                                    ],
                                   ),
+                                  const SizedBox(height: 6),
+
+                                  // Title
+                                  if (displayTitle.isNotEmpty)
+                                    Text(
+                                      displayTitle,
+                                      style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: context.textPrimary),
+                                    ),
+
+                                  // Content (points line for approvals, description for others)
+                                  if (content.isNotEmpty) ...[
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      content,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: isApproval ? AppColors.primary : context.textSecondary,
+                                          fontWeight: isApproval ? FontWeight.w600 : FontWeight.normal,
+                                          height: 1.45),
+                                    ),
+                                  ],
+
+                                  // For non-auto posts, show author byline
+                                  if (!isAuto && authorName != null) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'by $authorName',
+                                      style: TextStyle(
+                                          fontSize: 10,
+                                          color: context.textHint,
+                                          fontStyle: FontStyle.italic),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),

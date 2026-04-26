@@ -22,6 +22,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   Uint8List? _imageBytes;
   bool _submitting = false;
   bool _done = false;
+  final _noteController = TextEditingController();
 
   late final ConfettiController _confettiCtrl =
       ConfettiController(duration: const Duration(seconds: 4));
@@ -29,6 +30,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   @override
   void dispose() {
     _confettiCtrl.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
@@ -70,8 +72,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         challengeId: challengeId,
         userId: _profileId,
         orgId: _orgId,
-        imageFile: _selectedImage!,  // XFile — works on mobile and web
+        imageFile: _selectedImage!,
         submittedDate: _submittedDate,
+        note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
       );
       if (mounted) {
         setState(() { _submitting = false; _done = true; });
@@ -252,7 +255,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                             children: [
                               const Text('🥦', style: TextStyle(fontSize: 13)),
                               const SizedBox(width: 4),
-                              Text('$points pts',
+                              Text('$points',
                                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
                             ],
                           ),
@@ -372,7 +375,49 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 ),
               ),
 
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+
+            // ── Optional note ──────────────────────────────────────────────
+            Text(
+              'Add a note',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.textPrimary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Optional — anything you want the admin to know.',
+              style: TextStyle(fontSize: 12, color: context.textSecondary),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _noteController,
+              maxLines: 3,
+              minLines: 3,
+              maxLength: 200,
+              textCapitalization: TextCapitalization.sentences,
+              style: TextStyle(fontSize: 14, color: context.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'e.g. Completed 10km run this morning...',
+                hintStyle: TextStyle(fontSize: 13, color: context.textHint),
+                filled: true,
+                fillColor: Theme.of(context).colorScheme.surface,
+                counterStyle: TextStyle(fontSize: 11, color: context.textHint),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                ),
+                contentPadding: const EdgeInsets.all(14),
+              ),
+            ),
+
+            const SizedBox(height: 24),
 
             // Submit button
             GestureDetector(

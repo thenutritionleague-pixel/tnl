@@ -10,6 +10,7 @@ class FeedService {
         .select('''
           id, type, title, content, pinned, is_auto_generated, created_at,
           author_id,
+          profiles:author_id(name, avatar_color),
           feed_reactions(id, user_id, reaction)
         ''')
         .eq('org_id', orgId)

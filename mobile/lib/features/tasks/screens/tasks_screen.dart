@@ -326,7 +326,7 @@ class _WeekHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              'Week $week',
+              'Since Week $week',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -411,6 +411,16 @@ class _TaskCard extends StatelessWidget {
     }
   }
 
+  void _openSubmit(BuildContext context) async {
+    await context.push('/tasks/submit', extra: {
+      'task': task,
+      'profileId': profileId,
+      'orgId': orgId,
+      'isResubmit': status == 'rejected',
+    });
+    onDone();
+  }
+
   @override
   Widget build(BuildContext context) {
     final title  = task['title']       as String? ?? '';
@@ -419,7 +429,9 @@ class _TaskCard extends StatelessWidget {
     final icon   = task['icon']        as String? ?? '📋';
     final canSubmit = status == 'not_submitted' || status == 'rejected';
 
-    return Container(
+    return GestureDetector(
+      onTap: canSubmit ? () => _openSubmit(context) : null,
+      child: Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -483,7 +495,7 @@ class _TaskCard extends StatelessWidget {
                           const Text('🥦', style: TextStyle(fontSize: 11)),
                           const SizedBox(width: 3),
                           Text(
-                            '$points pts',
+                            '$points',
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
@@ -523,17 +535,7 @@ class _TaskCard extends StatelessWidget {
                     ],
                   )
                 else if (canSubmit)
-                  GestureDetector(
-                    onTap: () async {
-                      await context.push('/tasks/submit', extra: {
-                        'task': task,
-                        'profileId': profileId,
-                        'orgId': orgId,
-                        'isResubmit': status == 'rejected',
-                      });
-                      onDone();
-                    },
-                    child: Container(
+                  Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
                         color: _statusColor,
@@ -548,7 +550,6 @@ class _TaskCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ),
               ],
             ),
           ),
@@ -591,7 +592,7 @@ class _TaskCard extends StatelessWidget {
           ],
         ],
       ),
-    );
+    ));
   }
 }
 

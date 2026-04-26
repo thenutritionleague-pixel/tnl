@@ -266,7 +266,7 @@ class _HistoryCard extends StatelessWidget {
                           const Text('🥦', style: TextStyle(fontSize: 11)),
                           const SizedBox(width: 3),
                           Text(
-                            '$points pts',
+                            '$points',
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,

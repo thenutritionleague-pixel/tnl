@@ -6,7 +6,6 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/utils/session_mixin.dart';
-import '../../../core/widgets/points_badge.dart';
 import '../../../core/widgets/user_avatar.dart';
 import '../../../core/theme/theme_colors.dart';
 
@@ -18,16 +17,29 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen>
-    with SessionAwareMixin {
+    with SessionAwareMixin, SingleTickerProviderStateMixin {
   bool _loading = true;
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _team;
   List<Map<String, dynamic>> _history = [];
+  int _points = 0;
+
+  late AnimationController _pointsController;
 
   @override
   void initState() {
     super.initState();
-    waitForSession(then: _load); // Wait for token refresh before loading
+    _pointsController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    waitForSession(then: _load);
+  }
+
+  @override
+  void dispose() {
+    _pointsController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -50,14 +62,18 @@ class _ProfileScreenState extends State<ProfileScreen>
           _profile = profile;
           _team = team;
           _history = history;
+          _points = profile['total_points'] as int? ?? 0;
           _loading = false;
+        });
+        // Start after the frame so _OdometerNumber is built before the controller ticks
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _pointsController.forward(from: 0);
         });
       }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
   }
-
 
   Future<void> _signOut() async {
     await AuthService.signOut();
@@ -70,9 +86,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: AppColors.primary)));
     }
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final name = _profile?['name'] as String? ?? 'Member';
     final email = _profile?['email'] as String? ?? '';
-    final points = _profile?['total_points'] as int? ?? 0;
     final avatarColor = _profile?['avatar_color'] as String?;
     final avatarUrl = _profile?['avatar_url'] as String?;
     final orgName = (_profile?['organizations'] as Map?)?['name'] as String? ?? '';
@@ -112,7 +128,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           children: [
             // Profile card
             Container(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.fromLTRB(20, 28, 20, 22),
               decoration: BoxDecoration(
                 color: context.surfaceColor,
                 borderRadius: BorderRadius.circular(24),
@@ -120,22 +136,83 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
               child: Column(
                 children: [
-                  UserAvatar(
-                    name: name,
-                    avatarColor: avatarColor,
-                    avatarUrl: avatarUrl,
-                    radius: 36,
+                  // Avatar with gradient ring
+                  Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF22C55E), Color(0xFF166534)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: context.surfaceColor,
+                      ),
+                      child: UserAvatar(
+                        name: name,
+                        avatarColor: avatarColor,
+                        avatarUrl: avatarUrl,
+                        radius: 40,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   Text(name,
+                      textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: context.textPrimary)),
                   const SizedBox(height: 4),
-                  Text(email, style: TextStyle(fontSize: 13, color: context.textSecondary)),
-                  const SizedBox(height: 4),
-                  Text(orgName, style: TextStyle(fontSize: 13, color: context.textHint)),
-                  const SizedBox(height: 16),
-                  PointsBadge(points: points, fontSize: 15),
+                  Text(email,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, color: context.textSecondary)),
+
+                  const SizedBox(height: 22),
+
+                  // Points pill — odometer counter
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: isDark
+                            ? [const Color(0xFF052E16), const Color(0xFF14532D)]
+                            : [const Color(0xFFDCFCE7), const Color(0xFFF0FDF4)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(100),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF166534) : const Color(0xFF86EFAC),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Text('🥦', style: TextStyle(fontSize: 30)),
+                        const SizedBox(width: 10),
+                        _OdometerNumber(
+                          value: _points,
+                          controller: _pointsController,
+                          style: TextStyle(
+                            fontSize: _points < 1000 ? 42 : _points < 10000 ? 36 : 30,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primary,
+                            height: 1,
+                            letterSpacing: -1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                   const SizedBox(height: 20),
+
+                  // Team row
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
@@ -143,24 +220,44 @@ class _ProfileScreenState extends State<ProfileScreen>
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('$teamEmoji $teamName',
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.primary)),
-                        const SizedBox(width: 10),
+                        Row(
+                          children: [
+                            Text(teamEmoji, style: const TextStyle(fontSize: 18)),
+                            const SizedBox(width: 8),
+                            Text(teamName,
+                                style: const TextStyle(
+                                    fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primary)),
+                          ],
+                        ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: AppColors.primary,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(role.toUpperCase(),
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
                         ),
                       ],
                     ),
                   ),
+
+                  if (orgName.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.business_rounded, size: 11, color: context.textHint),
+                        const SizedBox(width: 4),
+                        Text(orgName,
+                            style: TextStyle(
+                                fontSize: 11, color: context.textHint, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -189,19 +286,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                     final reason = h['reason'] as String? ?? '';
                     final isManual = h['is_manual'] as bool? ?? false;
 
-                    // Pull task name + submitted date from the joined submission
                     final submission = h['task_submissions'] as Map?;
                     final taskName = (submission?['tasks'] as Map?)?['title'] as String?;
                     final submittedAt = submission?['submitted_at'] as String?;
 
                     final isMissed = amount == 0 && reason.toLowerCase().startsWith('task missed');
-
-                    // Label: task name if available, else cleaned reason
                     final label = taskName ?? _formatReason(reason);
-                    // Date: submission date for task entries, transaction date for manual
                     final date = _formatDate(submittedAt ?? h['created_at'] as String? ?? '');
 
-                    // Icon + colours per type
                     final String iconEmoji;
                     final Color iconBg;
                     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -286,15 +378,130 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
-  // Strips the date suffix from "Task missed: Meal Photo (2026-04-15)" → "Meal Photo"
-  // Leaves other reasons unchanged.
   String _formatReason(String reason) {
     final missedPrefix = RegExp(r'^Task missed:\s*', caseSensitive: false);
     if (missedPrefix.hasMatch(reason)) {
-      // Remove prefix then strip trailing date like " (2026-04-15)"
       final withoutPrefix = reason.replaceFirst(missedPrefix, '');
       return withoutPrefix.replaceAll(RegExp(r'\s*\(\d{4}-\d{2}-\d{2}\)\s*$'), '').trim();
     }
     return reason;
+  }
+}
+
+// ── Odometer widgets ──────────────────────────────────────────────────────────
+
+class _OdometerNumber extends StatefulWidget {
+  final int value;
+  final AnimationController controller;
+  final TextStyle style;
+
+  const _OdometerNumber({
+    required this.value,
+    required this.controller,
+    required this.style,
+  });
+
+  @override
+  State<_OdometerNumber> createState() => _OdometerNumberState();
+}
+
+class _OdometerNumberState extends State<_OdometerNumber> {
+  late List<Animation<double>> _animations;
+
+  @override
+  void initState() {
+    super.initState();
+    _buildAnimations();
+  }
+
+  @override
+  void didUpdateWidget(_OdometerNumber old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value || old.controller != widget.controller) {
+      _buildAnimations();
+    }
+  }
+
+  void _buildAnimations() {
+    final digits = widget.value == 0
+        ? [0]
+        : widget.value.toString().split('').map(int.parse).toList();
+    _animations = digits.asMap().entries.map((e) {
+      final start = (e.key * 0.07).clamp(0.0, 0.4);
+      final end = (start + 0.72).clamp(0.0, 1.0);
+      return Tween<double>(begin: 0, end: e.value.toDouble()).animate(
+        CurvedAnimation(
+          parent: widget.controller,
+          curve: Interval(start, end, curve: Curves.easeOut),
+        ),
+      );
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fontSize = widget.style.fontSize ?? 42;
+    final digitHeight = fontSize * 1.15;
+    final digits = widget.value == 0
+        ? [0]
+        : widget.value.toString().split('').map(int.parse).toList();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: digits.asMap().entries.map((e) {
+        return _OdometerDigit(
+          animation: _animations[e.key],
+          digitHeight: digitHeight,
+          digitWidth: fontSize * 0.62,
+          style: widget.style,
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _OdometerDigit extends StatelessWidget {
+  final Animation<double> animation;
+  final double digitHeight;
+  final double digitWidth;
+  final TextStyle style;
+
+  const _OdometerDigit({
+    required this.animation,
+    required this.digitHeight,
+    required this.digitWidth,
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: digitWidth,
+      height: digitHeight,
+      child: ClipRect(
+        child: AnimatedBuilder(
+          animation: animation,
+          builder: (context, _) {
+            return OverflowBox(
+              maxHeight: digitHeight * 10,
+              alignment: Alignment.topCenter,
+              child: Transform.translate(
+                offset: Offset(0, -animation.value * digitHeight),
+                child: Column(
+                  children: List.generate(10, (i) => SizedBox(
+                    width: digitWidth,
+                    height: digitHeight,
+                    child: Center(
+                      child: Text('$i', style: style.copyWith(height: 1)),
+                    ),
+                  )),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }

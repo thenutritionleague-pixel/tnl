@@ -44,6 +44,7 @@ class TaskService {
     required String orgId,
     required XFile imageFile,
     String? submittedDate,
+    String? note,
   }) async {
     final ext = p.extension(imageFile.name).toLowerCase();
     final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$ext';
@@ -68,6 +69,7 @@ class TaskService {
       'submitted_date': dateStr,
       'status': 'pending',
       'proof_url': fileName,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
     });
   }
 
