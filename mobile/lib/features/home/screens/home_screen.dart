@@ -99,9 +99,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   String _submissionStatus(String taskId) {
-    final match = _submissions.where((s) => s['task_id'] == taskId).toList();
-    if (match.isEmpty) return 'none';
-    return match.first['status'] as String? ?? 'pending';
+    final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+    final todayMatch = _submissions.where(
+      (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
+    ).toList();
+    if (todayMatch.isEmpty) return 'none';
+    todayMatch.sort((a, b) =>
+        (b['submitted_at'] as String? ?? '').compareTo(a['submitted_at'] as String? ?? ''));
+    return todayMatch.first['status'] as String? ?? 'pending';
   }
 
   int get _todayApproved {
@@ -548,11 +553,61 @@ class _ChallengeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final approved = status == 'approved';
+    final canSubmit = status == 'none' || status == 'rejected';
+
+    Widget trailing;
+    if (status == 'approved') {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle_rounded, color: cs.primary, size: 16),
+          const SizedBox(width: 4),
+          Text('Done', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary)),
+        ],
+      );
+    } else if (status == 'pending') {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.schedule_rounded, color: cs.onSurface.withValues(alpha: 0.45), size: 16),
+          const SizedBox(width: 4),
+          Text('Pending', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.45))),
+        ],
+      );
+    } else if (status == 'rejected') {
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.refresh_rounded, color: AppColors.error, size: 16),
+          const SizedBox(width: 4),
+          const Text('Resubmit', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error)),
+        ],
+      );
+    } else {
+      trailing = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: cs.onSurface.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🥦', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 3),
+            Text(
+              '${task['points']}',
+              style: TextStyle(color: cs.onSurface.withValues(alpha: 0.5), fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       children: [
         InkWell(
-          onTap: () => context.push('/tasks/submit', extra: task),
+          onTap: canSubmit ? () => context.push('/tasks/submit', extra: task) : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             child: Row(
@@ -575,33 +630,7 @@ class _ChallengeRow extends StatelessWidget {
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: approved
-                        ? cs.primary.withValues(alpha: 0.12)
-                        : cs.onSurface.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: approved ? cs.primary.withValues(alpha: 0.3) : Colors.transparent,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('🥦', style: TextStyle(fontSize: 12)),
-                      const SizedBox(width: 3),
-                      Text(
-                        '${task['points']}',
-                        style: TextStyle(
-                          color: approved ? cs.primary : cs.onSurface.withValues(alpha: 0.5),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                trailing,
               ],
             ),
           ),
