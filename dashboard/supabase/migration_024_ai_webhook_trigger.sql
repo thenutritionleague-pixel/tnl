@@ -1,0 +1,11 @@
+-- AI analysis is handled by the Supabase Edge Function `analyze-submission`.
+-- No SQL trigger needed — the DB webhook is configured via Supabase Dashboard UI.
+-- See: supabase/functions/analyze-submission/index.ts
+--
+-- Dashboard setup steps:
+--   1. Deploy function:  supabase functions deploy analyze-submission
+--   2. Set secret:       supabase secrets set OPENAI_API_KEY=sk-...
+--   3. Database → Webhooks → Create webhook:
+--        Table:  task_submissions
+--        Event:  INSERT
+--        URL:    https://<project-ref>.supabase.co/functions/v1/analyze-submission

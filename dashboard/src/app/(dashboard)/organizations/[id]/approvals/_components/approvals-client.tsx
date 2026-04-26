@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import {
   CheckCircle2, XCircle, ImageIcon, Loader2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-  X, Search, Calendar,
+  X, Search, Calendar, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { approveSubmission, rejectSubmission, getProofSignedUrl } from '../actions'
+import { runAiAnalysis } from '../ai-actions'
 import type { OrgApproval } from '@/lib/supabase/admin-queries'
 
 // ── DatePicker ────────────────────────────────────────────────────────────────
@@ -194,6 +195,54 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
     [approvals]
   )
 
+  const [aiChecking, setAiChecking] = useState(false)
+
+  async function runAiChecks() {
+    const toAnalyze = approvals.filter(a => a.status === 'pending' && a.aiStatus !== 'analyzing')
+    if (toAnalyze.length === 0) { toast.info('No pending submissions to analyze.'); return }
+    setAiChecking(true)
+    setApprovals(prev => prev.map(a =>
+      toAnalyze.some(t => t.id === a.id) ? { ...a, aiStatus: 'analyzing' } : a
+    ))
+    await Promise.all(toAnalyze.map(a =>
+      runAiAnalysis(a.id, orgId).then(res => {
+        if (!res) return
+        setApprovals(prev => prev.map(x => {
+          if (x.id !== a.id) return x
+          return {
+            ...x,
+            aiStatus: res.aiStatus,
+            aiFeedback: res.aiFeedback,
+            aiConfidence: res.aiConfidence,
+            ...(res.aiStatus === 'approved' ? { status: 'approved' as const, pointsAwarded: x.pointsAwarded ?? x.taskPoints } : {}),
+            ...(res.aiStatus === 'rejected' ? { status: 'rejected' as const, rejectionReason: res.aiFeedback || 'Rejected by AI review.' } : {}),
+          }
+        }))
+      })
+    ))
+    setAiChecking(false)
+    toast.success('AI checks complete.')
+  }
+
+  async function handleReanalyze(a: OrgApproval) {
+    const patch = { aiStatus: 'analyzing', aiFeedback: null as string | null, aiConfidence: null as number | null }
+    setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...patch } : x))
+    setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...patch } : prev)
+    const res = await runAiAnalysis(a.id, orgId)
+    if (!res) return
+    const update = { aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence }
+    setApprovals(prev => prev.map(x => {
+      if (x.id !== a.id) return x
+      return {
+        ...x,
+        ...update,
+        ...(res.aiStatus === 'approved' ? { status: 'approved' as const, pointsAwarded: x.pointsAwarded ?? x.taskPoints } : {}),
+        ...(res.aiStatus === 'rejected' ? { status: 'rejected' as const, rejectionReason: res.aiFeedback || 'Rejected by AI review.' } : {}),
+      }
+    }))
+    setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...update } : prev)
+  }
+
   function applyFilters(list: OrgApproval[]) {
     return list.filter(a => {
       if (search && !a.member.toLowerCase().includes(search.toLowerCase())) return false
@@ -266,11 +315,23 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-2xl text-foreground">Approvals</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {allPending.length} pending · {allReviewed.length} reviewed
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl text-foreground">Approvals</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {allPending.length} pending · {allReviewed.length} reviewed
+          </p>
+        </div>
+        <button
+          onClick={runAiChecks}
+          disabled={aiChecking || allPending.length === 0}
+          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0 gap-1.5 border-primary/40 text-primary hover:bg-primary/5 disabled:opacity-50')}
+        >
+          {aiChecking
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analyzing…</>
+            : <><Sparkles className="w-3.5 h-3.5" /> Run AI Checks</>
+          }
+        </button>
       </div>
 
       {/* Filter bar */}
@@ -311,6 +372,28 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
                   {a.member}<span className="text-muted-foreground font-normal"> · {a.teamName}</span>
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">&ldquo;{a.taskTitle}&rdquo; · {a.taskPoints} 🥦 pts · {a.submittedAt}</p>
+                <div className="mt-1.5">
+                  {a.aiStatus === 'analyzing' && (
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" /> AI analyzing…
+                    </span>
+                  )}
+                  {a.aiStatus === 'needs_review' && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/40 rounded-full px-2 py-0.5">
+                      ⚠ AI: Needs Review
+                    </span>
+                  )}
+                  {a.aiStatus === 'approved' && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 rounded-full px-2 py-0.5">
+                      ✓ AI Approved
+                    </span>
+                  )}
+                  {a.aiStatus === 'rejected' && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 dark:bg-red-950/40 rounded-full px-2 py-0.5">
+                      ✗ AI Rejected
+                    </span>
+                  )}
+                </div>
               </div>
               <button onClick={() => openReview(a)} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0 gap-1.5')}>
                 <ImageIcon className="w-3.5 h-3.5" /> Review Submission
@@ -385,6 +468,57 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Submitted Proof</p>
                   <ProofViewer proofUrl={reviewTarget.proofUrl} />
                 </div>
+
+                {/* AI Analysis panel */}
+                {reviewTarget.aiStatus && (
+                  <div className={cn('rounded-lg px-4 py-3 space-y-2 border',
+                    reviewTarget.aiStatus === 'approved' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800' :
+                    reviewTarget.aiStatus === 'rejected' ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' :
+                    reviewTarget.aiStatus === 'analyzing' ? 'bg-muted/50 border-border' :
+                    'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800'
+                  )}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {reviewTarget.aiStatus === 'analyzing' && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground shrink-0" />}
+                        <span className={cn('text-xs font-semibold',
+                          reviewTarget.aiStatus === 'approved' ? 'text-emerald-700 dark:text-emerald-400' :
+                          reviewTarget.aiStatus === 'rejected' ? 'text-red-700 dark:text-red-400' :
+                          reviewTarget.aiStatus === 'analyzing' ? 'text-muted-foreground' :
+                          'text-amber-700 dark:text-amber-400'
+                        )}>
+                          {reviewTarget.aiStatus === 'analyzing' ? 'AI Analyzing…' :
+                           reviewTarget.aiStatus === 'approved' ? '✓ AI Approved' :
+                           reviewTarget.aiStatus === 'rejected' ? '✗ AI Rejected' :
+                           '⚠ AI: Needs Review'}
+                        </span>
+                        {reviewTarget.aiConfidence != null && reviewTarget.aiStatus !== 'analyzing' && (
+                          <span className="text-xs text-muted-foreground">
+                            {Math.round(reviewTarget.aiConfidence * 100)}% confidence
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleReanalyze(reviewTarget)}
+                        disabled={reviewTarget.aiStatus === 'analyzing' || submitting}
+                        className="text-xs text-primary hover:underline disabled:opacity-40 shrink-0"
+                      >
+                        Re-analyze
+                      </button>
+                    </div>
+                    {reviewTarget.aiFeedback && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">{reviewTarget.aiFeedback}</p>
+                    )}
+                  </div>
+                )}
+
+                {reviewTarget.note && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Member Note</p>
+                    <div className="rounded-lg bg-muted/50 border border-border px-3 py-2.5 text-sm text-foreground leading-relaxed">
+                      {reviewTarget.note}
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <Label htmlFor="adminNotes" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">

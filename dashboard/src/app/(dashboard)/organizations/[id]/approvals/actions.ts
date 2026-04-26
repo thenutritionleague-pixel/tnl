@@ -14,17 +14,20 @@ export async function approveSubmission(
 
   const client = await createAdminClient()
 
-  // Get task points if no override
-  let finalPoints = pointsOverride
-  if (finalPoints === null) {
-    const { data: sub } = await client
-      .from('task_submissions')
-      .select('tasks(points)')
-      .eq('id', submissionId)
-      .single()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    finalPoints = (sub as any)?.tasks?.points ?? 0
-  }
+  // Fetch submission details for feed item
+  const { data: subDetails } = await client
+    .from('task_submissions')
+    .select('user_id, challenge_id, tasks(title, points), profiles:user_id(name)')
+    .eq('id', submissionId)
+    .single()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sd = subDetails as any
+  const finalPoints = pointsOverride ?? sd?.tasks?.points ?? 0
+  const taskTitle: string = sd?.tasks?.title ?? 'a task'
+  const memberName: string = sd?.profiles?.name ?? 'A member'
+  const memberId: string | null = sd?.user_id ?? null
+  const challengeId: string | null = sd?.challenge_id ?? null
 
   const { error } = await client
     .from('task_submissions')
@@ -37,6 +40,18 @@ export async function approveSubmission(
     .eq('org_id', orgId)
 
   if (error) return { error: error.message }
+
+  // Create rich feed item
+  await client.from('feed_items').insert({
+    org_id: orgId,
+    type: 'submission_approved',
+    title: `${memberName} completed ${taskTitle}`,
+    content: `+${finalPoints} 🥦 broccoli points earned`,
+    is_auto_generated: true,
+    author_id: memberId,
+    challenge_id: challengeId,
+  })
+
   revalidatePath(`/organizations/${orgId}/approvals`)
   return { success: true }
 }

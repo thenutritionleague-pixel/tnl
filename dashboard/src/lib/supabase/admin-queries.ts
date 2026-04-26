@@ -539,6 +539,10 @@ export interface OrgApproval {
   rejectionReason: string | null
   pointsAwarded: number | null
   proofUrl: string | null
+  note: string | null
+  aiStatus: string | null
+  aiFeedback: string | null
+  aiConfidence: number | null
 }
 
 export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
@@ -547,7 +551,7 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
   const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
     client
       .from('task_submissions')
-      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, user_id, tasks!task_id(title, description, points)')
+      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
       .limit(200),
@@ -590,6 +594,10 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
     rejectionReason: s.rejection_reason ?? null,
     pointsAwarded: s.points_awarded ?? null,
     proofUrl: s.proof_url ?? null,
+    note: s.note ?? null,
+    aiStatus: s.ai_status ?? null,
+    aiFeedback: s.ai_feedback ?? null,
+    aiConfidence: s.ai_confidence ?? null,
   }))
 }
 
