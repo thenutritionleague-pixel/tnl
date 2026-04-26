@@ -35,6 +35,7 @@ export async function approveSubmission(
       status: 'approved',
       points_awarded: finalPoints,
       reviewed_at: new Date().toISOString(),
+      reviewed_by: profile.id,
     })
     .eq('id', submissionId)
     .eq('org_id', orgId)
@@ -71,6 +72,7 @@ export async function rejectSubmission(
       status: 'rejected',
       rejection_reason: reason || null,
       reviewed_at: new Date().toISOString(),
+      reviewed_by: profile.id,
     })
     .eq('id', submissionId)
     .eq('org_id', orgId)
@@ -78,6 +80,13 @@ export async function rejectSubmission(
   if (error) return { error: error.message }
   revalidatePath(`/organizations/${orgId}/approvals`)
   return { success: true }
+}
+
+export async function loadApprovalsPage(orgId: string, page: number) {
+  const profile = await getAdminProfile()
+  if (!profile) return null
+  const { getOrgApprovals } = await import('@/lib/supabase/admin-queries')
+  return getOrgApprovals(orgId, page)
 }
 
 export async function getProofSignedUrl(path: string): Promise<string | null> {

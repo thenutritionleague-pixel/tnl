@@ -21,6 +21,7 @@ class _FeedScreenState extends State<FeedScreen>
   String? _profileId;
   String? _orgId;
   RealtimeChannel? _channel;
+  final Set<String> _reactingPostIds = {};
 
   static const List<String> _reactions = ['🥦', '🔥', '⭐', '❤️'];
 
@@ -85,21 +86,54 @@ class _FeedScreenState extends State<FeedScreen>
 
   Future<void> _toggleReaction(String postId, String reaction) async {
     if (_profileId == null) return;
+    // Prevent duplicate taps while request is in flight
+    if (_reactingPostIds.contains('$postId:$reaction')) return;
 
     final postIdx = _posts.indexWhere((p) => p['id'] == postId);
     if (postIdx == -1) return;
 
     final reactions = List<Map<String, dynamic>>.from(
         _posts[postIdx]['feed_reactions'] as List? ?? []);
-    final existing = reactions.where(
-        (r) => r['user_id'] == _profileId && r['reaction'] == reaction).toList();
+    final isRemoving = reactions.any(
+        (r) => r['user_id'] == _profileId && r['reaction'] == reaction);
 
-    if (existing.isNotEmpty) {
-      await FeedService.removeReaction(postId: postId, userId: _profileId!, reaction: reaction);
+    // Optimistic update
+    List<Map<String, dynamic>> updatedReactions;
+    if (isRemoving) {
+      updatedReactions = reactions
+          .where((r) => !(r['user_id'] == _profileId && r['reaction'] == reaction))
+          .toList();
     } else {
-      await FeedService.addReaction(postId: postId, userId: _profileId!, reaction: reaction);
+      updatedReactions = [...reactions, {'user_id': _profileId, 'reaction': reaction}];
     }
-    _load();
+    final updated = {..._posts[postIdx], 'feed_reactions': updatedReactions};
+    if (mounted) {
+      setState(() {
+        _reactingPostIds.add('$postId:$reaction');
+        _posts = [..._posts]..[postIdx] = updated;
+      });
+    }
+
+    try {
+      if (isRemoving) {
+        await FeedService.removeReaction(postId: postId, userId: _profileId!, reaction: reaction);
+      } else {
+        await FeedService.addReaction(postId: postId, userId: _profileId!, reaction: reaction);
+      }
+    } catch (_) {
+      // Revert optimistic update on failure
+      if (mounted) {
+        setState(() => _posts = [..._posts]..[postIdx] = _posts[postIdx]
+            ..[
+              'feed_reactions'
+            ] = reactions);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update reaction. Try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reactingPostIds.remove('$postId:$reaction'));
+    }
   }
 
   Map<String, int> _reactionCounts(List reactions) {
@@ -128,11 +162,13 @@ class _FeedScreenState extends State<FeedScreen>
               color: AppColors.primary,
               child: _posts.isEmpty
                   ? _EmptyFeed()
-                  : ListView.builder(
+                  : Builder(builder: (context) {
+                      final items = _buildItems();
+                      return ListView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                      itemCount: _buildItems().length,
+                      itemCount: items.length,
                       itemBuilder: (context, i) {
-                        final item = _buildItems()[i];
+                        final item = items[i];
                         if (item is _DateHeader) {
                           return Padding(
                             padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
@@ -260,7 +296,8 @@ class _FeedScreenState extends State<FeedScreen>
                           ),
                         );
                       },
-                    ),
+                    );
+                    }),
             ),
     );
   }
@@ -367,6 +404,7 @@ class _TypeChip extends StatelessWidget {
       case 'reminder': return AppColors.pending;
       case 'challenge_update': return AppColors.primary;
       case 'submission_approved': return AppColors.success;
+      case 'submission_rejected': return AppColors.error;
       default: return AppColors.textHint;
     }
   }
@@ -380,6 +418,7 @@ class _TypeChip extends StatelessWidget {
       case 'reminder': return '⏰ Reminder';
       case 'challenge_update': return '🥦 Challenge';
       case 'submission_approved': return '✅ Approved';
+      case 'submission_rejected': return '❌ Not Approved';
       default: return type;
     }
   }

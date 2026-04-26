@@ -2,6 +2,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 
+class AlreadySubmittedTodayException implements Exception {
+  const AlreadySubmittedTodayException();
+  @override
+  String toString() => 'You have already submitted this task today.';
+}
+
 class TaskService {
   static final _client = Supabase.instance.client;
 
@@ -39,7 +45,7 @@ class TaskService {
   /// admin breakdown stays accurate.
   static Future<void> submitTaskImage({
     required String taskId,
-    required String challengeId,
+    String? challengeId,
     required String userId,
     required String orgId,
     required XFile imageFile,
@@ -60,17 +66,25 @@ class TaskService {
     final dateStr = submittedDate ??
         DateTime.now().toLocal().toString().split(' ')[0];
 
-    await _client.from('task_submissions').insert({
-      'task_id': taskId,
-      'challenge_id': challengeId,
-      'user_id': userId,
-      'org_id': orgId,
-      'submitted_at': DateTime.now().toUtc().toIso8601String(),
-      'submitted_date': dateStr,
-      'status': 'pending',
-      'proof_url': fileName,
-      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
-    });
+    try {
+      await _client.from('task_submissions').insert({
+        'task_id': taskId,
+        if (challengeId != null) 'challenge_id': challengeId,
+        'user_id': userId,
+        'org_id': orgId,
+        'submitted_at': DateTime.now().toUtc().toIso8601String(),
+        'submitted_date': dateStr,
+        'status': 'pending',
+        'proof_url': fileName,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      });
+    } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        // Unique constraint violation — already submitted today
+        throw AlreadySubmittedTodayException();
+      }
+      rethrow;
+    }
   }
 
   static String _mimeType(String ext) => switch (ext) {

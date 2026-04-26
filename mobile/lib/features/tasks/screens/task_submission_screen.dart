@@ -46,6 +46,15 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 82);
     if (picked != null && mounted) {
       final bytes = await picked.readAsBytes();
+      if (bytes.lengthInBytes > 15 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Image too large. Please use a photo under 15 MB.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
       setState(() { _selectedImage = picked; _imageBytes = bytes; });
     }
   }
@@ -62,7 +71,8 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     }
 
     final taskId = _taskData['id'] as String? ?? '';
-    final challengeId = _taskData['challenge_id'] as String? ?? '';
+    final rawChallengeId = _taskData['challenge_id'] as String?;
+    final challengeId = (rawChallengeId != null && rawChallengeId.isNotEmpty) ? rawChallengeId : null;
 
     setState(() => _submitting = true);
 
@@ -79,6 +89,16 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       if (mounted) {
         setState(() { _submitting = false; _done = true; });
         _confettiCtrl.play();
+      }
+    } on AlreadySubmittedTodayException {
+      if (mounted) {
+        setState(() => _submitting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You have already submitted this task today.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

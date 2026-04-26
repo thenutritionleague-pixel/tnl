@@ -9,7 +9,7 @@ const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') })
 
 async function fetchImageAsBase64(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
     const bytes = new Uint8Array(await res.arrayBuffer())
     let binary = ''
@@ -32,22 +32,19 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: 'Missing id or org_id' }), { status: 400 })
     }
 
-    // Skip if already analyzed
-    const { data: existing } = await supabase
-      .from('task_submissions')
-      .select('ai_status')
-      .eq('id', submissionId)
-      .single()
-
-    if (existing?.ai_status && existing.ai_status !== 'analyzing') {
-      return new Response(JSON.stringify({ skipped: true }), { status: 200 })
-    }
-
-    // Mark as analyzing
-    await supabase
+    // Atomic claim: only proceed if we successfully flip ai_status from null → 'analyzing'.
+    // This prevents double-processing when the webhook fires twice (retry scenario).
+    const { count } = await supabase
       .from('task_submissions')
       .update({ ai_status: 'analyzing' })
+      .is('ai_status', null)
       .eq('id', submissionId)
+      .select('id', { count: 'exact', head: true })
+
+    if (!count || count === 0) {
+      // Already claimed by another invocation or already analyzed
+      return new Response(JSON.stringify({ skipped: true }), { status: 200 })
+    }
 
     // Fetch submission + task
     const { data: sub } = await supabase
@@ -64,7 +61,6 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sd = sub as any
     const taskTitle: string = sd.tasks?.title ?? 'wellness task'
     const taskDesc: string  = sd.tasks?.description ?? ''
@@ -121,21 +117,7 @@ Deno.serve(async (req: Request) => {
       prevCount++
     }
 
-    const prompt = `You are reviewing a wellness challenge task submission.
-
-Task: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}
-
-Image 1 is the current submission.${prevCount > 0 ? `\nImages 2–${prevCount + 1} are this member's previous approved submissions for the same task (for duplicate detection).` : ''}
-
-Evaluate on three criteria:
-1. TASK MATCH — Does Image 1 clearly show completion of this specific task?
-2. AUTHENTICITY — Does it look like a genuine real photo? (reject if AI-generated, stock photo, screenshot, or obviously fake)
-3. UNIQUENESS — Is it meaningfully different from any previous images? (reject if the same or near-identical photo is reused)
-
-Be lenient with real-looking photos that broadly match the task. Only reject clear violations.
-
-Respond in JSON only — no markdown, no extra text:
-{"approved":true|false,"confidence":0.0-1.0,"issues":[],"feedback":"Brief message shown to the member only if rejected"}`
+    const prompt = `You are reviewing a wellness challenge task submission.\n\nTask: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}\n\nImage 1 is the current submission.${prevCount > 0 ? `\nImages 2–${prevCount + 1} are this member's previous approved submissions for the same task (for duplicate detection).` : ''}\n\nEvaluate on three criteria:\n1. TASK MATCH — Does Image 1 clearly show completion of this specific task?\n2. AUTHENTICITY — Does it look like a genuine real photo? (reject if AI-generated, stock photo, screenshot, or obviously fake)\n3. UNIQUENESS — Is it meaningfully different from any previous images? (reject if the same or near-identical photo is reused)\n\nBe lenient with real-looking photos that broadly match the task. Only reject clear violations.\n\nRespond in JSON only — no markdown, no extra text:\n{"approved":true|false,"confidence":0.0-1.0,"issues":[],"feedback":"Brief message shown to the member only if rejected"}`
 
     const contentBlocks: (TextBlock | ImageBlock)[] = [
       { type: 'text', text: prompt },
@@ -194,7 +176,7 @@ Respond in JSON only — no markdown, no extra text:
       })
     }
 
-    // Auto-reject
+    // Auto-reject: update status + notify member via feed
     if (aiStatus === 'rejected') {
       await supabase
         .from('task_submissions')
@@ -204,6 +186,16 @@ Respond in JSON only — no markdown, no extra text:
           reviewed_at: new Date().toISOString(),
         })
         .eq('id', submissionId)
+
+      await supabase.from('feed_items').insert({
+        org_id: orgId,
+        type: 'submission_rejected',
+        title: `Your ${taskTitle} submission was not approved`,
+        content: feedback || 'Please resubmit with a clear proof photo.',
+        is_auto_generated: true,
+        author_id: sub.user_id,
+        challenge_id: sub.challenge_id ?? null,
+      })
     }
 
     return new Response(JSON.stringify({ aiStatus, feedback, confidence }), { status: 200 })

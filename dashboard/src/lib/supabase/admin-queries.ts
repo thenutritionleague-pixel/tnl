@@ -95,35 +95,60 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
     .from('organizations')
     .select('id, name, logo, slug, is_active')
     .order('created_at')
-  if (!orgs) return []
+  if (!orgs || orgs.length === 0) return []
 
-  const results: DashboardOrg[] = []
-  for (const org of orgs) {
-    const { data: challenges } = await client
-      .from('challenges')
-      .select('id')
-      .eq('org_id', org.id)
-    const challengeIds = (challenges ?? []).map((c: { id: string }) => c.id)
+  const orgIds = orgs.map(o => o.id)
 
-    const [membersRes, teamsRes, pendingRes] = await Promise.all([
-      client.from('org_members').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
-      client.from('teams').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
-      challengeIds.length > 0
-        ? client.from('task_submissions').select('id', { count: 'exact', head: true }).in('challenge_id', challengeIds).eq('status', 'pending')
-        : { count: 0 },
-    ])
-    results.push({
-      id: org.id,
-      name: org.name,
-      logo: org.logo,
-      slug: org.slug,
-      isActive: org.is_active,
-      memberCount: membersRes.count ?? 0,
-      teamCount: teamsRes.count ?? 0,
-      pendingApprovals: pendingRes.count ?? 0,
-    })
+  const [challengesRes, membersRes, teamsRes] = await Promise.all([
+    client.from('challenges').select('id, org_id').in('org_id', orgIds),
+    client.from('org_members').select('org_id').in('org_id', orgIds),
+    client.from('teams').select('org_id').in('org_id', orgIds),
+  ])
+
+  const challengesByOrg: Record<string, string[]> = {}
+  for (const c of (challengesRes.data ?? []) as { id: string; org_id: string }[]) {
+    if (!challengesByOrg[c.org_id]) challengesByOrg[c.org_id] = []
+    challengesByOrg[c.org_id].push(c.id)
   }
-  return results
+
+  const memberCounts: Record<string, number> = {}
+  const teamCounts: Record<string, number> = {}
+  for (const m of (membersRes.data ?? []) as { org_id: string }[]) {
+    memberCounts[m.org_id] = (memberCounts[m.org_id] ?? 0) + 1
+  }
+  for (const t of (teamsRes.data ?? []) as { org_id: string }[]) {
+    teamCounts[t.org_id] = (teamCounts[t.org_id] ?? 0) + 1
+  }
+
+  const allChallengeIds = Object.values(challengesByOrg).flat()
+  const pendingByOrg: Record<string, number> = {}
+  if (allChallengeIds.length > 0) {
+    const { data: pending } = await client
+      .from('task_submissions')
+      .select('challenge_id')
+      .in('challenge_id', allChallengeIds)
+      .eq('status', 'pending')
+
+    const challengeToOrg: Record<string, string> = {}
+    for (const [orgId, cIds] of Object.entries(challengesByOrg)) {
+      for (const cId of cIds) challengeToOrg[cId] = orgId
+    }
+    for (const sub of (pending ?? []) as { challenge_id: string }[]) {
+      const orgId = challengeToOrg[sub.challenge_id]
+      if (orgId) pendingByOrg[orgId] = (pendingByOrg[orgId] ?? 0) + 1
+    }
+  }
+
+  return orgs.map(org => ({
+    id: org.id,
+    name: org.name,
+    logo: org.logo,
+    slug: org.slug,
+    isActive: org.is_active,
+    memberCount: memberCounts[org.id] ?? 0,
+    teamCount: teamCounts[org.id] ?? 0,
+    pendingApprovals: pendingByOrg[org.id] ?? 0,
+  }))
 }
 
 export async function getRecentActivity(): Promise<ActivityItem[]> {
@@ -545,8 +570,12 @@ export interface OrgApproval {
   aiConfidence: number | null
 }
 
-export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
+const APPROVALS_PAGE_SIZE = 50
+
+export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
   const client = await createAdminClient()
+  const from = page * APPROVALS_PAGE_SIZE
+  const to   = from + APPROVALS_PAGE_SIZE - 1
 
   const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
     client
@@ -554,7 +583,7 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
       .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
-      .limit(200),
+      .range(from, to + 1), // fetch one extra to detect hasMore
     client
       .from('team_members')
       .select('user_id, teams!team_id(name)')
@@ -579,8 +608,12 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
     profileMap[p.id] = p.name
   }
 
+  const rawRows = (subsRes.data ?? []) as any[]
+  const hasMore = rawRows.length > APPROVALS_PAGE_SIZE
+  const rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((subsRes.data ?? []) as any[]).map(s => ({
+  const approvals = rows.map(s => ({
     id: s.id,
     member: profileMap[s.user_id] ?? 'Unknown',
     userId: s.user_id,
@@ -599,6 +632,7 @@ export async function getOrgApprovals(orgId: string): Promise<OrgApproval[]> {
     aiFeedback: s.ai_feedback ?? null,
     aiConfidence: s.ai_confidence ?? null,
   }))
+  return { approvals, hasMore }
 }
 
 // ── Org Overview ───────────────────────────────────────────────────────────────

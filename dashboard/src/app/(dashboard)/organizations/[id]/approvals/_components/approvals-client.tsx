@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, getProofSignedUrl } from '../actions'
+import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage } from '../actions'
 import { runAiAnalysis } from '../ai-actions'
 import type { OrgApproval } from '@/lib/supabase/admin-queries'
 
@@ -175,10 +175,14 @@ const inputCls = 'w-full rounded-lg border border-input bg-background px-3 py-2 
 interface Props {
   orgId: string
   initialApprovals: OrgApproval[]
+  initialHasMore: boolean
 }
 
-export function ApprovalsClient({ orgId, initialApprovals }: Props) {
+export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Props) {
   const [approvals, setApprovals]         = useState<OrgApproval[]>(initialApprovals)
+  const [hasMore, setHasMore]             = useState(initialHasMore)
+  const [loadingMore, setLoadingMore]     = useState(false)
+  const [currentPage, setCurrentPage]     = useState(0)
   const [reviewTarget, setReviewTarget]   = useState<OrgApproval | null>(null)
   const [adminNotes, setAdminNotes]       = useState('')
   const [pointsOverride, setPointsOverride] = useState('')
@@ -194,6 +198,24 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
     () => Array.from(new Set(approvals.map(a => a.teamName))).sort(),
     [approvals]
   )
+
+  async function loadMore() {
+    setLoadingMore(true)
+    const nextPage = currentPage + 1
+    const res = await loadApprovalsPage(orgId, nextPage)
+    if (res) {
+      setApprovals(prev => [...prev, ...res.approvals])
+      setHasMore(res.hasMore)
+      setCurrentPage(nextPage)
+    }
+    setLoadingMore(false)
+  }
+
+  const modalScrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (reviewTarget) modalScrollRef.current?.scrollTo({ top: 0 })
+  }, [reviewTarget?.id])
 
   const [aiChecking, setAiChecking] = useState(false)
 
@@ -264,7 +286,12 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
   async function handleApprove() {
     if (!reviewTarget) return
     setSubmitting(true)
-    const pts = pointsOverride ? parseInt(pointsOverride) : null
+    const pts = pointsOverride !== '' ? Number(pointsOverride) : null
+    if (pts !== null && (!Number.isFinite(pts) || pts < 0)) {
+      toast.error('Invalid points value')
+      setSubmitting(false)
+      return
+    }
     const result = await approveSubmission(reviewTarget.id, orgId, pts)
     if (result.error) {
       toast.error(result.error)
@@ -435,6 +462,19 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
         </div>
       )}
 
+      {/* Load More */}
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5 text-muted-foreground')}
+          >
+            {loadingMore ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</> : 'Load more submissions'}
+          </button>
+        </div>
+      )}
+
       {/* Review Modal */}
       <Dialog open={!!reviewTarget} onOpenChange={v => { if (!v) closeReview() }}>
         <DialogContent className="sm:max-w-lg p-0 overflow-hidden" showCloseButton={false}>
@@ -447,7 +487,7 @@ export function ApprovalsClient({ orgId, initialApprovals }: Props) {
                 </div>
               </DialogHeader>
 
-              <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div ref={modalScrollRef} className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-base font-bold text-primary shrink-0">
                     {reviewTarget.member.charAt(0)}
