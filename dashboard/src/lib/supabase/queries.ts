@@ -620,14 +620,8 @@ export async function removeTeamMember(teamId: string, userId: string) {
 
 export async function updateTeamMemberRole(teamId: string, userId: string, role: 'captain' | 'vice_captain' | 'member') {
   const supabase = await db()
-  // Demote any existing holder of that role first
-  if (role !== 'member') {
-    await supabase
-      .from('team_members')
-      .update({ role: 'member' })
-      .eq('team_id', teamId)
-      .eq('role', role)
-  }
+  // The enforce_team_role_uniqueness trigger atomically demotes any existing
+  // holder of the same role before this row is updated — no separate query needed.
   return supabase.from('team_members').update({ role }).eq('team_id', teamId).eq('user_id', userId)
 }
 

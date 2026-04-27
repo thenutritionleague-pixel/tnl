@@ -1,6 +1,6 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createClient } from '@/lib/supabase/server'
 import { getAdminProfile } from '@/lib/auth'
 
 export async function updateAdminName(name: string) {
@@ -23,6 +23,14 @@ export async function finalizeEmailChange(
   originalUserId: string,
   newEmail: string,
 ) {
+  // After OTP verify the caller's session is the temp user for newEmail.
+  // Confirm the live session email matches newEmail — proves they completed the OTP flow.
+  const sessionClient = await createClient()
+  const { data: { user: callerUser } } = await sessionClient.auth.getUser()
+  if (!callerUser || callerUser.email?.toLowerCase() !== newEmail.toLowerCase()) {
+    return { error: 'Session mismatch. Please restart the email change flow.' }
+  }
+
   const adminClient = await createAdminClient()
 
   // Verify adminId + originalUserId are consistent (basic guard)
