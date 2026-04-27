@@ -227,7 +227,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
       toAnalyze.some(t => t.id === a.id) ? { ...a, aiStatus: 'analyzing' } : a
     ))
     await Promise.all(toAnalyze.map(a =>
-      runAiAnalysis(a.id, orgId).then(res => {
+      runAiAnalysis(a.id).then(res => {
         if (!res) return
         setApprovals(prev => prev.map(x => {
           if (x.id !== a.id) return x
@@ -250,7 +250,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
     const patch = { aiStatus: 'analyzing', aiFeedback: null as string | null, aiConfidence: null as number | null }
     setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...patch } : x))
     setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...patch } : prev)
-    const res = await runAiAnalysis(a.id, orgId)
+    const res = await runAiAnalysis(a.id)
     if (!res) return
     const update = { aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence }
     setApprovals(prev => prev.map(x => {

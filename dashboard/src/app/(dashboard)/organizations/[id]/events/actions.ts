@@ -4,11 +4,14 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminProfile } from '@/lib/auth'
 
+const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
+
 async function checkAccess(orgId: string) {
   const profile = await getAdminProfile()
   if (!profile) return null
-  if (profile.role === 'org_admin' && profile.org_id !== orgId) return null
-  if (profile.role === 'sub_admin' && profile.org_id !== orgId) return null
+  if (!ALLOWED_ROLES.includes(profile.role)) return null
+  if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return null
   return profile
 }
 

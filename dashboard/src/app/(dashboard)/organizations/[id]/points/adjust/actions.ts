@@ -23,8 +23,19 @@ export async function addManualAdjustment(
 
   if (!reason.trim()) return { error: 'Reason is required.' }
   if (!Number.isFinite(amount) || amount === 0) return { error: 'Amount must be a non-zero number.' }
+  if (Math.abs(amount) > 10000) return { error: 'Amount cannot exceed ±10,000 points.' }
 
   const client = await createAdminClient()
+
+  // Verify the target user belongs to this org
+  const { data: targetUser } = await client
+    .from('profiles')
+    .select('id')
+    .eq('id', userId)
+    .eq('org_id', orgId)
+    .single()
+  if (!targetUser) return { error: 'User not found in this organization.' }
+
   const { error } = await client.from('points_transactions').insert({
     user_id: userId,
     org_id: orgId,

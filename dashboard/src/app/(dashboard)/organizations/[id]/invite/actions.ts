@@ -4,11 +4,14 @@ import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminProfile } from '@/lib/auth'
 
+const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
+
 async function checkAccess(orgId: string) {
   const profile = await getAdminProfile()
   if (!profile) return null
-  if (profile.role === 'org_admin' && profile.org_id !== orgId) return null
-  if (profile.role === 'sub_admin' && profile.org_id !== orgId) return null
+  if (!ALLOWED_ROLES.includes(profile.role)) return null
+  if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return null
   return profile
 }
 
@@ -50,6 +53,9 @@ export async function addToWhitelist(orgId: string, email: string, teamId: strin
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
 
+    const normalizedEmail = email.toLowerCase().trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return { error: 'Invalid email address.' }
+
     const normalizedRole = role.toLowerCase().trim()
     const client = await createAdminClient()
 
@@ -59,7 +65,7 @@ export async function addToWhitelist(orgId: string, email: string, teamId: strin
 
     const { data, error } = await client.from('invite_whitelist').insert({
       org_id: orgId,
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       team_id: teamId || null,
       role: normalizedRole,
       invited_by: profile.id,

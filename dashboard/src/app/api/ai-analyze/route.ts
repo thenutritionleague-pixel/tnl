@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { record?: { id?: string; org_id?: string } }
+  let body: { record?: { id?: string } }
   try {
     body = await req.json()
   } catch {
@@ -21,14 +21,14 @@ export async function POST(req: NextRequest) {
   }
 
   const submissionId = body.record?.id
-  const orgId = body.record?.org_id
 
-  if (!submissionId || !orgId) {
-    return NextResponse.json({ error: 'Missing record.id or record.org_id' }, { status: 400 })
+  if (!submissionId) {
+    return NextResponse.json({ error: 'Missing record.id' }, { status: 400 })
   }
 
+  // org_id is fetched from DB inside runAiAnalysis — never trusted from caller
   // Respond immediately — analysis runs in background
-  runAiAnalysis(submissionId, orgId).catch(err =>
+  runAiAnalysis(submissionId).catch(err =>
     console.error('[ai-analyze webhook] error:', err)
   )
 
