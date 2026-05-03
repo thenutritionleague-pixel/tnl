@@ -110,7 +110,7 @@ class TaskService {
         .from('task_submissions')
         .select(
           'id, task_id, challenge_id, status, submitted_date, submitted_at, rejection_reason, '
-          'tasks!task_id(id, title, description, icon, points)',
+          'tasks!task_id(id, title, description, icon, points, points_tiers)',
         )
         .eq('user_id', userId)
         .eq('org_id', orgId)

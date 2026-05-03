@@ -407,7 +407,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                 <p className="text-sm font-semibold text-foreground">
                   {a.member}<span className="text-muted-foreground font-normal"> · {a.teamName}</span>
                 </p>
-                <p className="text-xs text-muted-foreground mt-0.5">&ldquo;{a.taskTitle}&rdquo; · {a.taskPoints} 🥦 pts · {a.submittedAt}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">&ldquo;{a.taskTitle}&rdquo; · {a.taskPointsTiers && a.taskPointsTiers.length > 0 ? `${a.taskPointsTiers[0].points}–${a.taskPointsTiers[a.taskPointsTiers.length - 1].points}` : a.taskPoints} 🥦 pts · {a.submittedAt}</p>
                 <div className="mt-1.5">
                   {a.aiStatus === 'analyzing' && (
                     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -510,7 +510,11 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                 <div className="bg-muted/50 rounded-lg px-4 py-3 space-y-1">
                   <p className="text-sm font-medium text-foreground">{reviewTarget.taskTitle}</p>
                   <p className="text-xs text-muted-foreground">{reviewTarget.taskDescription}</p>
-                  <p className="text-xs text-primary font-medium">Standard: 🥦 {reviewTarget.taskPoints} pts</p>
+                  <p className="text-xs text-primary font-medium">
+                    {reviewTarget.taskPointsTiers && reviewTarget.taskPointsTiers.length > 0
+                      ? `Range: 🥦 ${reviewTarget.taskPointsTiers[0].points}–${reviewTarget.taskPointsTiers[reviewTarget.taskPointsTiers.length - 1].points} pts`
+                      : `Standard: 🥦 ${reviewTarget.taskPoints} pts`}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -595,7 +599,11 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                   <Label htmlFor="pointsOverride" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                     Points Override <span className="font-normal normal-case">(optional)</span>
                   </Label>
-                  <input id="pointsOverride" type="number" min={0} placeholder={`Default: ${reviewTarget.taskPoints} pts`} value={pointsOverride} onChange={e => setPointsOverride(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary" />
+                  <input id="pointsOverride" type="number" min={0} placeholder={
+                    reviewTarget.taskPointsTiers && reviewTarget.selectedTierIndex != null && reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex]
+                      ? `Default: ${reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex].points} pts (claimed tier)`
+                      : `Default: ${reviewTarget.taskPoints} pts`
+                  } value={pointsOverride} onChange={e => setPointsOverride(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary" />
                 </div>
               </div>
 

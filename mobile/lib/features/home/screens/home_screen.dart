@@ -423,7 +423,13 @@ class _HomeScreenState extends State<HomeScreen>
                             final task = entry.value;
                             final status = _submissionStatus(task['id']);
                             final isLast = entry.key == todayTasks.length - 1;
-                            return _ChallengeRow(task: task, status: status, isLast: isLast);
+                            return _ChallengeRow(
+                              task: task,
+                              status: status,
+                              isLast: isLast,
+                              profileId: _profile?['id'] as String? ?? '',
+                              orgId: _profile?['org_id'] as String? ?? '',
+                            );
                           }),
                         const SizedBox(height: 6),
                       ],
@@ -560,7 +566,15 @@ class _ChallengeRow extends StatelessWidget {
   final Map<String, dynamic> task;
   final String status;
   final bool isLast;
-  const _ChallengeRow({required this.task, required this.status, required this.isLast});
+  final String profileId;
+  final String orgId;
+  const _ChallengeRow({
+    required this.task,
+    required this.status,
+    required this.isLast,
+    required this.profileId,
+    required this.orgId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -596,6 +610,11 @@ class _ChallengeRow extends StatelessWidget {
         ],
       );
     } else {
+      final tiersRaw = task['points_tiers'];
+      final tiersList = tiersRaw != null ? List<Map<String, dynamic>>.from(tiersRaw as List) : null;
+      final pointsLabel = (tiersList != null && tiersList.isNotEmpty)
+          ? '${tiersList.first['points']}–${tiersList.last['points']}'
+          : '${task['points'] as int? ?? 0}';
       trailing = Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
@@ -608,7 +627,7 @@ class _ChallengeRow extends StatelessWidget {
             const Text('🥦', style: TextStyle(fontSize: 12)),
             const SizedBox(width: 3),
             Text(
-              '${task['points']}',
+              pointsLabel,
               style: TextStyle(color: cs.onSurface.withValues(alpha: 0.5), fontSize: 12, fontWeight: FontWeight.w700),
             ),
           ],
@@ -619,7 +638,11 @@ class _ChallengeRow extends StatelessWidget {
     return Column(
       children: [
         InkWell(
-          onTap: canSubmit ? () => context.push('/tasks/submit', extra: task) : null,
+          onTap: canSubmit ? () => context.push('/tasks/submit', extra: {
+            ...task,
+            'profileId': profileId,
+            'orgId': orgId,
+          }) : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             child: Row(

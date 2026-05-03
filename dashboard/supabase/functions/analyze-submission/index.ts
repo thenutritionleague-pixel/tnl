@@ -21,11 +21,12 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
 }
 
 Deno.serve(async (req: Request) => {
+  let submissionId: string | undefined
   try {
     const body = await req.json()
     // Supabase DB webhook shape: { record: { id, org_id, ... } }
     const record = body.record ?? body
-    const submissionId: string = record.id
+    submissionId = record.id
     const orgId: string = record.org_id
 
     if (!submissionId || !orgId) {
@@ -33,23 +34,23 @@ Deno.serve(async (req: Request) => {
     }
 
     // Atomic claim: only proceed if we successfully flip ai_status from null → 'analyzing'.
-    // This prevents double-processing when the webhook fires twice (retry scenario).
-    const { count } = await supabase
+    // Use .select('id') (not head:true) — head:true can return null count even on success.
+    const { data: claimed } = await supabase
       .from('task_submissions')
       .update({ ai_status: 'analyzing' })
       .is('ai_status', null)
       .eq('id', submissionId)
-      .select('id', { count: 'exact', head: true })
+      .select('id')
 
-    if (!count || count === 0) {
+    if (!claimed || claimed.length === 0) {
       // Already claimed by another invocation or already analyzed
       return new Response(JSON.stringify({ skipped: true }), { status: 200 })
     }
 
-    // Fetch submission + task
+    // Fetch submission + task (including tier data)
     const { data: sub } = await supabase
       .from('task_submissions')
-      .select('user_id, task_id, challenge_id, proof_url, tasks(title, description, points), profiles:user_id(name)')
+      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, tasks(title, description, points, points_tiers), profiles:user_id(name)')
       .eq('id', submissionId)
       .single()
 
@@ -66,6 +67,9 @@ Deno.serve(async (req: Request) => {
     const taskDesc: string  = sd.tasks?.description ?? ''
     const taskPoints: number = sd.tasks?.points ?? 0
     const memberName: string = sd.profiles?.name ?? 'A member'
+    const tiers: { label: string; description: string; points: number }[] | null = sd.tasks?.points_tiers ?? null
+    const claimedTierIndex: number | null = sd.selected_tier_index ?? null
+    const claimedTier = (tiers && claimedTierIndex != null) ? (tiers[claimedTierIndex] ?? null) : null
 
     // Signed URL for current proof
     const { data: signed } = await supabase.storage
@@ -99,13 +103,15 @@ Deno.serve(async (req: Request) => {
       .order('submitted_at', { ascending: false })
       .limit(3)
 
-    type ImageBlock = { type: 'image_url'; image_url: { url: string; detail: 'low' } }
+    type ImageBlock = { type: 'image_url'; image_url: { url: string; detail: 'low' | 'high' } }
     type TextBlock  = { type: 'text'; text: string }
 
+    // Current proof at high detail so numbers/text on screens are readable
     const imageBlocks: ImageBlock[] = [
-      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'low' } },
+      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'high' } },
     ]
 
+    // Previous proofs at low detail — only needed to detect duplicates
     let prevCount = 0
     for (const prev of prevSubs ?? []) {
       if (!prev.proof_url) continue
@@ -117,7 +123,44 @@ Deno.serve(async (req: Request) => {
       prevCount++
     }
 
-    const prompt = `You are reviewing a wellness challenge task submission.\n\nTask: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}\n\nImage 1 is the current submission.${prevCount > 0 ? `\nImages 2–${prevCount + 1} are this member's previous approved submissions for the same task (for duplicate detection).` : ''}\n\nEvaluate on three criteria:\n1. TASK MATCH — Does Image 1 clearly show completion of this specific task?\n2. AUTHENTICITY — Does it look like a genuine real photo? (reject if AI-generated, stock photo, screenshot, or obviously fake)\n3. UNIQUENESS — Is it meaningfully different from any previous images? (reject if the same or near-identical photo is reused)\n\nBe lenient with real-looking photos that broadly match the task. Only reject clear violations.\n\nRespond in JSON only — no markdown, no extra text:\n{"approved":true|false,"confidence":0.0-1.0,"issues":[],"feedback":"Brief message shown to the member only if rejected"}`
+    const tierBlock = claimedTier
+      ? `CLAIMED TIER: ${claimedTier.label} — ${claimedTier.description} (${claimedTier.points} pts)\nYou MUST verify the photo provides visible evidence matching this threshold. If not, reject and explain what is missing.`
+      : `POINTS: ${taskPoints}`
+
+    const prevNote = prevCount > 0
+      ? `Images 2–${prevCount + 1} are this member's previous approved submissions for the SAME task (duplicate detection only).`
+      : 'No previous submissions to compare.'
+
+    const prompt = `You are a strict but fair AI reviewer for a wellness challenge app. Your goal is to make a confident approve/reject decision on every submission to minimise human review.
+
+TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
+${tierBlock}
+
+Image 1 is the current submission proof.
+${prevNote}
+
+APPROVE when ALL of the following are clearly true:
+• The photo genuinely shows completion of this specific task.
+• It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
+• It is meaningfully different from any previous submission images.
+${claimedTier ? `• Visible evidence (readable numbers, labels, screens) supports the claimed tier "${claimedTier.label} — ${claimedTier.description}".` : ''}
+
+REJECT when ANY of the following are clearly true:
+• The photo has no obvious connection to the task.
+• It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
+• It is the same or near-identical photo as a previous submission.
+${claimedTier ? '• The proof does not show evidence meeting the claimed tier threshold.' : ''}
+
+LENIENCY RULES:
+• Blurry, casual, or low-quality real photos → approve if task completion is still evident.
+• Tasks hard to photograph (meditation, hydration, sleep) → approve any sincere real attempt.
+• For fitness metrics (steps, distance, calories, time) numbers must be visible and match the claimed tier.
+• Only set confidence ≥ 0.78 when clearly sure it should be approved.
+• Only set confidence < 0.40 when clearly fake, duplicate, or wrong task.
+• Use 0.40–0.77 sparingly for genuinely uncertain cases.
+
+Respond in JSON only — no markdown:
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short codes"],"feedback":"If not approved: 1–2 actionable sentences telling the member what was wrong and how to resubmit correctly."}`
 
     const contentBlocks: (TextBlock | ImageBlock)[] = [
       { type: 'text', text: prompt },
@@ -127,10 +170,10 @@ Deno.serve(async (req: Request) => {
     let aiResult: { approved: boolean; confidence: number; issues: string[]; feedback: string }
     try {
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: contentBlocks }],
         response_format: { type: 'json_object' },
-        max_tokens: 300,
+        max_tokens: 400,
       })
       aiResult = JSON.parse(response.choices[0].message.content ?? '{}')
     } catch {
@@ -145,9 +188,9 @@ Deno.serve(async (req: Request) => {
     const feedback   = aiResult.feedback ?? ''
 
     let aiStatus: string
-    if (aiResult.approved && confidence >= 0.85) {
+    if (aiResult.approved && confidence >= 0.78) {
       aiStatus = 'approved'
-    } else if (!aiResult.approved || confidence < 0.5) {
+    } else if (!aiResult.approved || confidence < 0.40) {
       aiStatus = 'rejected'
     } else {
       aiStatus = 'needs_review'
@@ -158,18 +201,19 @@ Deno.serve(async (req: Request) => {
       .update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: confidence })
       .eq('id', submissionId)
 
-    // Auto-approve
+    // Auto-approve — use claimed tier's points if tiered, else task base points
     if (aiStatus === 'approved') {
+      const finalPoints = claimedTier?.points ?? taskPoints
       await supabase
         .from('task_submissions')
-        .update({ status: 'approved', points_awarded: taskPoints, reviewed_at: new Date().toISOString() })
+        .update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() })
         .eq('id', submissionId)
 
       await supabase.from('feed_items').insert({
         org_id: orgId,
         type: 'submission_approved',
         title: `${memberName} completed ${taskTitle}`,
-        content: `+${taskPoints} 🥦 broccoli points earned`,
+        content: `+${finalPoints} 🥦 broccoli points earned`,
         is_auto_generated: true,
         author_id: sub.user_id,
         challenge_id: sub.challenge_id ?? null,
@@ -202,6 +246,16 @@ Deno.serve(async (req: Request) => {
 
   } catch (err) {
     console.error('[analyze-submission]', err)
+    // Best-effort: reset stuck 'analyzing' so pg_cron doesn't spin forever
+    if (submissionId) {
+      try {
+        await supabase
+          .from('task_submissions')
+          .update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' })
+          .eq('id', submissionId)
+          .eq('ai_status', 'analyzing')
+      } catch { /* ignore secondary failure */ }
+    }
     return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 })
   }
 })

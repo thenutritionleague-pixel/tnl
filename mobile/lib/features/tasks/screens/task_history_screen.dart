@@ -191,7 +191,11 @@ class _HistoryCard extends StatelessWidget {
     final title  = task['title']       as String? ?? '—';
     final desc   = task['description'] as String? ?? '';
     final icon   = task['icon']        as String? ?? '📋';
-    final points = task['points']      as int?    ?? 0;
+    final tiersRaw = task['points_tiers'];
+    final tiersList = tiersRaw != null ? List<Map<String, dynamic>>.from(tiersRaw as List) : null;
+    final pointsLabel = (tiersList != null && tiersList.isNotEmpty)
+        ? '${tiersList.first['points']}–${tiersList.last['points']}'
+        : '${task['points'] as int? ?? 0}';
 
     // Only show the rejection reason when the admin gave one.
     // Expired is an internal status — we never surface that word to the member.
@@ -266,7 +270,7 @@ class _HistoryCard extends StatelessWidget {
                           const Text('🥦', style: TextStyle(fontSize: 11)),
                           const SizedBox(width: 3),
                           Text(
-                            '$points',
+                            pointsLabel,
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,

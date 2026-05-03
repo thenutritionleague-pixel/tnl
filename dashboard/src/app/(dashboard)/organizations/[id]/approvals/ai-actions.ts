@@ -25,6 +25,56 @@ interface AiResult {
   feedback: string
 }
 
+function buildReviewPrompt({
+  taskTitle, taskDesc, claimedTier, taskPoints, prevCount,
+}: {
+  taskTitle: string
+  taskDesc: string
+  claimedTier: TaskTier | null
+  taskPoints: number
+  prevCount: number
+}): string {
+  const tierBlock = claimedTier
+    ? `CLAIMED TIER: ${claimedTier.label} — ${claimedTier.description} (${claimedTier.points} pts)
+You MUST verify the photo provides visible evidence matching this threshold (e.g. a fitness tracker showing the step/distance count, a food label, a completed workout screen). If the evidence does not clearly support the claimed tier, reject and explain what is missing.`
+    : `POINTS: ${taskPoints}`
+
+  const prevNote = prevCount > 0
+    ? `Images 2–${prevCount + 1} are this member's previous approved submissions for the SAME task (duplicate detection only — do not use them to judge task quality).`
+    : 'No previous submissions to compare.'
+
+  return `You are a strict but fair AI reviewer for a wellness challenge app. Your goal is to make a confident approve/reject decision on every submission to minimise human review.
+
+TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
+${tierBlock}
+
+Image 1 is the current submission proof.
+${prevNote}
+
+APPROVE when ALL of the following are clearly true:
+• The photo genuinely shows completion of this specific task.
+• It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
+• It is meaningfully different from any previous submission images (not a reused or near-identical photo).
+${claimedTier ? `• Visible evidence (readable numbers, labels, screens) supports the claimed tier "${claimedTier.label} — ${claimedTier.description}".` : ''}
+
+REJECT when ANY of the following are clearly true:
+• The photo has no obvious connection to the task.
+• It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
+• It is the same or near-identical photo as a previous submission.
+${claimedTier ? `• The proof does not show evidence meeting the claimed tier threshold.` : ''}
+
+LENIENCY RULES:
+• Blurry, casual, or low-quality real photos → approve if the task completion is still evident.
+• Tasks that are hard to photograph (meditation, hydration, sleep) → approve any sincere real attempt.
+• For fitness metrics (steps, distance, calories, time) the numbers must be visible and match the claimed tier.
+• When genuinely uncertain, set confidence 0.40–0.77 (this routes to human review — use it sparingly).
+• Only set confidence ≥ 0.78 when you are clearly sure it should be approved.
+• Only set confidence < 0.40 when it is clearly fake, duplicate, or wrong task.
+
+Respond in JSON only — no markdown, no extra text:
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short issue codes if any"],"feedback":"If not approved: 1–2 actionable sentences telling the member exactly what was wrong and how to resubmit correctly."}`
+}
+
 async function fetchImageAsBase64(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
@@ -110,7 +160,7 @@ export async function runAiAnalysis(
     .limit(3)
 
   // Build image content blocks
-  type ImageBlock = { type: 'image_url'; image_url: { url: string; detail: 'low' } }
+  type ImageBlock = { type: 'image_url'; image_url: { url: string; detail: 'low' | 'high' } }
   type TextBlock = { type: 'text'; text: string }
 
   const currentBase64 = await fetchImageAsBase64(signed.signedUrl)
@@ -122,14 +172,12 @@ export async function runAiAnalysis(
     return { aiStatus: 'needs_review', aiFeedback: 'Could not download proof image.', aiConfidence: 0 }
   }
 
+  // Current proof at high detail so numbers/text on screens are readable
   const imageBlocks: ImageBlock[] = [
-    {
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'low' },
-    },
+    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'high' } },
   ]
 
-  // Attach previous approved images for duplicate detection
+  // Previous proofs at low detail — only needed to detect duplicates
   let prevCount = 0
   for (const prev of prevSubs ?? []) {
     if (!prev.proof_url) continue
@@ -139,33 +187,11 @@ export async function runAiAnalysis(
     if (!prevSigned?.signedUrl) continue
     const prevBase64 = await fetchImageAsBase64(prevSigned.signedUrl)
     if (!prevBase64) continue
-    imageBlocks.push({
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${prevBase64}`, detail: 'low' },
-    })
+    imageBlocks.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${prevBase64}`, detail: 'low' } })
     prevCount++
   }
 
-  const hasPrevious = prevCount > 0
-  const tierLine = claimedTier
-    ? `\nThe member claims **${claimedTier.label} — ${claimedTier.description}** (${claimedTier.points} pts). Verify the proof supports this tier threshold.`
-    : ''
-
-  const prompt = `You are reviewing a wellness challenge task submission.
-
-Task: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}${tierLine}
-
-Image 1 is the current submission.${hasPrevious ? `\nImages 2–${prevCount + 1} are this member's previous approved submissions for the same task (for duplicate detection).` : ''}
-
-Evaluate on three criteria:
-1. TASK MATCH — Does Image 1 clearly show completion of this specific task?${claimedTier ? `\n   TIER CHECK — Does the evidence support the claimed tier "${claimedTier.label} — ${claimedTier.description}"?` : ''}
-2. AUTHENTICITY — Does it look like a genuine real photo? (reject if AI-generated, stock photo, screenshot, or obviously fake)
-3. UNIQUENESS — Is it meaningfully different from any previous images? (reject if the same or near-identical photo is reused)
-
-Be lenient with real-looking photos that broadly match the task. Only reject clear violations.
-
-Respond in JSON only — no markdown, no extra text:
-{"approved":true|false,"confidence":0.0-1.0,"issues":[],"feedback":"Brief message shown to the member only if rejected"}`
+  const prompt = buildReviewPrompt({ taskTitle, taskDesc, claimedTier, taskPoints: sub.tasks?.points ?? 0, prevCount })
 
   const contentBlocks: (TextBlock | ImageBlock)[] = [
     { type: 'text', text: prompt },
@@ -175,10 +201,10 @@ Respond in JSON only — no markdown, no extra text:
   let result: AiResult
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4o',
       messages: [{ role: 'user', content: contentBlocks }],
       response_format: { type: 'json_object' },
-      max_tokens: 300,
+      max_tokens: 400,
     })
     result = JSON.parse(response.choices[0].message.content ?? '{}') as AiResult
   } catch (e) {
@@ -194,9 +220,9 @@ Respond in JSON only — no markdown, no extra text:
   const feedback = result.feedback ?? ''
 
   let aiStatus: string
-  if (result.approved && confidence >= 0.85) {
+  if (result.approved && confidence >= 0.78) {
     aiStatus = 'approved'
-  } else if (!result.approved || confidence < 0.5) {
+  } else if (!result.approved || confidence < 0.40) {
     aiStatus = 'rejected'
   } else {
     aiStatus = 'needs_review'
