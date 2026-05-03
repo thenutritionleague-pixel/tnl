@@ -132,7 +132,7 @@ class _MoreScreenState extends State<MoreScreen>
           _MenuItem(
             icon: 'ℹ️',
             label: 'About',
-            onTap: () => context.go('/about'),
+            onTap: () => context.push('/about'),
           ),
 
           const SizedBox(height: 32),

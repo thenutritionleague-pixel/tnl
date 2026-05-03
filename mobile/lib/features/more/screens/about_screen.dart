@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/theme/theme_colors.dart';
@@ -13,11 +14,9 @@ class AboutScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text('About', style: GoogleFonts.instrumentSerif(fontSize: 36)),
-        leading: Builder(
-          builder: (ctx) => IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-            onPressed: () => Navigator.of(ctx).pop(),
-          ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          onPressed: () => context.pop(),
         ),
       ),
       body: Center(
@@ -156,9 +155,8 @@ class _PartnerCard extends StatelessWidget {
       width: 130,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: context.surfaceColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: context.borderColor),
       ),
       child: Image.asset(
         path,
