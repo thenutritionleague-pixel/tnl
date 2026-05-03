@@ -144,6 +144,118 @@ function TeamSelect({ value, onChange, options }: { value: string[]; onChange: (
   )
 }
 
+// ── DatePicker ────────────────────────────────────────────────────────────────
+
+function DatePicker({ value, onChange, min, placeholder = 'Pick a date' }: {
+  value: string; onChange: (v: string) => void; min?: string; placeholder?: string
+}) {
+  const today = new Date()
+  const selected = value ? new Date(value + 'T12:00:00') : null
+  const minDate = min ? new Date(min + 'T12:00:00') : null
+  const [open, setOpen] = useState(false)
+  const [dropRect, setDropRect] = useState<DOMRect | null>(null)
+  const [viewYear, setViewYear] = useState(selected?.getFullYear() ?? today.getFullYear())
+  const [viewMonth, setViewMonth] = useState(selected?.getMonth() ?? today.getMonth())
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const portalRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (value) { const d = new Date(value + 'T12:00:00'); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()) }
+  }, [value])
+
+  useEffect(() => {
+    if (!open) return
+    function handler(e: MouseEvent) {
+      const t = e.target as Node
+      if (buttonRef.current?.contains(t) || portalRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  function selectDay(y: number, m: number, d: number) {
+    const dt = new Date(y, m, d)
+    onChange(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`)
+    setOpen(false)
+  }
+  function prevMonth() { if (viewMonth===0){setViewMonth(11);setViewYear(y=>y-1)}else setViewMonth(m=>m-1) }
+  function nextMonth() { if (viewMonth===11){setViewMonth(0);setViewYear(y=>y+1)}else setViewMonth(m=>m+1) }
+
+  const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate()
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay()
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const openUp = dropRect ? window.innerHeight - dropRect.bottom < 300 : false
+  const dropStyle: React.CSSProperties = dropRect
+    ? openUp
+      ? { position:'fixed', bottom: window.innerHeight - dropRect.top + 4, left: dropRect.left, zIndex: 9999 }
+      : { position:'fixed', top: dropRect.bottom + 4, left: dropRect.left, zIndex: 9999 }
+    : {}
+  const displayValue = selected ? selected.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : ''
+
+  return (
+    <div>
+      <button ref={buttonRef} type="button"
+        onClick={() => { if (!open && buttonRef.current) setDropRect(buttonRef.current.getBoundingClientRect()); setOpen(v=>!v) }}
+        className="w-full flex items-center gap-2 h-9 px-3 rounded-lg border border-input bg-background text-sm text-left hover:border-primary/40 transition-colors"
+      >
+        <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className={cn('flex-1', displayValue ? 'text-foreground' : 'text-muted-foreground')}>{displayValue || placeholder}</span>
+        <ChevronDown className={cn('w-3.5 h-3.5 text-muted-foreground shrink-0 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && dropRect && createPortal(
+        <>
+          <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
+          <div ref={portalRef} className="bg-popover border border-border rounded-xl shadow-xl p-3 w-64" style={dropStyle}>
+            <div className="flex items-center justify-between mb-3">
+              <button type="button" onClick={prevMonth} className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <span className="text-sm font-semibold text-foreground">{monthNames[viewMonth]} {viewYear}</span>
+              <button type="button" onClick={nextMonth} className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+            </div>
+            <div className="grid grid-cols-7 mb-1">
+              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+                <div key={d} className="text-center text-[10px] font-semibold text-muted-foreground py-1">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-y-0.5">
+              {Array.from({length: firstDow}).map((_,i) => <div key={`e-${i}`} />)}
+              {Array.from({length: daysInMonth}).map((_,i) => {
+                const day = i+1
+                const thisDate = new Date(viewYear, viewMonth, day)
+                const isToday = thisDate.toDateString() === today.toDateString()
+                const isSelected = selected ? thisDate.toDateString() === selected.toDateString() : false
+                const isDisabled = minDate ? thisDate < minDate : false
+                return (
+                  <button key={day} type="button" disabled={isDisabled} onClick={() => selectDay(viewYear, viewMonth, day)}
+                    className={cn('h-7 w-7 mx-auto rounded-lg text-xs font-medium transition-colors',
+                      isSelected ? 'bg-primary text-primary-foreground'
+                      : isToday ? 'border border-primary text-primary hover:bg-primary/10'
+                      : isDisabled ? 'text-muted-foreground/40 cursor-not-allowed'
+                      : 'hover:bg-accent text-foreground')}
+                  >{day}</button>
+                )
+              })}
+            </div>
+            {value && (
+              <div className="mt-2 pt-2 border-t border-border">
+                <button type="button" onClick={() => { onChange(''); setOpen(false) }}
+                  className="text-xs text-muted-foreground hover:text-foreground w-full text-center transition-colors">
+                  Clear date
+                </button>
+              </div>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </div>
+  )
+}
+
 // ── Task modal ────────────────────────────────────────────────────────────────
 
 interface TaskModalProps {
@@ -259,12 +371,12 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="t-start">Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Input id="t-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <Label>Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <DatePicker value={startDate} onChange={setStartDate} placeholder="Pick start date" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="t-end">End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Input id="t-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} />
+              <Label>End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <DatePicker value={endDate} onChange={setEndDate} min={startDate || undefined} placeholder="Pick end date" />
             </div>
           </div>
 
