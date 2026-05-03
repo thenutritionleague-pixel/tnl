@@ -169,21 +169,20 @@ class _SplashScreenState extends State<SplashScreen>
 
 class _PartnerLogo extends StatelessWidget {
   final String path;
-  final Color containerColor;
 
-  const _PartnerLogo({required this.path, required this.containerColor});
+  const _PartnerLogo({required this.path, required Color containerColor});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: containerColor,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Image.asset(
         path,
-        height: 36,
+        height: 40,
         fit: BoxFit.contain,
       ),
     );
