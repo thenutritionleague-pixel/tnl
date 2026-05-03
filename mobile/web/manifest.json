@@ -1,11 +1,11 @@
 {
-    "name": "yi_nutrition_league",
-    "short_name": "yi_nutrition_league",
+    "name": "Yi Nutrition League",
+    "short_name": "YiNL",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#ffffff",
+    "theme_color": "#16a34a",
+    "description": "Yi Nutrition League — Track your health challenges and team progress.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

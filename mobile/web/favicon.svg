@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Stem -->
+  <rect x="28" y="42" width="8" height="14" rx="3" fill="#4ade80"/>
+  <!-- Left stem branch -->
+  <rect x="20" y="46" width="10" height="5" rx="2.5" fill="#4ade80"/>
+  <!-- Right stem branch -->
+  <rect x="34" y="46" width="10" height="5" rx="2.5" fill="#4ade80"/>
+
+  <!-- Main floret body -->
+  <circle cx="32" cy="30" r="12" fill="#16a34a"/>
+
+  <!-- Top florets -->
+  <circle cx="32" cy="18" r="8" fill="#22c55e"/>
+  <circle cx="20" cy="24" r="7" fill="#22c55e"/>
+  <circle cx="44" cy="24" r="7" fill="#22c55e"/>
+
+  <!-- Top highlights -->
+  <circle cx="29" cy="15" r="4" fill="#4ade80"/>
+  <circle cx="18" cy="21" r="3.5" fill="#4ade80"/>
+  <circle cx="42" cy="21" r="3.5" fill="#4ade80"/>
+</svg>
