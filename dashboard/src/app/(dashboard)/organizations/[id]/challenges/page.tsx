@@ -929,31 +929,23 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                   <div className="px-5 py-4 space-y-4">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-foreground">Weekly Challenges</p>
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`${base}/challenges/${c.id}`}
-                          className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'gap-1.5 text-muted-foreground')}
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" /> Manage
-                        </Link>
-                        <button
-                          onClick={() => openAddTask(c.id)}
-                          className={cn(buttonVariants({ size: 'sm' }), 'gap-1.5')}
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add Task
-                        </button>
-                      </div>
+                      <Link
+                        href={`${base}/challenges/${c.id}`}
+                        className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'gap-1.5 text-muted-foreground')}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Manage
+                      </Link>
                     </div>
 
                     {c.tasks.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-border py-8 text-center">
                         <p className="text-sm text-muted-foreground">No tasks yet.</p>
-                        <button
-                          onClick={() => openAddTask(c.id)}
-                          className="mt-2 text-xs text-primary hover:underline"
+                        <Link
+                          href={`${base}/challenges/${c.id}`}
+                          className="mt-2 text-xs text-primary hover:underline inline-block"
                         >
                           Add the first task →
-                        </button>
+                        </Link>
                       </div>
                     ) : (
                       <div className="space-y-4">
