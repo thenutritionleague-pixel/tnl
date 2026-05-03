@@ -1,6 +1,6 @@
 [build]
   base    = "mobile"
-  command = "git clone https://github.com/flutter/flutter.git --depth 1 -b stable flutter && flutter/bin/flutter build web --release --base-href /"
+  command = "rm -rf flutter && git clone https://github.com/flutter/flutter.git --depth 1 -b stable flutter && flutter/bin/flutter build web --release --base-href /"
   publish = "build/web"   # relative to base ("mobile/"), not repo root
 
 
