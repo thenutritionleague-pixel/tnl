@@ -663,7 +663,7 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
           </div>
 
           <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2.5">
-            Tasks can be added after creating the challenge — including tiered point tasks.
+            Tasks can be added after creating the challenge.
           </p>
         </form>
 
