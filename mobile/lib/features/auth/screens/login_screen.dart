@@ -196,13 +196,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 Row(
                   children: [
                     const Icon(Icons.error_outline_rounded,
-                        color: AppColors.error, size: 15),
+                        color: Colors.white, size: 15),
                     const SizedBox(width: 7),
                     Expanded(
                       child: Text(
                         _error,
                         style: const TextStyle(
-                            color: AppColors.error,
+                            color: Colors.white,
                             fontSize: 13,
                             fontWeight: FontWeight.w500),
                       ),
