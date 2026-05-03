@@ -363,7 +363,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
   // 4. Fetch approved points
   const { data: submissions } = await supabase
     .from('task_submissions')
-    .select('user_id, tasks(points)')
+    .select('user_id, points_awarded, tasks(points)')
     .eq('org_id', orgId)
     .eq('status', 'approved')
 
@@ -384,7 +384,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
   const pointsMap: Record<string, number> = {}
   for (const s of (submissions ?? []) as any[]) {
     if (!pointsMap[s.user_id]) pointsMap[s.user_id] = 0
-    pointsMap[s.user_id] += s.tasks?.points ?? 0
+    pointsMap[s.user_id] += s.points_awarded ?? s.tasks?.points ?? 0
   }
 
   return profiles.map(p => {
@@ -677,7 +677,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     if (challenge) {
       const { data: subs } = await supabase
         .from('task_submissions')
-        .select('submitted_at, status, tasks(id, title, icon, points, category)')
+        .select('submitted_at, status, points_awarded, tasks(id, title, icon, points, category)')
         .eq('user_id', profile.id)
         .eq('challenge_id', challenge.id)
         .eq('status', 'approved')
@@ -685,6 +685,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       type SubRaw = {
         submitted_at: string
         status: string
+        points_awarded: number | null
         tasks: { id: string; title: string; icon: string; points: number; category: string } | null
       }
 
@@ -695,16 +696,17 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
 
       for (const s of (subs ?? []) as unknown as SubRaw[]) {
         if (!s.tasks) continue
+        const pts = s.points_awarded ?? s.tasks.points
         const subDate = new Date(s.submitted_at)
         const diffDays = Math.floor((subDate.getTime() - startDate.getTime()) / 86400000)
         const week = Math.floor(diffDays / 7) + 1
         if (!weekMap[week]) weekMap[week] = {}
         const key = s.tasks.title
         if (!weekMap[week][key]) {
-          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: s.tasks.points, icon: s.tasks.icon }
+          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, icon: s.tasks.icon }
         }
         weekMap[week][key].daysCompleted++
-        total += s.tasks.points
+        total += pts
       }
 
       weekPoints = Object.entries(weekMap)
@@ -1124,7 +1126,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
   if (!ch) return null
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
@@ -1140,7 +1142,8 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     teams: raw.challenge_teams.map(ct => ct.teams?.name ?? '').filter(Boolean),
     tasks: raw.tasks.map(t => ({
       id: t.id, title: t.title, description: t.description,
-      points: t.points, weekNumber: t.start_week, category: t.category,
+      points: t.points, pointsTiers: t.points_tiers ?? undefined,
+      weekNumber: t.start_week, category: t.category,
       icon: t.icon,
       teams: t.task_teams?.map(tt => tt.teams?.name).filter(Boolean) as string[] || [],
       isActive: t.is_active,

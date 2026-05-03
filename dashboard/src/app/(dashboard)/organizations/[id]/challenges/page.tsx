@@ -941,7 +941,7 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                                   {/* Points + actions */}
                                   <div className="flex items-center gap-1 shrink-0">
                                     <span className="flex items-center gap-1 text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-lg">
-                                      🥦 {task.points}
+                                      🥦 {task.pointsTiers && task.pointsTiers.length > 0 ? `${task.pointsTiers[0].points}–${task.pointsTiers[task.pointsTiers.length - 1].points}` : task.points}
                                     </span>
                                     <button
                                       onClick={() => setDeleteTaskTarget({ challengeId: c.id, task })}

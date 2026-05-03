@@ -272,49 +272,59 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: Theme.of(context).colorScheme.outline),
               ),
-              child: Row(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 52, height: 52,
-                    decoration: BoxDecoration(
-                      color: context.primarySurface,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Center(child: Text(icon, style: const TextStyle(fontSize: 28))),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: context.textPrimary)),
-                        if (desc.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(desc, style: TextStyle(fontSize: 13, color: context.textSecondary, height: 1.4)),
-                        ],
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: context.primarySurface,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: context.primaryMint),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('🥦', style: TextStyle(fontSize: 13)),
-                              const SizedBox(width: 4),
-                              Text(pointsLabel,
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
-                            ],
-                          ),
+                  // Icon + title + points row
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: context.primarySurface,
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                      ],
-                    ),
+                        child: Center(child: Text(icon, style: const TextStyle(fontSize: 26))),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(title,
+                            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: context.textPrimary)),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: context.primarySurface,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: context.primaryMint),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('🥦', style: TextStyle(fontSize: 13)),
+                            const SizedBox(width: 4),
+                            Text(pointsLabel,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
+                  // Description — each paragraph on its own line
+                  if (desc.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Divider(color: Theme.of(context).colorScheme.outline, height: 1),
+                    const SizedBox(height: 12),
+                    ...desc.split('\n').where((p) => p.trim().isNotEmpty).map((paragraph) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        paragraph.trim(),
+                        style: TextStyle(fontSize: 13, color: context.textSecondary, height: 1.5),
+                      ),
+                    )),
+                  ],
                 ],
               ),
             ),
