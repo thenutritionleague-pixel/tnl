@@ -123,10 +123,10 @@ class _FeedScreenState extends State<FeedScreen>
     } catch (_) {
       // Revert optimistic update on failure
       if (mounted) {
-        setState(() => _posts = [..._posts]..[postIdx] = _posts[postIdx]
-            ..[
-              'feed_reactions'
-            ] = reactions);
+        setState(() {
+          final reverted = {..._posts[postIdx], 'feed_reactions': reactions};
+          _posts = [..._posts]..[postIdx] = reverted;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to update reaction. Try again.')),
         );
