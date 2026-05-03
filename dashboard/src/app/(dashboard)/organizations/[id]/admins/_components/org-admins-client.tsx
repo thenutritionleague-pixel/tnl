@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Shield, Plus, MoreHorizontal, UserCog, Trash2, ShieldCheck, Loader2 } from 'lucide-react'
+import { Shield, Plus, MoreHorizontal, UserCog, Trash2, ShieldCheck, Loader2, Mail } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Button } from '@/components/ui/button'
@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { createSubAdmin, removeSubAdmin } from '../actions'
+import { createSubAdmin, removeSubAdmin, changeOrgAdminEmail } from '../actions'
 import type { OrgAdminUser } from '@/lib/supabase/admin-queries'
 
 function initials(name: string) {
@@ -50,6 +50,9 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
   const [saving, setSaving]       = useState(false)
   const [removeTarget, setRemoveTarget] = useState<OrgAdminUser | null>(null)
   const [removing, setRemoving]   = useState(false)
+  const [changeEmailTarget, setChangeEmailTarget] = useState<OrgAdminUser | null>(null)
+  const [newEmail, setNewEmail] = useState('')
+  const [changingEmail, setChangingEmail] = useState(false)
 
   async function handleAdd() {
     const name  = formName.trim()
@@ -91,6 +94,25 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
       setRemoveTarget(null)
     }
     setRemoving(false)
+  }
+
+  async function confirmChangeEmail() {
+    if (!changeEmailTarget) return
+    const email = newEmail.trim().toLowerCase()
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.error('Enter a valid email address.')
+      return
+    }
+    setChangingEmail(true)
+    const result = await changeOrgAdminEmail(orgId, changeEmailTarget.id, email)
+    if (result.error) {
+      toast.error(result.error)
+    } else {
+      toast.success('Org admin email updated.')
+      setChangeEmailTarget(null)
+      setNewEmail('')
+    }
+    setChangingEmail(false)
   }
 
   const activeAdmins  = subAdmins.filter(a => a.status === 'active')
@@ -137,13 +159,12 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
                     <DropdownMenuTrigger className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0">
                       <MoreHorizontal className="w-4 h-4" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-[140px]">
+                    <DropdownMenuContent align="end" className="min-w-[160px]">
                       <DropdownMenuItem
-                        onClick={() => setRemoveTarget(orgAdmin)}
-                        variant="destructive"
+                        onClick={() => { setChangeEmailTarget(orgAdmin); setNewEmail(orgAdmin.email) }}
                         className="gap-2 whitespace-nowrap"
                       >
-                        <Trash2 className="w-3.5 h-3.5 shrink-0" /> Remove Admin
+                        <Mail className="w-3.5 h-3.5 shrink-0" /> Change Email
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -243,6 +264,38 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
           </div>
         )}
       </div>
+
+      {/* Change email dialog */}
+      <Dialog open={!!changeEmailTarget} onOpenChange={v => { if (!v) { setChangeEmailTarget(null); setNewEmail('') } }}>
+        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Change Org Admin Email</DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Enter the new email address for <span className="font-medium text-foreground">{changeEmailTarget?.name}</span>.
+            </p>
+          </DialogHeader>
+          <div className="space-y-1.5 py-2">
+            <Label htmlFor="new-admin-email">New Email Address</Label>
+            <Input
+              id="new-admin-email"
+              type="email"
+              placeholder="new@example.com"
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmChangeEmail()}
+              autoFocus
+            />
+          </div>
+          <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
+            <button onClick={() => { setChangeEmailTarget(null); setNewEmail('') }} className={cn(buttonVariants({ variant: 'outline' }))}>
+              Cancel
+            </button>
+            <Button onClick={confirmChangeEmail} disabled={changingEmail || !newEmail}>
+              {changingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Remove confirm dialog */}
       <Dialog open={!!removeTarget} onOpenChange={v => { if (!v) setRemoveTarget(null) }}>

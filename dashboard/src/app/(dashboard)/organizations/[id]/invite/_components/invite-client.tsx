@@ -315,8 +315,12 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
     setUpdating(false)
   }
 
-  const pending  = invites.filter(i => i.status === 'pending')
-  const accepted = invites.filter(i => i.status === 'accepted')
+  const [teamFilter, setTeamFilter] = useState('')
+
+  const pending  = invites.filter(i => i.status === 'pending'  && (!teamFilter || i.teamId === teamFilter))
+  const accepted = invites.filter(i => i.status === 'accepted' && (!teamFilter || i.teamId === teamFilter))
+  const allPending  = invites.filter(i => i.status === 'pending')
+  const allAccepted = invites.filter(i => i.status === 'accepted')
 
   return (
     <div className="space-y-6">
@@ -368,19 +372,38 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
 
       {/* Pending table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-border">
-          <h2 className="font-semibold text-foreground text-sm">Pending</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{pending.length} awaiting signup</p>
+        <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-foreground text-sm">Pending</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {pending.length}{teamFilter ? ` of ${allPending.length}` : ''} awaiting signup
+            </p>
+          </div>
+          <div className="relative shrink-0">
+            <select
+              value={teamFilter}
+              onChange={e => setTeamFilter(e.target.value)}
+              className={cn('appearance-none h-8 pl-3 pr-7 rounded-lg border border-input bg-background text-xs focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer', !teamFilter && 'text-muted-foreground')}
+            >
+              <option value="">All Teams</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+          </div>
         </div>
         <InviteTable orgId={orgId} invites={pending} onRemove={setRemoveTarget} onEdit={openEdit} />
       </div>
 
       {/* Accepted table */}
-      {accepted.length > 0 && (
+      {allAccepted.length > 0 && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-border">
-            <h2 className="font-semibold text-foreground text-sm">Accepted</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">{accepted.length} signed up</p>
+          <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-foreground text-sm">Accepted</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {accepted.length}{teamFilter ? ` of ${allAccepted.length}` : ''} signed up
+              </p>
+            </div>
           </div>
           <InviteTable orgId={orgId} invites={accepted} onRemove={setRemoveTarget} onEdit={openEdit} />
         </div>

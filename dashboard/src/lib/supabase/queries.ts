@@ -118,11 +118,18 @@ export interface TeamDetailUI {
   members: TeamMemberRowUI[]
 }
 
+export interface TaskTier {
+  label: string
+  description: string
+  points: number
+}
+
 export interface TaskUI {
   id: string
   title: string
   description: string
   points: number
+  pointsTiers?: TaskTier[]
   weekNumber: number
   category: string
   icon: string
@@ -787,7 +794,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, start_week, category, icon, is_active, task_teams(teams(name)))
+      tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
     `)
     .eq('org_id', orgId)
     .order('created_at', { ascending: false })
@@ -795,7 +802,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   if (!challenges) return []
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const results: ChallengeUI[] = []
@@ -834,6 +841,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
         title: t.title,
         description: t.description,
         points: t.points,
+        pointsTiers: t.points_tiers ?? undefined,
         weekNumber: t.start_week,
         category: t.category,
         icon: t.icon,
@@ -885,7 +893,7 @@ export async function deleteChallenge(id: string) {
 }
 
 export async function addTask(challengeId: string, data: {
-  title: string; description: string; points: number; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
 }) {
   const supabase = await db()
   const { data: newTask, error } = await supabase.from('tasks').insert({
@@ -893,6 +901,7 @@ export async function addTask(challengeId: string, data: {
     title: data.title,
     description: data.description,
     points: data.points,
+    points_tiers: data.pointsTiers && data.pointsTiers.length > 0 ? data.pointsTiers : null,
     start_week: data.weekNumber,
     week_number: data.weekNumber,
     category: data.category,
@@ -914,13 +923,14 @@ export async function addTask(challengeId: string, data: {
 }
 
 export async function updateTask(id: string, data: {
-  title: string; description: string; points: number; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
 }) {
   const supabase = await db()
   await supabase.from('tasks').update({
     title: data.title,
     description: data.description,
     points: data.points,
+    points_tiers: data.pointsTiers && data.pointsTiers.length > 0 ? data.pointsTiers : null,
     start_week: data.weekNumber,
     week_number: data.weekNumber,
     category: data.category,
@@ -1107,7 +1117,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, start_week, category, icon, is_active, task_teams(teams(name)))
+      tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
     `)
     .eq('id', challengeId)
     .single()

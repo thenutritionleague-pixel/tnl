@@ -1004,7 +1004,7 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
           <p className="text-sm text-muted-foreground mt-0.5">Manage challenge campaigns and weekly tasks</p>
         </div>
         <button onClick={openNewChallenge} className={cn(buttonVariants({ size: 'sm' }), 'gap-1.5')}>
-          <Plus className="size-3.5" /> New Campaign
+          <Plus className="size-3.5" /> New Challenge
         </button>
       </div>
 

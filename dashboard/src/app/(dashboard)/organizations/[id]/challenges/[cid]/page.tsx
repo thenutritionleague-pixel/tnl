@@ -23,7 +23,7 @@ import {
   getChallengeById, getChallengeSubCounts, getChallengeSubs, getOrgTeamList,
   addTask, updateTask as dbUpdateTask, deleteTask as dbDeleteTask,
   setChallengeStatus, setTaskActive,
-  type ChallengeUI, type TaskUI, type ChallengeSub,
+  type ChallengeUI, type TaskUI, type TaskTier, type ChallengeSub,
 } from '@/lib/supabase/queries'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -155,10 +155,17 @@ interface TaskModalProps {
   onSave: (data: Omit<TaskUI, 'id' | 'isActive'>) => Promise<void>
 }
 
+const DEFAULT_TIERS: TaskTier[] = [
+  { label: 'Tier 1', description: '', points: 50 },
+  { label: 'Tier 2', description: '', points: 100 },
+]
+
 function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSave }: TaskModalProps) {
   const [title, setTitle]       = useState('')
   const [desc, setDesc]         = useState('')
   const [points, setPoints]     = useState(10)
+  const [tiered, setTiered]     = useState(false)
+  const [tiers, setTiers]       = useState<TaskTier[]>(DEFAULT_TIERS)
   const [week, setWeek]         = useState(1)
   const [category, setCategory] = useState(CATEGORIES[0].label)
   const [teams, setTeams]       = useState<string[]>([])
@@ -175,13 +182,33 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setPoints(editTarget.points); setWeek(editTarget.weekNumber)
       setCategory(editTarget.category); setTeams(editTarget.teams)
       setStartDate(editTarget.startDate || ''); setEndDate(editTarget.endDate || '')
+      if (editTarget.pointsTiers && editTarget.pointsTiers.length > 0) {
+        setTiered(true); setTiers(editTarget.pointsTiers)
+      } else {
+        setTiered(false); setTiers(DEFAULT_TIERS)
+      }
     } else {
       setTitle(''); setDesc(''); setPoints(10)
+      setTiered(false); setTiers(DEFAULT_TIERS)
       setWeek(existingWeeks.length > 0 ? Math.max(...existingWeeks) + 1 : 1)
       setCategory(CATEGORIES[0].label); setTeams([])
       setStartDate(''); setEndDate('')
     }
   }, [open, editTarget])
+
+  function updateTier(i: number, patch: Partial<TaskTier>) {
+    setTiers(prev => prev.map((t, idx) => idx === i ? { ...t, ...patch } : t))
+  }
+
+  function addTier() {
+    if (tiers.length >= 5) return
+    setTiers(prev => [...prev, { label: `Tier ${prev.length + 1}`, description: '', points: 0 }])
+  }
+
+  function removeTier(i: number) {
+    if (tiers.length <= 2) return
+    setTiers(prev => prev.filter((_, idx) => idx !== i))
+  }
 
   const otherWeeks = editTarget ? existingWeeks.filter(w => w !== editTarget.weekNumber) : existingWeeks
   const gaps = getWeekGaps(otherWeeks, week)
@@ -189,7 +216,11 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    await onSave({ title, description: desc, points, weekNumber: week, category, icon, teams, startDate, endDate })
+    await onSave({
+      title, description: desc, points,
+      pointsTiers: tiered ? tiers : undefined,
+      weekNumber: week, category, icon, teams, startDate, endDate,
+    })
     setSaving(false)
   }
 
@@ -242,9 +273,65 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
             <Input id="t-title" placeholder="e.g. Morning Run 5km" value={title} onChange={e => setTitle(e.target.value)} autoFocus />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="t-points">Points 🥦</Label>
-            <Input id="t-points" type="number" min={1} value={points} onChange={e => setPoints(Math.max(1, Number(e.target.value)))} />
+          {/* Points — Fixed or Tiered */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Points 🥦</Label>
+              <div className="flex rounded-lg border border-border overflow-hidden text-xs">
+                <button type="button" onClick={() => setTiered(false)}
+                  className={cn('px-3 py-1.5 transition-colors', !tiered ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                  Fixed
+                </button>
+                <button type="button" onClick={() => setTiered(true)}
+                  className={cn('px-3 py-1.5 transition-colors', tiered ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                  Tiered
+                </button>
+              </div>
+            </div>
+
+            {!tiered ? (
+              <Input id="t-points" type="number" min={1} value={points} onChange={e => setPoints(Math.max(1, Number(e.target.value)))} />
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_1.4fr_64px_20px] gap-1.5 text-[11px] font-medium text-muted-foreground px-1">
+                  <span>Label</span><span>Description</span><span className="text-right">Points</span><span />
+                </div>
+                {tiers.map((tier, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1.4fr_64px_20px] gap-1.5 items-center">
+                    <Input
+                      placeholder={`Tier ${i + 1}`}
+                      value={tier.label}
+                      onChange={e => updateTier(i, { label: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      placeholder="e.g. Up to 5000 steps"
+                      value={tier.description}
+                      onChange={e => updateTier(i, { description: e.target.value })}
+                      className="h-8 text-xs"
+                    />
+                    <Input
+                      type="number" min={1}
+                      placeholder="pts"
+                      value={tier.points || ''}
+                      onChange={e => updateTier(i, { points: Math.max(1, Number(e.target.value)) })}
+                      className="h-8 text-xs text-right"
+                    />
+                    <button type="button" onClick={() => removeTier(i)}
+                      disabled={tiers.length <= 2}
+                      className="text-muted-foreground hover:text-destructive disabled:opacity-30 transition-colors">
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {tiers.length < 5 && (
+                  <button type="button" onClick={addTier}
+                    className="text-xs text-primary hover:underline mt-1">
+                    + Add Tier
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">

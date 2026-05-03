@@ -3,6 +3,8 @@
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/server'
 
+type TaskTier = { label: string; description: string; points: number }
+
 type SubmissionWithTask = {
   user_id: string
   org_id: string
@@ -10,7 +12,8 @@ type SubmissionWithTask = {
   status: string
   proof_url: string | null
   challenge_id: string | null
-  tasks: { title: string; description: string; points: number } | null
+  selected_tier_index: number | null
+  tasks: { title: string; description: string; points: number; points_tiers: TaskTier[] | null } | null
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -42,7 +45,7 @@ export async function runAiAnalysis(
   // Fetch submission — extract org_id from DB, never from caller
   const { data: subRaw } = await client
     .from('task_submissions')
-    .select('user_id, org_id, task_id, status, proof_url, challenge_id, tasks(title, description, points)')
+    .select('user_id, org_id, task_id, status, proof_url, challenge_id, selected_tier_index, tasks(title, description, points, points_tiers)')
     .eq('id', submissionId)
     .single()
 
@@ -78,6 +81,10 @@ export async function runAiAnalysis(
 
   const taskTitle: string = sub.tasks?.title ?? 'wellness task'
   const taskDesc: string = sub.tasks?.description ?? ''
+  const tiers = sub.tasks?.points_tiers ?? null
+  const claimedTierIndex = sub.selected_tier_index ?? null
+  const claimedTier: TaskTier | null =
+    tiers && claimedTierIndex != null ? (tiers[claimedTierIndex] ?? null) : null
 
   // Get signed URL for current image
   const { data: signed } = await client.storage
@@ -140,14 +147,18 @@ export async function runAiAnalysis(
   }
 
   const hasPrevious = prevCount > 0
+  const tierLine = claimedTier
+    ? `\nThe member claims **${claimedTier.label} — ${claimedTier.description}** (${claimedTier.points} pts). Verify the proof supports this tier threshold.`
+    : ''
+
   const prompt = `You are reviewing a wellness challenge task submission.
 
-Task: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}
+Task: "${taskTitle}"${taskDesc ? `\nDescription: ${taskDesc}` : ''}${tierLine}
 
 Image 1 is the current submission.${hasPrevious ? `\nImages 2–${prevCount + 1} are this member's previous approved submissions for the same task (for duplicate detection).` : ''}
 
 Evaluate on three criteria:
-1. TASK MATCH — Does Image 1 clearly show completion of this specific task?
+1. TASK MATCH — Does Image 1 clearly show completion of this specific task?${claimedTier ? `\n   TIER CHECK — Does the evidence support the claimed tier "${claimedTier.label} — ${claimedTier.description}"?` : ''}
 2. AUTHENTICITY — Does it look like a genuine real photo? (reject if AI-generated, stock photo, screenshot, or obviously fake)
 3. UNIQUENESS — Is it meaningfully different from any previous images? (reject if the same or near-identical photo is reused)
 
@@ -199,7 +210,7 @@ Respond in JSON only — no markdown, no extra text:
 
   // Auto-approve: inline using admin client (no user session in webhook context)
   if (aiStatus === 'approved') {
-    const finalPoints = sub.tasks?.points ?? 0
+    const finalPoints = claimedTier?.points ?? sub.tasks?.points ?? 0
     const memberName = await client
       .from('profiles')
       .select('name')

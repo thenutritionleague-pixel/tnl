@@ -24,7 +24,7 @@ export default async function OrgOverviewPage({ params }: { params: Promise<{ id
               ? <Badge className="bg-emerald-100 text-emerald-700 border-0 text-xs">Active</Badge>
               : <Badge variant="secondary" className="text-xs">Inactive</Badge>}
           </div>
-          <p className="text-xs text-muted-foreground">/{org.slug} · Created {org.createdAt}</p>
+          <p className="text-xs text-muted-foreground">Created {org.createdAt}</p>
         </div>
         <div className="ml-auto">
           <Link href={`${base}/settings`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>

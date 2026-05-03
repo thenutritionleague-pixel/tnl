@@ -2,7 +2,9 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function proxy(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('x-pathname', request.nextUrl.pathname)
+  let supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } })
 
   // Skip auth in local dev (placeholder URL or missing config)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''

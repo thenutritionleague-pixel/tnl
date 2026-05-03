@@ -425,9 +425,13 @@ class _TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final title  = task['title']       as String? ?? '';
     final desc   = task['description'] as String? ?? '';
-    final points = task['points']      as int?    ?? 0;
     final icon   = task['icon']        as String? ?? '📋';
     final canSubmit = status == 'not_submitted' || status == 'rejected';
+    final tiers = task['points_tiers'];
+    final tiersList = tiers != null ? List<Map<String, dynamic>>.from(tiers as List) : null;
+    final String pointsLabel = (tiersList != null && tiersList.isNotEmpty)
+        ? '${tiersList.first['points']}–${tiersList.last['points']}'
+        : '${task['points'] as int? ?? 0}';
 
     return GestureDetector(
       onTap: canSubmit ? () => _openSubmit(context) : null,
@@ -495,7 +499,7 @@ class _TaskCard extends StatelessWidget {
                           const Text('🥦', style: TextStyle(fontSize: 11)),
                           const SizedBox(width: 3),
                           Text(
-                            '$points',
+                            pointsLabel,
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,

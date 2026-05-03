@@ -22,6 +22,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   Uint8List? _imageBytes;
   bool _submitting = false;
   bool _done = false;
+  int? _selectedTierIndex;
   final _noteController = TextEditingController();
 
   late final ConfettiController _confettiCtrl =
@@ -59,11 +60,31 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     }
   }
 
+  List<Map<String, dynamic>> get _tiers {
+    final raw = _taskData['points_tiers'];
+    if (raw == null) return [];
+    return List<Map<String, dynamic>>.from(raw as List);
+  }
+
+  bool get _hasTiers => _tiers.isNotEmpty;
+
+  bool get _canSubmit =>
+      _selectedImage != null && (!_hasTiers || _selectedTierIndex != null);
+
   Future<void> _submit() async {
     if (_selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select or take a photo first.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+    if (_hasTiers && _selectedTierIndex == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select your achievement tier first.'),
           backgroundColor: AppColors.error,
         ),
       );
@@ -85,6 +106,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         imageFile: _selectedImage!,
         submittedDate: _submittedDate,
         note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+        selectedTierIndex: _selectedTierIndex,
       );
       if (mounted) {
         setState(() { _submitting = false; _done = true; });
@@ -115,11 +137,21 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final task  = _taskData;
+    final task   = _taskData;
     final title  = task['title']       as String? ?? 'Task';
     final desc   = task['description'] as String? ?? '';
-    final points = task['points']      as int?    ?? 0;
     final icon   = task['icon']        as String? ?? '📋';
+    final tiers  = _tiers;
+    final hasTiers = _hasTiers;
+    final basePoints = task['points'] as int? ?? 0;
+    final displayPoints = hasTiers && _selectedTierIndex != null
+        ? (tiers[_selectedTierIndex!]['points'] as int? ?? basePoints)
+        : basePoints;
+    final pointsLabel = hasTiers && _selectedTierIndex == null
+        ? (tiers.isNotEmpty
+            ? '${tiers.first['points']}–${tiers.last['points']}'
+            : '$basePoints')
+        : '$displayPoints';
 
     // ── Success state ──────────────────────────────────────────────────────
     if (_done) {
@@ -275,7 +307,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                             children: [
                               const Text('🥦', style: TextStyle(fontSize: 13)),
                               const SizedBox(width: 4),
-                              Text('$points',
+                              Text(pointsLabel,
                                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.primary)),
                             ],
                           ),
@@ -288,6 +320,92 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
             ),
 
             const SizedBox(height: 24),
+
+            // ── Tier selector ──────────────────────────────────────────────
+            if (hasTiers) ...[
+              Text(
+                'Select your achievement',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.textPrimary),
+              ),
+              const SizedBox(height: 10),
+              ...List.generate(tiers.length, (i) {
+                final tier = tiers[i];
+                final label = tier['label'] as String? ?? 'Tier ${i + 1}';
+                final tierDesc = tier['description'] as String? ?? '';
+                final tierPts = tier['points'] as int? ?? 0;
+                final selected = _selectedTierIndex == i;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: GestureDetector(
+                    onTap: () => setState(() => _selectedTierIndex = i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: selected ? context.primarySurface : Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: selected ? AppColors.primary : Theme.of(context).colorScheme.outline,
+                          width: selected ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 22, height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: selected ? AppColors.primary : Colors.transparent,
+                              border: Border.all(
+                                color: selected ? AppColors.primary : Theme.of(context).colorScheme.outline,
+                                width: 2,
+                              ),
+                            ),
+                            child: selected
+                                ? const Icon(Icons.check_rounded, color: Colors.white, size: 13)
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(label,
+                                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: context.textPrimary)),
+                                if (tierDesc.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(tierDesc, style: TextStyle(fontSize: 12, color: context.textSecondary)),
+                                ],
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: selected ? AppColors.primary : context.primarySurface,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('🥦', style: TextStyle(fontSize: 12)),
+                                const SizedBox(width: 4),
+                                Text('$tierPts',
+                                    style: TextStyle(
+                                      fontSize: 12, fontWeight: FontWeight.w700,
+                                      color: selected ? Colors.white : AppColors.primary,
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 14),
+            ],
 
             // ── Photo upload area ──────────────────────────────────────────
             Text(
@@ -448,7 +566,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 decoration: BoxDecoration(
                   color: _submitting
                       ? AppColors.primary.withValues(alpha: 0.6)
-                      : (_selectedImage != null ? AppColors.primary : Theme.of(context).colorScheme.outline),
+                      : (_canSubmit ? AppColors.primary : Theme.of(context).colorScheme.outline),
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Center(

@@ -280,7 +280,16 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   const reviewed = applyFilters(allReviewed)
   const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter)
 
-  function openReview(a: OrgApproval) { setReviewTarget(a); setAdminNotes(''); setPointsOverride('') }
+  function openReview(a: OrgApproval) {
+    setReviewTarget(a)
+    setAdminNotes('')
+    // Pre-fill points override with the claimed tier's points if tiered
+    if (a.taskPointsTiers && a.selectedTierIndex != null && a.taskPointsTiers[a.selectedTierIndex]) {
+      setPointsOverride(String(a.taskPointsTiers[a.selectedTierIndex].points))
+    } else {
+      setPointsOverride('')
+    }
+  }
   function closeReview() { setReviewTarget(null) }
 
   async function handleApprove() {
@@ -566,6 +575,21 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                   </Label>
                   <textarea id="adminNotes" rows={2} placeholder="Add a note for your records or to send to the member..." value={adminNotes} onChange={e => setAdminNotes(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary resize-none" />
                 </div>
+
+                {/* Claimed tier badge for tiered tasks */}
+                {reviewTarget.taskPointsTiers && reviewTarget.selectedTierIndex != null &&
+                  reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex] && (() => {
+                    const tier = reviewTarget.taskPointsTiers![reviewTarget.selectedTierIndex!]
+                    return (
+                      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 flex items-center gap-2">
+                        <span className="text-xs font-semibold text-primary">Claimed Tier</span>
+                        <span className="text-xs text-foreground font-medium">{tier.label}</span>
+                        {tier.description && <span className="text-xs text-muted-foreground">— {tier.description}</span>}
+                        <span className="ml-auto text-xs font-bold text-primary">🥦 {tier.points} pts</span>
+                      </div>
+                    )
+                  })()
+                }
 
                 <div className="space-y-1.5">
                   <Label htmlFor="pointsOverride" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">

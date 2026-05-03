@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getUser, getAdminProfile } from '@/lib/auth'
 import { AppSidebar } from '@/components/app-sidebar'
@@ -47,7 +48,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (supabaseReady) {
     try {
       orgMap = await getAllOrgShortNames()
+      // For org_admin/sub_admin use their profile org_id.
+      // For super admins viewing an org page, extract org ID from the URL pathname.
+      const headersList = await headers()
+      const pathname = headersList.get('x-pathname') ?? ''
+      const urlOrgMatch = pathname.match(/^\/organizations\/([^/]+)/)
       const sidebarOrgId = activeProfile.org_id
+        ?? (urlOrgMatch && urlOrgMatch[1] !== 'new' ? urlOrgMatch[1] : undefined)
+
       if (sidebarOrgId) {
         const adminClient = await createAdminClient()
         const { data: org } = await adminClient

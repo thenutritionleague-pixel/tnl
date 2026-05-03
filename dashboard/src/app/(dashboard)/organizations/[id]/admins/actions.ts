@@ -38,6 +38,43 @@ export async function createSubAdmin(orgId: string, name: string, email: string)
   return { success: true }
 }
 
+export async function changeOrgAdminEmail(orgId: string, adminId: string, newEmail: string) {
+  const profile = await getAdminProfile()
+  if (!profile) return { error: 'Unauthorized.' }
+  const isSuper = profile.role === 'super_admin' || profile.role === 'sub_super_admin'
+  if (!isSuper) return { error: 'Only platform super admins can change the org admin email.' }
+
+  const client = await createAdminClient()
+
+  const { data: admin } = await client
+    .from('admin_users')
+    .select('user_id, role')
+    .eq('id', adminId)
+    .eq('org_id', orgId)
+    .maybeSingle()
+
+  if (!admin) return { error: 'Admin not found.' }
+  if (admin.role !== 'org_admin') return { error: 'Can only change email for Org Admin.' }
+
+  // Update email in admin_users
+  const { error: dbErr } = await client
+    .from('admin_users')
+    .update({ email: newEmail.toLowerCase() })
+    .eq('id', adminId)
+  if (dbErr) return { error: dbErr.message }
+
+  // Update Supabase Auth email if they have an account
+  if (admin.user_id) {
+    const { error: authErr } = await client.auth.admin.updateUserById(admin.user_id, {
+      email: newEmail.toLowerCase(),
+    })
+    if (authErr) return { error: authErr.message }
+  }
+
+  revalidatePath(`/organizations/${orgId}/admins`)
+  return { success: true }
+}
+
 export async function removeSubAdmin(orgId: string, adminId: string) {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }

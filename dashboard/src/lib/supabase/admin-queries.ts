@@ -558,12 +558,13 @@ type SubmissionRow = {
   proof_url: string | null
   rejection_reason: string | null
   points_awarded: number | null
+  selected_tier_index: number | null
   note: string | null
   ai_status: string | null
   ai_feedback: string | null
   ai_confidence: number | null
   user_id: string
-  tasks: { title: string; description: string; points: number } | null
+  tasks: { title: string; description: string; points: number; points_tiers: { label: string; description: string; points: number }[] | null } | null
 }
 
 export interface OrgApproval {
@@ -574,6 +575,8 @@ export interface OrgApproval {
   taskTitle: string
   taskDescription: string
   taskPoints: number
+  taskPointsTiers: { label: string; description: string; points: number }[] | null
+  selectedTierIndex: number | null
   submittedAt: string
   submittedDate: string
   status: 'pending' | 'approved' | 'rejected'
@@ -596,7 +599,7 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
   const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
     client
       .from('task_submissions')
-      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points)')
+      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
       .range(from, to + 1), // fetch one extra to detect hasMore
@@ -637,6 +640,8 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
     taskTitle: s.tasks?.title ?? '—',
     taskDescription: s.tasks?.description ?? '',
     taskPoints: s.tasks?.points ?? 0,
+    taskPointsTiers: s.tasks?.points_tiers ?? null,
+    selectedTierIndex: s.selected_tier_index ?? null,
     submittedAt: timeAgo(s.submitted_at),
     submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
     status: s.status as OrgApproval['status'],

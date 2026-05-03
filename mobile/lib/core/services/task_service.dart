@@ -51,6 +51,7 @@ class TaskService {
     required XFile imageFile,
     String? submittedDate,
     String? note,
+    int? selectedTierIndex,
   }) async {
     final ext = p.extension(imageFile.name).toLowerCase();
     final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$ext';
@@ -77,6 +78,7 @@ class TaskService {
         'status': 'pending',
         'proof_url': fileName,
         if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
       });
     } on PostgrestException catch (e) {
       if (e.code == '23505') {
