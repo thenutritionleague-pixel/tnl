@@ -877,22 +877,13 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                   </div>
                 </div>
 
-                {/* Complete / Reopen */}
-                <button
-                  onClick={() => setConfirmToggleTarget(c)}
-                  className={cn(
-                    buttonVariants({ variant: 'outline', size: 'sm' }),
-                    'gap-1.5 shrink-0',
-                    c.manuallyClosed
-                      ? 'text-emerald-600 border-emerald-200 hover:bg-emerald-50'
-                      : 'text-muted-foreground'
-                  )}
+                {/* Manage */}
+                <Link
+                  href={`${base}/challenges/${c.id}`}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5 shrink-0')}
                 >
-                  {c.manuallyClosed
-                    ? <><RotateCcw className="w-3.5 h-3.5" /> Reopen</>
-                    : <><CheckCircle2 className="w-3.5 h-3.5" /> Complete</>
-                  }
-                </button>
+                  <ExternalLink className="w-3.5 h-3.5" /> Manage
+                </Link>
 
                 {/* ··· menu */}
                 <DropdownMenu>
@@ -902,6 +893,12 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                   <DropdownMenuContent align="end" side="bottom">
                     <DropdownMenuItem onClick={() => openEditChallenge(c)} className="gap-2">
                       <Pencil className="w-3.5 h-3.5" /> Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setConfirmToggleTarget(c)} className="gap-2">
+                      {c.manuallyClosed
+                        ? <><RotateCcw className="w-3.5 h-3.5" /> Reopen</>
+                        : <><CheckCircle2 className="w-3.5 h-3.5" /> Complete</>
+                      }
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
@@ -929,12 +926,6 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                   <div className="px-5 py-4 space-y-4">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-foreground">Weekly Challenges</p>
-                      <Link
-                        href={`${base}/challenges/${c.id}`}
-                        className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'gap-1.5 text-muted-foreground')}
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" /> Manage
-                      </Link>
                     </div>
 
                     {c.tasks.length === 0 ? (
