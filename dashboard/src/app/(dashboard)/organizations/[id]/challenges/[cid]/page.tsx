@@ -567,7 +567,10 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
 
   const existingWeeks = [...new Set(challenge.tasks.map(t => t.weekNumber))].sort((a, b) => a - b)
   const weeks = groupByWeek(challenge.tasks)
-  const totalPoints = challenge.tasks.filter(t => t.isActive).reduce((sum, t) => sum + t.points, 0)
+  const activeTasks = challenge.tasks.filter(t => t.isActive)
+  const minTotal = activeTasks.reduce((sum, t) => sum + (t.pointsTiers && t.pointsTiers.length > 0 ? t.pointsTiers[0].points : t.points), 0)
+  const maxTotal = activeTasks.reduce((sum, t) => sum + (t.pointsTiers && t.pointsTiers.length > 0 ? t.pointsTiers[t.pointsTiers.length - 1].points : t.points), 0)
+  const totalPointsLabel = minTotal !== maxTotal ? `${minTotal}–${maxTotal}` : `${minTotal}`
 
   return (
     <div className="space-y-6">
@@ -637,7 +640,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-foreground">Tasks</h2>
             <div className="flex items-center gap-3">
-              <p className="text-xs text-muted-foreground">{totalPoints} 🥦 pts total per member</p>
+              <p className="text-xs text-muted-foreground">{totalPointsLabel} 🥦 pts total per member</p>
               <button onClick={() => setTaskModal({ open: true, editTarget: null })} className={cn(buttonVariants({ size: 'sm' }), 'gap-1.5')}>
                 <Plus className="size-3.5" /> Add Task
               </button>
@@ -673,7 +676,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                       {task.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{task.description}</p>}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <span className="flex items-center gap-1 text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-lg">🥦 {task.points}</span>
+                      <span className="flex items-center gap-1 text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-lg">🥦 {task.pointsTiers && task.pointsTiers.length > 0 ? `${task.pointsTiers[0].points}–${task.pointsTiers[task.pointsTiers.length - 1].points}` : task.points}</span>
                       <button
                         onClick={() => toggleTaskActive(task.id, task.isActive)}
                         className="p-1.5 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover:opacity-100"
