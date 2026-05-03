@@ -6,6 +6,7 @@
 
 [build.environment]
   FLUTTER_WEB_USE_SKIA = "true"
+  SECRETS_SCAN_OMIT_PATHS = "flutter"
 
 # Flutter web uses client-side routing — send all paths to index.html
 [[redirects]]

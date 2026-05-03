@@ -45,3 +45,18 @@ If `semantic_search_nodes` or `query_graph` returns 0 results or "not found":
 3. Only fall back to Grep/Glob/Read if still no results after re-index
 
 Never skip to Grep when graph returns empty — always re-index first.
+
+---
+
+## Git Rules (MANDATORY)
+
+### NEVER auto-push to GitHub
+- **NEVER run `git push` unless the user explicitly says "push" or "push to GitHub".**
+- Every push triggers a Netlify build which costs real credits.
+- The correct workflow is: fix → build → commit → **STOP**.
+- Do NOT chain `&& git push` after a commit. Do NOT push "as part of the workflow."
+- Wait for an explicit push instruction every single time, even after a clean build.
+
+### Build before push
+- Always run `npm run build` inside `dashboard/` before pushing to GitHub.
+- Netlify auto-deploys on every push — a failed build = a failed production deployment.
