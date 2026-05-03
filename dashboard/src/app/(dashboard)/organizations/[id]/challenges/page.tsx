@@ -561,7 +561,7 @@ interface ChallengeModalProps {
   editTarget: Challenge | null
   orgTimezone?: string
   teamList: { id: string; name: string }[]
-  onSave: (data: ChallengeFormData, tasks: Omit<Task, 'id' | 'isActive'>[]) => void
+  onSave: (data: ChallengeFormData) => void
 }
 
 function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata', teamList, onSave }: ChallengeModalProps) {
@@ -576,9 +576,6 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
   const [startDate, setStartDate]     = useState('')
   const [endDate, setEndDate]         = useState('')
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
-  const [tasks, setTasks] = useState<Task[]>([
-    { id: '_new', title: '', description: '', points: 10, weekNumber: 1, category: 'Other', icon: '✅', teams: [], isActive: true },
-  ])
 
   useEffect(() => {
     if (!open) return
@@ -594,39 +591,16 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
       setStartDate('')
       setEndDate('')
       setSelectedTeams([])
-      setTasks([{ id: '_new', title: '', description: '', points: 10, weekNumber: 1, category: 'Other', icon: '✅', teams: [], isActive: true }])
     }
   }, [open, editTarget])
-
-  const taskTeamOptions = selectedTeams.length > 0 ? selectedTeams : allTeamNames
-
-  function addModalTask() {
-    const maxWeek = tasks.length > 0 ? Math.max(...tasks.map(t => t.weekNumber)) : 0
-    setTasks(prev => [...prev, {
-      id: `_new_${Date.now()}`, title: '', description: '', points: 10,
-      weekNumber: maxWeek + 1, category: 'Other', icon: '✅', teams: [], isActive: true,
-    }])
-  }
-
-  function removeModalTask(tid: string) {
-    setTasks(prev => prev.filter(t => t.id !== tid))
-  }
-
-  function updateModalTask(tid: string, patch: Partial<Task>) {
-    setTasks(prev => prev.map(t => t.id === tid ? { ...t, ...patch } : t))
-  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const teamIds = selectedTeams.map(n => teamList.find(t => t.name === n)?.id ?? '').filter(Boolean)
-    onSave({ name, description, startDate, endDate, teams: selectedTeams, teamIds }, tasks)
+    onSave({ name, description, startDate, endDate, teams: selectedTeams, teamIds })
   }
 
-  const hasDuplicateWeeks = tasks.some(task =>
-    tasks.some(t => t.id !== task.id && t.weekNumber === task.weekNumber)
-  )
-  const isValid = name.trim() && startDate && (isEdit || (tasks.every(t => t.title.trim())))
-  const totalPoints = tasks.reduce((sum, t) => sum + t.points, 0)
+  const isValid = name.trim() && startDate
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
@@ -683,154 +657,14 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
             </Label>
             <TeamSelect
               value={selectedTeams}
-              onChange={v => {
-                setSelectedTeams(v)
-                // Reset task-level team selections when challenge scope changes
-                setTasks(prev => prev.map(t => ({ ...t, teams: [] })))
-              }}
+              onChange={v => setSelectedTeams(v)}
               options={allTeamNames}
             />
           </div>
 
-          {/* Tasks — new only */}
-          {!isEdit && (
-            <>
-              <div className="border-t border-border" />
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Tasks</p>
-                    <p className="text-xs text-muted-foreground">
-                      {tasks.length} task{tasks.length !== 1 ? 's' : ''} · {totalPoints} 🥦 pts per member
-                    </p>
-                  </div>
-                  <button type="button" onClick={addModalTask} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5')}>
-                    <Plus className="w-3.5 h-3.5" /> Add Task
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {tasks.map((task, idx) => {
-                    const otherWeeks = tasks.filter(t => t.id !== task.id).map(t => t.weekNumber)
-                    const isTaskDuplicate = false
-                    const gaps = getWeekGaps(otherWeeks, task.weekNumber)
-                    const catIcon = CATEGORIES.find(c => c.label === task.category)?.icon ?? '✅'
-                    return (
-                      <div key={task.id} className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
-                        {/* Category row */}
-                        <div className="flex gap-2 items-center">
-                          <div className="w-8 h-8 rounded-lg border border-border bg-muted flex items-center justify-center text-base shrink-0">
-                            {catIcon}
-                          </div>
-                          <select
-                            value={task.category}
-                            onChange={e => {
-                              const cat = CATEGORIES.find(c => c.label === e.target.value)
-                              updateModalTask(task.id, { category: e.target.value, icon: cat?.icon ?? '✅' })
-                            }}
-                            className="flex-1 h-8 rounded-lg border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-                          >
-                            {CATEGORIES.map(c => (
-                              <option key={c.label} value={c.label}>{c.icon}  {c.label}</option>
-                            ))}
-                          </select>
-                          <div className="w-16 shrink-0">
-                            <Input
-                              type="number" min={1} max={52}
-                              value={task.weekNumber}
-                              onChange={e => updateModalTask(task.id, { weekNumber: Number(e.target.value) })}
-                              className="h-8 text-xs text-center"
-                              title="Week"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeModalTask(task.id)}
-                            disabled={tasks.length === 1}
-                            className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {/* Week duplicate error */}
-                        {isTaskDuplicate && (
-                          <div className="flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2">
-                            <AlertTriangle className="w-3 h-3 text-destructive shrink-0 mt-0.5" />
-                            <p className="text-[11px] text-destructive">
-                              Week {task.weekNumber} already has a task. Change the week number.
-                            </p>
-                          </div>
-                        )}
-                        {/* Week gap warning */}
-                        {!isTaskDuplicate && gaps.length > 0 && (
-                          <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
-                            <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
-                            <p className="text-[11px] text-amber-700">
-                              {gaps.length === 1
-                                ? `Week ${gaps[0]} has no tasks yet.`
-                                : `Weeks ${gaps.join(', ')} have no tasks yet.`}{' '}
-                              You can add those weeks later.
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Title row */}
-                        <div className="flex gap-2">
-                          <div className="flex-1 space-y-1">
-                            <Label className="text-xs" htmlFor={`t-title-${task.id}`}>
-                              Task {idx + 1} <span className="text-destructive">*</span>
-                            </Label>
-                            <Input
-                              id={`t-title-${task.id}`}
-                              placeholder="e.g. Morning Run 5km"
-                              value={task.title}
-                              onChange={e => updateModalTask(task.id, { title: e.target.value })}
-                              className="h-9 text-sm"
-                            />
-                          </div>
-                          <div className="w-20 space-y-1">
-                            <Label className="text-xs">Points 🥦</Label>
-                            <Input
-                              type="number" min={1} max={1000}
-                              value={task.points}
-                              onChange={e => updateModalTask(task.id, { points: Number(e.target.value) })}
-                              className="h-9 text-sm"
-                            />
-                          </div>
-                        </div>
-
-                        <Input
-                          placeholder="Description (optional)"
-                          value={task.description}
-                          onChange={e => updateModalTask(task.id, { description: e.target.value })}
-                          className="h-9 text-sm"
-                        />
-
-                        {/* Task team visibility — dropdown */}
-                        <div className="space-y-1">
-                          <p className="text-[11px] text-muted-foreground">
-                            Show this task to <span className="italic">(optional)</span>
-                          </p>
-                          <TeamSelect
-                            value={task.teams}
-                            onChange={v => updateModalTask(task.id, { teams: v })}
-                            options={taskTeamOptions}
-                          />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </>
-          )}
-
-          {isEdit && (
-            <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2.5">
-              To add, edit, or remove tasks — expand the challenge and use the task controls there.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2.5">
+            Tasks can be added after creating the challenge — including tiered point tasks.
+          </p>
         </form>
 
         <DialogFooter className="px-6 pt-4 pb-6 border-t border-border shrink-0 flex-row justify-end gap-2 bg-background rounded-b-xl">
@@ -899,7 +733,7 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
     setChallengeModalOpen(true)
   }
 
-  async function handleSaveChallenge(data: ChallengeFormData, tasks: Omit<Task, 'id' | 'isActive'>[]) {
+  async function handleSaveChallenge(data: ChallengeFormData) {
     if (editChallenge) {
       await updateChallenge(editChallenge.id, {
         name: data.name, description: data.description,
@@ -912,18 +746,9 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
         startDate: data.startDate, endDate: data.endDate, teamIds: data.teamIds,
       })
       if (newCh) {
-        const savedTasks: Task[] = []
-        for (const t of tasks) {
-          const { data: newTask } = await addTask(newCh.id, {
-            title: t.title, description: t.description, points: t.points,
-            weekNumber: t.weekNumber, category: t.category, icon: t.icon,
-            teams: t.teams,
-          })
-          if (newTask) savedTasks.push({ ...t, id: newTask.id, isActive: true })
-        }
         setChallenges(prev => [...prev, {
           id: newCh.id, ...data,
-          status: 'upcoming', tasks: savedTasks, manuallyClosed: false, submissions: 0,
+          status: 'upcoming', tasks: [], manuallyClosed: false, submissions: 0,
         }])
       }
     }
