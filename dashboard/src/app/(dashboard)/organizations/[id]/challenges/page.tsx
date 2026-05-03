@@ -480,12 +480,12 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="t-start">Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Input id="t-start" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <Label>Start date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <DatePicker value={startDate} onChange={setStartDate} placeholder="Pick start date" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="t-end">End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Input id="t-end" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} />
+              <Label>End date <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <DatePicker value={endDate} onChange={setEndDate} min={startDate || undefined} placeholder="Pick end date" />
             </div>
           </div>
 
