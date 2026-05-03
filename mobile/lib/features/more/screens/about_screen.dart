@@ -114,9 +114,56 @@ class AboutScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 24),
+
+              // Partners section
+              Divider(color: context.borderColor),
+              const SizedBox(height: 20),
+              Text(
+                'OUR PARTNERS',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                  color: context.textHint,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _PartnerCard(path: 'assets/images/mayur_logo.png', context: context),
+                  const SizedBox(width: 16),
+                  _PartnerCard(path: 'assets/images/rakesh_logo.png', context: context),
+                ],
+              ),
+              const SizedBox(height: 32),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PartnerCard extends StatelessWidget {
+  final String path;
+
+  const _PartnerCard({required this.path, required BuildContext context});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 130,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: context.surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Image.asset(
+        path,
+        height: 48,
+        fit: BoxFit.contain,
       ),
     );
   }
