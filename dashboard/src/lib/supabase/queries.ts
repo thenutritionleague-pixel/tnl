@@ -607,7 +607,10 @@ export async function updateTeam(teamId: string, data: { name: string; emoji: st
 }
 
 export async function deleteTeam(teamId: string) {
-  return (await db()).from('teams').delete().eq('id', teamId)
+  const client = await db()
+  // invite_whitelist.team_id has no ON DELETE CASCADE — null it out first
+  await client.from('invite_whitelist').update({ team_id: null }).eq('team_id', teamId)
+  return client.from('teams').delete().eq('id', teamId)
 }
 
 export async function addTeamMember(teamId: string, userId: string, orgId: string) {

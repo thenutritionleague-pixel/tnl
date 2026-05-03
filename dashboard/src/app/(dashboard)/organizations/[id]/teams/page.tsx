@@ -170,9 +170,16 @@ export default function OrgTeamsPage({ params }: { params: Promise<{ id: string 
     setRemoveMemberTarget(null)
   }
 
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
   async function confirmDelete() {
     if (!deleteTarget) return
-    await deleteTeam(deleteTarget.id)
+    setDeleteError(null)
+    const { error } = await deleteTeam(deleteTarget.id)
+    if (error) {
+      setDeleteError(error.message)
+      return
+    }
     setTeams(prev => prev.filter(t => t.id !== deleteTarget.id))
     setDeleteTarget(null)
   }
@@ -580,7 +587,7 @@ export default function OrgTeamsPage({ params }: { params: Promise<{ id: string 
       </Dialog>
 
       {/* Delete confirm modal */}
-      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null) }}>
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) { setDeleteTarget(null); setDeleteError(null) } }}>
         <DialogContent className="sm:max-w-sm" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
@@ -588,9 +595,12 @@ export default function OrgTeamsPage({ params }: { params: Promise<{ id: string 
               This will remove the team and unassign all members. Cannot be undone.
             </p>
           </DialogHeader>
+          {deleteError && (
+            <p className="text-sm text-destructive">{deleteError}</p>
+          )}
           <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
             <button
-              onClick={() => setDeleteTarget(null)}
+              onClick={() => { setDeleteTarget(null); setDeleteError(null) }}
               className={cn(buttonVariants({ variant: 'outline' }))}
             >
               Cancel
