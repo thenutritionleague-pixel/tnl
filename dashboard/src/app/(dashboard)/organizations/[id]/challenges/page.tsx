@@ -30,7 +30,7 @@ import {
 
 import {
   getOrgChallenges, createChallenge, updateChallenge, setChallengeStatus, deleteChallenge as dbDeleteChallenge,
-  addTask, updateTask as dbUpdateTask, deleteTask as dbDeleteTask, getOrgTeamList,
+  deleteTask as dbDeleteTask, getOrgTeamList,
   type ChallengeUI, type TaskUI,
 } from '@/lib/supabase/queries'
 
@@ -709,13 +709,6 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
   const [challengeModalOpen, setChallengeModalOpen] = useState(false)
   const [editChallenge, setEditChallenge] = useState<Challenge | null>(null)
 
-  // Task modal
-  const [taskModal, setTaskModal] = useState<{
-    open: boolean
-    challengeId: string | null
-    editTarget: Task | null
-  }>({ open: false, challengeId: null, editTarget: null })
-
   // Toggle confirm target
   const [confirmToggleTarget, setConfirmToggleTarget] = useState<Challenge | null>(null)
 
@@ -777,35 +770,6 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
     await dbDeleteChallenge(deleteChallengeTarget.id)
     setChallenges(prev => prev.filter(c => c.id !== deleteChallengeTarget.id))
     setDeleteChallengeTarget(null)
-  }
-
-  function openAddTask(challengeId: string) {
-    setTaskModal({ open: true, challengeId, editTarget: null })
-  }
-
-  function openEditTask(challengeId: string, task: Task) {
-    setTaskModal({ open: true, challengeId, editTarget: task })
-  }
-
-  async function handleSaveTask(taskData: Omit<Task, 'id' | 'isActive'>) {
-    const { challengeId, editTarget } = taskModal
-    if (!challengeId) return
-    if (editTarget) {
-      await dbUpdateTask(editTarget.id, taskData)
-      setChallenges(prev => prev.map(c => {
-        if (c.id !== challengeId) return c
-        return { ...c, tasks: c.tasks.map(t => t.id === editTarget.id ? { ...t, ...taskData } : t) }
-      }))
-    } else {
-      const { data: newTask } = await addTask(challengeId, taskData)
-      if (newTask) {
-        setChallenges(prev => prev.map(c => {
-          if (c.id !== challengeId) return c
-          return { ...c, tasks: [...c.tasks, { id: newTask.id, ...taskData, isActive: true }] }
-        }))
-      }
-    }
-    setTaskModal({ open: false, challengeId: null, editTarget: null })
   }
 
   async function confirmDeleteTask() {
@@ -980,13 +944,6 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                                       🥦 {task.points}
                                     </span>
                                     <button
-                                      onClick={() => openEditTask(c.id, task)}
-                                      className="p-1.5 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover:opacity-100"
-                                      title="Edit task"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
                                       onClick={() => setDeleteTaskTarget({ challengeId: c.id, task })}
                                       className="p-1.5 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
                                       title="Delete task"
@@ -1017,28 +974,6 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
         orgTimezone="Asia/Kolkata"
         teamList={teamList}
         onSave={handleSaveChallenge}
-      />
-
-      {/* Task modal */}
-      <TaskModal
-        open={taskModal.open}
-        onClose={() => setTaskModal({ open: false, challengeId: null, editTarget: null })}
-        editTarget={taskModal.editTarget}
-        existingWeeks={
-          taskModal.challengeId
-            ? [...new Set(challenges.find(c => c.id === taskModal.challengeId)?.tasks.map(t => t.weekNumber) ?? [])]
-            : []
-        }
-        teamOptions={
-          taskModal.challengeId
-            ? (() => {
-                const c = challenges.find(ch => ch.id === taskModal.challengeId)
-                const allNames = teamList.map(t => t.name)
-                return c?.teams.length ? c.teams : allNames
-              })()
-            : teamList.map(t => t.name)
-        }
-        onSave={handleSaveTask}
       />
 
       {/* Confirm toggle (Complete / Reopen) dialog */}
