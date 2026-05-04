@@ -574,7 +574,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
     return Column(
       children: [
-        if (myTeamMembers.length >= 3)
+        if (myTeamMembers.isNotEmpty)
           _buildAnimatedPodium(myTeamMembers, isTeam: false),
         const SizedBox(height: 8),
         _buildMyTeamMembersList(myTeamMembers),
@@ -804,6 +804,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       );
     }
     final breakdown = _breakdownCache[userId] ?? {};
+    final sortedWeeks = breakdown.keys.toList()..sort();
     if (breakdown.isEmpty) {
       return Padding(
         padding: EdgeInsets.fromLTRB(indent, 8, 18, 12),
@@ -811,7 +812,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             style: TextStyle(color: context.textHint, fontSize: 12)),
       );
     }
-    final sortedWeeks = breakdown.keys.toList()..sort();
     final currentWeek = _currentWeek();
 
     return Container(
@@ -869,6 +869,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       final date = t['date'] as String? ?? '';
                       final icon = t['icon'] as String? ?? '📋';
                       final title = t['title'] as String? ?? '';
+                      final adminHint = t['admin_hint'] as String?;
 
                       final (statusIcon, statusColor) = switch (status) {
                         'approved' => ('✅', AppColors.primary),
@@ -888,11 +889,22 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                 style: const TextStyle(fontSize: 12)),
                             const SizedBox(width: 6),
                             Expanded(
-                              child: Text(title,
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: context.textSecondary),
-                                  overflow: TextOverflow.ellipsis),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(title,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: context.textSecondary),
+                                      overflow: TextOverflow.ellipsis),
+                                  if (adminHint != null)
+                                    Text(adminHint,
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: context.textHint,
+                                            fontStyle: FontStyle.italic)),
+                                ],
+                              ),
                             ),
                             if (date.isNotEmpty) ...[
                               Text(date,
@@ -935,9 +947,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   Widget _buildAnimatedPodium(List<Map<String, dynamic>> items,
       {required bool isTeam}) {
     final pointsKey = isTeam ? 'total_points' : 'challenge_points';
+    // Pad to 3 with empty placeholders so podium always renders
+    final padded = [
+      ...items,
+      if (items.length < 2) <String, dynamic>{'_empty': true},
+      if (items.length < 3) <String, dynamic>{'_empty': true},
+    ];
     final ranks = _tiedRanks(items, pointsKey);
     // Podium layout: left=items[1], center=items[0], right=items[2]
-    final r0 = ranks[0]; final r1 = ranks[1]; final r2 = ranks[2];
+    final r0 = ranks[0];
+    final r1 = padded.length > 1 && padded[1]['_empty'] != true ? ranks[1] : 0;
+    final r2 = padded.length > 2 && padded[2]['_empty'] != true ? ranks[2] : 0;
     return AnimatedBuilder(
       animation: _podiumAnim,
       builder: (context, _) => Container(
@@ -947,25 +967,27 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child: _PodiumCard(
-                item: items[1],
-                rank: r1,
-                animatedBase: 68 * _podiumAnim.value,
-                targetBase: 68,
-                bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E2D3D) : const Color(0xFFEFF6FF),
-                rankColor: _rankColor(r1),
-                rankLabel: _rankLabel(r1),
-                isTeam: isTeam,
-                isHighlighted: isTeam
-                    ? items[1]['team_id'] == _myTeamId
-                    : items[1]['id'] == _myProfileId,
-                avatarColor: isTeam ? null : items[1]['avatar_color'] as String?,
-              ),
+              child: padded[1]['_empty'] == true
+                  ? const SizedBox()
+                  : _PodiumCard(
+                      item: padded[1],
+                      rank: r1,
+                      animatedBase: 68 * _podiumAnim.value,
+                      targetBase: 68,
+                      bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E2D3D) : const Color(0xFFEFF6FF),
+                      rankColor: _rankColor(r1),
+                      rankLabel: _rankLabel(r1),
+                      isTeam: isTeam,
+                      isHighlighted: isTeam
+                          ? padded[1]['team_id'] == _myTeamId
+                          : padded[1]['id'] == _myProfileId,
+                      avatarColor: isTeam ? null : padded[1]['avatar_color'] as String?,
+                    ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: _PodiumCard(
-                item: items[0],
+                item: padded[0],
                 rank: r0,
                 animatedBase: 96 * _podiumAnim.value,
                 targetBase: 96,
@@ -975,27 +997,29 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 isTeam: isTeam,
                 showCrown: r0 == 1,
                 isHighlighted: isTeam
-                    ? items[0]['team_id'] == _myTeamId
-                    : items[0]['id'] == _myProfileId,
-                avatarColor: isTeam ? null : items[0]['avatar_color'] as String?,
+                    ? padded[0]['team_id'] == _myTeamId
+                    : padded[0]['id'] == _myProfileId,
+                avatarColor: isTeam ? null : padded[0]['avatar_color'] as String?,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: _PodiumCard(
-                item: items[2],
-                rank: r2,
-                animatedBase: 48 * _podiumAnim.value,
-                targetBase: 48,
-                bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D1F0E) : const Color(0xFFFFF7ED),
-                rankColor: _rankColor(r2),
-                rankLabel: _rankLabel(r2),
-                isTeam: isTeam,
-                isHighlighted: isTeam
-                    ? items[2]['team_id'] == _myTeamId
-                    : items[2]['id'] == _myProfileId,
-                avatarColor: isTeam ? null : items[2]['avatar_color'] as String?,
-              ),
+              child: padded[2]['_empty'] == true
+                  ? const SizedBox()
+                  : _PodiumCard(
+                      item: padded[2],
+                      rank: r2,
+                      animatedBase: 48 * _podiumAnim.value,
+                      targetBase: 48,
+                      bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D1F0E) : const Color(0xFFFFF7ED),
+                      rankColor: _rankColor(r2),
+                      rankLabel: _rankLabel(r2),
+                      isTeam: isTeam,
+                      isHighlighted: isTeam
+                          ? padded[2]['team_id'] == _myTeamId
+                          : padded[2]['id'] == _myProfileId,
+                      avatarColor: isTeam ? null : padded[2]['avatar_color'] as String?,
+                    ),
             ),
           ],
         ),

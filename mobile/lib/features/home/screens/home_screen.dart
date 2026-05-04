@@ -24,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<Map<String, dynamic>> _tasks = [];
   List<Map<String, dynamic>> _submissions = [];
   List<Map<String, dynamic>> _teamLeaderboard = [];
+  List<Map<String, dynamic>> _fullTeamLeaderboard = [];
 
   String? _teamId;
 
@@ -113,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen>
             final elapsed = DateTime.now().difference(start).inDays;
             progress = (elapsed / total).clamp(0.0, 1.0);
             final weekNum   = ((DateTime.now().difference(start).inDays) / 7).floor() + 1;
-            final totalWeeks = (activeChallenge['week_duration'] as int?) ?? 0;
+            final totalWeeks = (end.difference(start).inDays / 7).ceil();
             weekLabel = 'Week $weekNum/$totalWeeks';
           }
         }
@@ -122,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen>
           _activeChallenge = activeChallenge;
           _tasks = tasks;
           _submissions = submissions;
+          _fullTeamLeaderboard = teamLeaderboard;
           _teamLeaderboard = teamLeaderboard.take(5).toList();
           _teamId = teamId;
           _submissionStatusCache = statusCache;
@@ -148,13 +150,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   int get _teamRank {
     if (_teamId == null) return 0;
-    final idx = _teamLeaderboard.indexWhere((t) => t['team_id'] == _teamId);
+    final idx = _fullTeamLeaderboard.indexWhere((t) => t['team_id'] == _teamId);
     return idx >= 0 ? idx + 1 : 0;
   }
 
   int get _teamPoints {
     if (_teamId == null) return 0;
-    final t = _teamLeaderboard.firstWhere((t) => t['team_id'] == _teamId, orElse: () => {});
+    final t = _fullTeamLeaderboard.firstWhere((t) => t['team_id'] == _teamId, orElse: () => {});
     return (t['total_points'] as int?) ?? 0;
   }
 

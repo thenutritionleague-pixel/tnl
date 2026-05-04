@@ -552,6 +552,7 @@ export async function getInviteWhitelist(orgId: string): Promise<{ invites: Invi
 
 type SubmissionRow = {
   id: string
+  task_id: string
   status: string
   submitted_at: string
   submitted_date: string | null
@@ -565,6 +566,16 @@ type SubmissionRow = {
   ai_confidence: number | null
   user_id: string
   tasks: { title: string; description: string; points: number; points_tiers: { label: string; description: string; points: number }[] | null } | null
+}
+
+export interface PreviousSubmission {
+  id: string
+  status: 'pending' | 'approved' | 'rejected'
+  submittedAt: string
+  submittedDate: string
+  proofUrl: string | null
+  rejectionReason: string | null
+  pointsAwarded: number | null
 }
 
 export interface OrgApproval {
@@ -587,6 +598,7 @@ export interface OrgApproval {
   aiStatus: string | null
   aiFeedback: string | null
   aiConfidence: number | null
+  previousSubmissions: PreviousSubmission[]  // always present — set to [] if none
 }
 
 const APPROVALS_PAGE_SIZE = 50
@@ -599,7 +611,7 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
   const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
     client
       .from('task_submissions')
-      .select('id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
+      .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
       .range(from, to + 1), // fetch one extra to detect hasMore
@@ -632,27 +644,51 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
   const hasMore = rawRows.length > APPROVALS_PAGE_SIZE
   const rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
 
-  const approvals = rows.map(s => ({
-    id: s.id,
-    member: profileMap[s.user_id] ?? 'Unknown',
-    userId: s.user_id,
-    teamName: teamMap[s.user_id] ?? 'Unassigned',
-    taskTitle: s.tasks?.title ?? '—',
-    taskDescription: s.tasks?.description ?? '',
-    taskPoints: s.tasks?.points ?? 0,
-    taskPointsTiers: s.tasks?.points_tiers ?? null,
-    selectedTierIndex: s.selected_tier_index ?? null,
-    submittedAt: timeAgo(s.submitted_at),
-    submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
-    status: s.status as OrgApproval['status'],
-    rejectionReason: s.rejection_reason ?? null,
-    pointsAwarded: s.points_awarded ?? null,
-    proofUrl: s.proof_url ?? null,
-    note: s.note ?? null,
-    aiStatus: s.ai_status ?? null,
-    aiFeedback: s.ai_feedback ?? null,
-    aiConfidence: s.ai_confidence ?? null,
-  }))
+  // Group by (user_id, task_id) — rows are already sorted newest-first.
+  // First row in each group is the active submission; the rest are history.
+  const groupMap = new Map<string, SubmissionRow[]>()
+  for (const s of rows) {
+    const key = `${s.user_id}::${s.task_id}`
+    const grp = groupMap.get(key)
+    if (grp) grp.push(s)
+    else groupMap.set(key, [s])
+  }
+
+  const approvals: OrgApproval[] = []
+  for (const group of groupMap.values()) {
+    const s = group[0]
+    const previous: PreviousSubmission[] = group.slice(1).map(p => ({
+      id: p.id,
+      status: p.status as PreviousSubmission['status'],
+      submittedAt: timeAgo(p.submitted_at),
+      submittedDate: p.submitted_date ?? (p.submitted_at as string)?.slice(0, 10) ?? '',
+      proofUrl: p.proof_url ?? null,
+      rejectionReason: p.rejection_reason ?? null,
+      pointsAwarded: p.points_awarded ?? null,
+    }))
+    approvals.push({
+      id: s.id,
+      member: profileMap[s.user_id] ?? 'Unknown',
+      userId: s.user_id,
+      teamName: teamMap[s.user_id] ?? 'Unassigned',
+      taskTitle: s.tasks?.title ?? '—',
+      taskDescription: s.tasks?.description ?? '',
+      taskPoints: s.tasks?.points ?? 0,
+      taskPointsTiers: s.tasks?.points_tiers ?? null,
+      selectedTierIndex: s.selected_tier_index ?? null,
+      submittedAt: timeAgo(s.submitted_at),
+      submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
+      status: s.status as OrgApproval['status'],
+      rejectionReason: s.rejection_reason ?? null,
+      pointsAwarded: s.points_awarded ?? null,
+      proofUrl: s.proof_url ?? null,
+      note: s.note ?? null,
+      aiStatus: s.ai_status ?? null,
+      aiFeedback: s.ai_feedback ?? null,
+      aiConfidence: s.ai_confidence ?? null,
+      previousSubmissions: previous,
+    })
+  }
   return { approvals, hasMore }
 }
 

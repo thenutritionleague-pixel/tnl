@@ -19,7 +19,7 @@ import {
 import { toast } from 'sonner'
 import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage } from '../actions'
 import { runAiAnalysis } from '../ai-actions'
-import type { OrgApproval } from '@/lib/supabase/admin-queries'
+import type { OrgApproval, PreviousSubmission } from '@/lib/supabase/admin-queries'
 
 // ── DatePicker ────────────────────────────────────────────────────────────────
 
@@ -163,6 +163,63 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
           style={{ opacity: state === 'loaded' ? 1 : 0 }}
           onLoad={() => setState('loaded')}
         />
+      )}
+    </div>
+  )
+}
+
+// ── Previous Submissions History ──────────────────────────────────────────────
+
+function SubmissionHistory({ submissions }: { submissions?: PreviousSubmission[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const [viewingProof, setViewingProof] = useState<string | null>(null)
+
+  if (!submissions || submissions.length === 0) return null
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        Previous Attempts ({submissions.length})
+      </button>
+      {expanded && (
+        <div className="space-y-2">
+          {submissions.map(p => (
+            <div key={p.id} className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn('text-xs font-medium px-1.5 py-0.5 rounded-full capitalize', p.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : p.status === 'rejected' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700')}>
+                    {p.status}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{p.submittedAt}</span>
+                  {p.pointsAwarded != null && p.status === 'approved' && (
+                    <span className="text-xs text-primary font-medium">🥦 {p.pointsAwarded} pts</span>
+                  )}
+                </div>
+                {p.rejectionReason && (
+                  <p className="text-xs text-destructive mt-1">Reason: {p.rejectionReason}</p>
+                )}
+              </div>
+              {p.proofUrl && (
+                <button
+                  type="button"
+                  onClick={() => setViewingProof(viewingProof === p.id ? null : p.id)}
+                  className="text-xs text-primary hover:underline shrink-0"
+                >
+                  {viewingProof === p.id ? 'Hide' : 'View Proof'}
+                </button>
+              )}
+            </div>
+          ))}
+          {viewingProof && (() => {
+            const sub = submissions.find(p => p.id === viewingProof)
+            return sub?.proofUrl ? <ProofViewer proofUrl={sub.proofUrl} /> : null
+          })()}
+        </div>
       )}
     </div>
   )
@@ -572,6 +629,8 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                     </div>
                   </div>
                 )}
+
+                <SubmissionHistory submissions={reviewTarget.previousSubmissions ?? []} />
 
                 <div className="space-y-1.5">
                   <Label htmlFor="adminNotes" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">

@@ -182,11 +182,20 @@ class LeaderboardService {
         .ilike('reason', 'Task missed:%')
         .order('created_at', ascending: true);
 
-    final results = await Future.wait<dynamic>([challengeFuture, subsFuture, missedFuture]);
+    // Manual adjustments (is_manual=true)
+    final manualFuture = _client
+        .from('points_transactions')
+        .select('amount, reason, created_at')
+        .eq('user_id', userId)
+        .eq('is_manual', true)
+        .order('created_at', ascending: true);
+
+    final results = await Future.wait<dynamic>([challengeFuture, subsFuture, missedFuture, manualFuture]);
 
     final challengeData = results[0] as Map<String, dynamic>;
     final subs = results[1] as List;
     final missedTxns = results[2] as List;
+    final manualTxns = results[3] as List;
 
     final DateTime? startDate =
         DateTime.tryParse(challengeData['start_date'] as String? ?? '');
@@ -263,6 +272,25 @@ class LeaderboardService {
         'date': fmtDate(subDate.isNotEmpty ? subDate : createdAt),
         'status': 'missed',
         'points': basePts, // base task points (not earned — earned stays 0 for missed)
+      });
+    }
+
+    // Manual adjustments — inserted into the correct week bucket like normal tasks
+    for (final t in manualTxns) {
+      final amount = (t['amount'] as int?) ?? 0;
+      final createdAt = t['created_at'] as String? ?? '';
+      final rawReason = t['reason'] as String? ?? '';
+      final byMatch = RegExp(r'\[by ([^\]]+)\]$').firstMatch(rawReason);
+      final adminName = byMatch?.group(1) ?? '';
+      final reason = rawReason.replaceAll(RegExp(r'\s*\[by [^\]]+\]$'), '').trim();
+      final week = weekFor(createdAt);
+      grouped.putIfAbsent(week, () => []).add({
+        'title': reason.isNotEmpty ? reason : 'Bonus Points',
+        'icon': '✏️',
+        'date': fmtDate(createdAt),
+        'status': 'approved',
+        'points': amount,
+        'admin_hint': adminName.isNotEmpty ? 'Added by $adminName' : 'Added by admin',
       });
     }
 
