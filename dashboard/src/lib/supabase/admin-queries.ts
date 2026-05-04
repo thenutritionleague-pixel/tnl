@@ -709,12 +709,34 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
       dates: `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`,
     }))
 
+  // Fetch approved points per team
+  const { data: subPts } = await client
+    .from('task_submissions')
+    .select('user_id, points_awarded, tasks(points)')
+    .eq('org_id', orgId)
+    .eq('status', 'approved')
+
+  const { data: teamMembersMap } = await client
+    .from('team_members')
+    .select('user_id, team_id')
+    .eq('org_id', orgId)
+
+  const userToTeam: Record<string, string> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const tm of (teamMembersMap ?? []) as any[]) userToTeam[tm.user_id] = tm.team_id
+  const teamPtsMap: Record<string, number> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const s of (subPts ?? []) as any[]) {
+    const tid = userToTeam[s.user_id]
+    if (tid) teamPtsMap[tid] = (teamPtsMap[tid] ?? 0) + (s.points_awarded ?? s.tasks?.points ?? 0)
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const teams = ((teamsListRes.data ?? []) as any[]).map((t: any) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const captain = t.team_members.find((m: any) => m.role === 'captain')?.profiles?.name ?? '—'
-    return { id: t.id, name: t.name, captain, members: t.team_members.length, points: 0 }
-  })
+    return { id: t.id, name: t.name, captain, members: t.team_members.length, points: teamPtsMap[t.id] ?? 0 }
+  }).sort((a, b) => b.points - a.points)
 
   return {
     id: org.id,

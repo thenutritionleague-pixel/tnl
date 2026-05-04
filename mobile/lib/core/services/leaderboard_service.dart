@@ -117,6 +117,19 @@ class LeaderboardService {
         challengePoints[uid] =
             (challengePoints[uid] ?? 0) + ((s['points_awarded'] as int?) ?? 0);
       }
+
+      // Include true manual adjustments only (is_manual=true)
+      final manualPts = await _client
+          .from('points_transactions')
+          .select('user_id, amount')
+          .eq('org_id', orgId)
+          .eq('is_manual', true)
+          .inFilter('user_id', userIds);
+      for (final pt in manualPts as List) {
+        final uid = pt['user_id'] as String;
+        challengePoints[uid] =
+            (challengePoints[uid] ?? 0) + ((pt['amount'] as int?) ?? 0);
+      }
     }
 
     final result = members.map<Map<String, dynamic>>((m) {

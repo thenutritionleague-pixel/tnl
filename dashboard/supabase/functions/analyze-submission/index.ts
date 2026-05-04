@@ -124,7 +124,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const tierBlock = claimedTier
-      ? `CLAIMED TIER: ${claimedTier.label} — ${claimedTier.description} (${claimedTier.points} pts)\nYou MUST verify the photo provides visible evidence matching this threshold. If not, reject and explain what is missing.`
+      ? `CLAIMED TIER: ${claimedTier.label} (${claimedTier.points} pts)\nTiers are MINIMUM thresholds. The member must prove they reached at least the "${claimedTier.label}" level. Achieving MORE than the minimum is perfectly valid — do NOT reject because a higher result could have earned a higher tier. Only reject if the proof clearly shows they fell BELOW this tier's minimum.`
       : `POINTS: ${taskPoints}`
 
     const prevNote = prevCount > 0
@@ -143,13 +143,13 @@ APPROVE when ALL of the following are clearly true:
 • The photo genuinely shows completion of this specific task.
 • It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
 • It is meaningfully different from any previous submission images.
-${claimedTier ? `• Visible evidence (readable numbers, labels, screens) supports the claimed tier "${claimedTier.label} — ${claimedTier.description}".` : ''}
+${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
 
 REJECT when ANY of the following are clearly true:
 • The photo has no obvious connection to the task.
 • It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
 • It is the same or near-identical photo as a previous submission.
-${claimedTier ? '• The proof does not show evidence meeting the claimed tier threshold.' : ''}
+${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
 
 LENIENCY RULES:
 • Blurry, casual, or low-quality real photos → approve if task completion is still evident.

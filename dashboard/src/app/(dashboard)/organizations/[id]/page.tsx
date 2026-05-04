@@ -60,15 +60,19 @@ export default async function OrgOverviewPage({ params }: { params: Promise<{ id
           <div className="divide-y divide-border">
             {org.teams.length === 0 ? (
               <p className="px-5 py-6 text-sm text-muted-foreground">No teams yet.</p>
-            ) : org.teams.map((team, i) => (
+            ) : (() => {
+                const uniquePts = [...new Set(org.teams.map(t => t.points))].sort((a, b) => b - a)
+                return org.teams.map((team) => {
+                  const rank = uniquePts.indexOf(team.points) + 1
+                  return (
               <div key={team.id} className="px-5 py-3 flex items-center gap-3">
                 <span className={cn(
                   'text-xs font-mono w-5 shrink-0',
-                  i === 0 && 'text-amber-500 font-bold',
-                  i === 1 && 'text-slate-400',
-                  i === 2 && 'text-orange-600',
+                  rank === 1 && 'text-amber-500 font-bold',
+                  rank === 2 && 'text-slate-400',
+                  rank === 3 && 'text-orange-600',
                 )}>
-                  #{i + 1}
+                  #{rank}
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground">{team.name}</p>
@@ -78,7 +82,9 @@ export default async function OrgOverviewPage({ params }: { params: Promise<{ id
                   <p className="text-sm font-semibold text-foreground">🥦 {team.points.toLocaleString()}</p>
                 </div>
               </div>
-            ))}
+                  )
+                })
+              })()}
           </div>
         </div>
 

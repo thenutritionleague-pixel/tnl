@@ -45,6 +45,10 @@ export async function addManualAdjustment(
   })
 
   if (error) return { error: error.message }
+
+  // Update profile total_points atomically
+  await client.rpc('increment_member_points', { p_user_id: userId, p_amount: amount })
+
   revalidatePath(`/organizations/${orgId}/points`)
   return { success: true }
 }

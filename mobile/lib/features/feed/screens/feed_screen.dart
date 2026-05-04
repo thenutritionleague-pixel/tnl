@@ -190,6 +190,10 @@ class _FeedScreenState extends State<FeedScreen>
                         final title = post['title'] as String? ?? '';
                         final content = post['content'] as String? ?? '';
                         final authorName = (post['profiles'] as Map?)?['name'] as String?;
+                        final teamMembers = (post['profiles'] as Map?)?['team_members'] as List?;
+                        final teamName = (teamMembers != null && teamMembers.isNotEmpty)
+                            ? ((teamMembers.first as Map?))?['teams']?['name'] as String?
+                            : null;
 
                         final accentColor = _TypeChip.colorFor(type);
                         final isApproval = type == 'submission_approved';
@@ -265,6 +269,22 @@ class _FeedScreenState extends State<FeedScreen>
                                           fontWeight: FontWeight.w700,
                                           color: context.textPrimary),
                                     ),
+
+                                  // Team tag for approval/rejection items
+                                  if (teamName != null && (type == 'submission_approved' || type == 'submission_rejected')) ...[
+                                    const SizedBox(height: 4),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: context.primarySurface,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        teamName,
+                                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.primary),
+                                      ),
+                                    ),
+                                  ],
 
                                   // Content (points line for approvals, description for others)
                                   if (content.isNotEmpty) ...[

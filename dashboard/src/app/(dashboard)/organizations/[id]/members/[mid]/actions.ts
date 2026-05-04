@@ -47,7 +47,6 @@ export async function approveMemberSubmission(
       status: 'approved',
       points_awarded: finalPoints,
       reviewed_at: new Date().toISOString(),
-      reviewed_by: profile.id,
     })
     .eq('id', submissionId)
     .eq('org_id', orgId)
@@ -76,7 +75,6 @@ export async function rejectMemberSubmission(
       status: 'rejected',
       rejection_reason: reason || null,
       reviewed_at: new Date().toISOString(),
-      reviewed_by: profile.id,
     })
     .eq('id', submissionId)
     .eq('org_id', orgId)
