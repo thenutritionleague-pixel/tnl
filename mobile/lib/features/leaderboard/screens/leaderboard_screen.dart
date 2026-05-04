@@ -336,16 +336,31 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     );
   }
 
-  /// Dense tie-aware rank: items with equal points share the same rank.
-  /// [pointsKey] is the map key holding the numeric score.
+  /// Dense tie-aware rank: 1,1,1,2,2,3 (not 1,1,1,4,4,6).
   static List<int> _tiedRanks(List<Map<String, dynamic>> items, String pointsKey) {
-    final ranks = List<int>.filled(items.length, 1);
-    for (int i = 0; i < items.length; i++) {
-      final pts = (items[i][pointsKey] as num?)?.toInt() ?? 0;
-      // rank = number of items with strictly MORE points + 1
-      ranks[i] = items.where((o) => ((o[pointsKey] as num?)?.toInt() ?? 0) > pts).length + 1;
-    }
-    return ranks;
+    final sortedUnique = items
+        .map((o) => (o[pointsKey] as num?)?.toInt() ?? 0)
+        .toSet()
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    return items.map((o) {
+      final pts = (o[pointsKey] as num?)?.toInt() ?? 0;
+      return sortedUnique.indexOf(pts) + 1;
+    }).toList();
+  }
+
+  static String _rankLabel(int rank) {
+    if (rank == 1) return '1st';
+    if (rank == 2) return '2nd';
+    if (rank == 3) return '3rd';
+    return '${rank}th';
+  }
+
+  static Color _rankColor(int rank) {
+    if (rank == 1) return AppColors.primary;
+    if (rank == 2) return AppColors.silver;
+    if (rank == 3) return AppColors.bronze;
+    return const Color(0xFF9CA3AF);
   }
 
   Widget _buildAllTeamsList() => Container(
@@ -919,6 +934,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── Animated Podium ──────────────────────────────────────────────────────
   Widget _buildAnimatedPodium(List<Map<String, dynamic>> items,
       {required bool isTeam}) {
+    final pointsKey = isTeam ? 'total_points' : 'challenge_points';
+    final ranks = _tiedRanks(items, pointsKey);
+    // Podium layout: left=items[1], center=items[0], right=items[2]
+    final r0 = ranks[0]; final r1 = ranks[1]; final r2 = ranks[2];
     return AnimatedBuilder(
       animation: _podiumAnim,
       builder: (context, _) => Container(
@@ -930,12 +949,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             Expanded(
               child: _PodiumCard(
                 item: items[1],
-                rank: 2,
+                rank: r1,
                 animatedBase: 68 * _podiumAnim.value,
                 targetBase: 68,
                 bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E2D3D) : const Color(0xFFEFF6FF),
-                rankColor: AppColors.silver,
-                rankLabel: '2nd',
+                rankColor: _rankColor(r1),
+                rankLabel: _rankLabel(r1),
                 isTeam: isTeam,
                 isHighlighted: isTeam
                     ? items[1]['team_id'] == _myTeamId
@@ -947,14 +966,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             Expanded(
               child: _PodiumCard(
                 item: items[0],
-                rank: 1,
+                rank: r0,
                 animatedBase: 96 * _podiumAnim.value,
                 targetBase: 96,
                 bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface,
-                rankColor: AppColors.primary,
-                rankLabel: '1st',
+                rankColor: _rankColor(r0),
+                rankLabel: _rankLabel(r0),
                 isTeam: isTeam,
-                showCrown: true,
+                showCrown: r0 == 1,
                 isHighlighted: isTeam
                     ? items[0]['team_id'] == _myTeamId
                     : items[0]['id'] == _myProfileId,
@@ -965,12 +984,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             Expanded(
               child: _PodiumCard(
                 item: items[2],
-                rank: 3,
+                rank: r2,
                 animatedBase: 48 * _podiumAnim.value,
                 targetBase: 48,
                 bgColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D1F0E) : const Color(0xFFFFF7ED),
-                rankColor: AppColors.bronze,
-                rankLabel: '3rd',
+                rankColor: _rankColor(r2),
+                rankLabel: _rankLabel(r2),
                 isTeam: isTeam,
                 isHighlighted: isTeam
                     ? items[2]['team_id'] == _myTeamId
