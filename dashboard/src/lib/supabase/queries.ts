@@ -751,7 +751,8 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       if (tid) teamPts[tid] = (teamPts[tid] ?? 0) + (s.points_awarded ?? s.tasks?.points ?? 0)
     }
     const sorted = Object.entries(teamPts).sort((a, b) => b[1] - a[1])
-    rank = sorted.findIndex(([tid]) => tid === teamId) + 1 || 1
+    const myPts = teamPts[teamId] ?? 0
+    rank = sorted.findIndex(([, pts]) => pts <= myPts) + 1 || 1
   }
 
   return {

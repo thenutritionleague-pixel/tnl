@@ -336,11 +336,25 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     );
   }
 
+  /// Dense tie-aware rank: items with equal points share the same rank.
+  /// [pointsKey] is the map key holding the numeric score.
+  static List<int> _tiedRanks(List<Map<String, dynamic>> items, String pointsKey) {
+    final ranks = List<int>.filled(items.length, 1);
+    for (int i = 0; i < items.length; i++) {
+      final pts = (items[i][pointsKey] as num?)?.toInt() ?? 0;
+      // rank = number of items with strictly MORE points + 1
+      ranks[i] = items.where((o) => ((o[pointsKey] as num?)?.toInt() ?? 0) > pts).length + 1;
+    }
+    return ranks;
+  }
+
   Widget _buildAllTeamsList() => Container(
         color: Theme.of(context).colorScheme.surface,
         child: Column(
-          children: _teams.asMap().entries.map((e) {
-            final rank = e.key + 1;
+          children: () {
+            final ranks = _tiedRanks(_teams, 'total_points');
+            return _teams.asMap().entries.map((e) {
+            final rank = ranks[e.key];
             final team = e.value;
             final teamId = team['team_id'] as String;
             final isMyTeam = teamId == _myTeamId;
@@ -409,7 +423,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       indent: 18),
               ],
             );
-          }).toList(),
+          }).toList();
+          }(),
         ),
       );
 
@@ -556,8 +571,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   Widget _buildMyTeamMembersList(List<Map<String, dynamic>> members) => Container(
         color: Theme.of(context).colorScheme.surface,
         child: Column(
-          children: members.asMap().entries.map((e) {
-            final rank = e.key + 1;
+          children: () {
+            final ranks = _tiedRanks(members, 'challenge_points');
+            return members.asMap().entries.map((e) {
+            final rank = ranks[e.key];
             final m = e.value;
             final memberId = m['id'] as String;
             final isMe = memberId == _myProfileId;
@@ -634,7 +651,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   Divider(height: 1, color: Theme.of(context).colorScheme.outline, indent: 18),
               ],
             );
-          }).toList(),
+          }).toList();
+          }(),
         ),
       );
 
