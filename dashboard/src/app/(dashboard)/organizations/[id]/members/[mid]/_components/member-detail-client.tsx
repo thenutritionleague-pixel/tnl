@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Crown, Shield, CheckCircle2, XCircle, Clock,
@@ -470,8 +470,8 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                   const isExpanded = expandedRows.has(sub.id)
                   const hasPrev = (sub.previousAttempts?.length ?? 0) > 0
                   return (
-                    <>
-                      <tr key={sub.id} className="hover:bg-muted/20 transition-colors">
+                    <React.Fragment key={sub.id}>
+                      <tr className="hover:bg-muted/20 transition-colors">
                         <td className="px-5 py-3 font-medium text-foreground">
                           <div className="flex items-center gap-1.5">
                             {sub.taskTitle}
@@ -530,7 +530,7 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                       {hasPrev && isExpanded && sub.previousAttempts.map(prev => {
                         const pcfg = statusConfig[prev.status]
                         return (
-                          <tr key={prev.id} className="bg-muted/20">
+                          <tr key={`prev-${prev.id}`} className="bg-muted/20">
                             <td className="px-5 py-2 text-xs text-muted-foreground pl-10">↳ Earlier attempt · {prev.submittedAt}</td>
                             <td className="hidden sm:table-cell" />
                             <td className="hidden" />
@@ -557,7 +557,7 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                           </tr>
                         )
                       })}
-                    </>
+                    </React.Fragment>
                   )
                 })}
               </tbody>
