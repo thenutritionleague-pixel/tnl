@@ -614,6 +614,7 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
       .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
       .eq('org_id', orgId)
       .order('submitted_at', { ascending: false })
+      .order('id', { ascending: false }) // stable tiebreaker prevents duplicate rows across pages
       .range(from, to + 1), // fetch one extra to detect hasMore
     client
       .from('team_members')

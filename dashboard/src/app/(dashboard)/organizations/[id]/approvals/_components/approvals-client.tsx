@@ -261,7 +261,11 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
     const nextPage = currentPage + 1
     const res = await loadApprovalsPage(orgId, nextPage)
     if (res) {
-      setApprovals(prev => [...prev, ...res.approvals])
+      setApprovals(prev => {
+        const existingIds = new Set(prev.map(a => a.id))
+        const fresh = res.approvals.filter(a => !existingIds.has(a.id))
+        return [...prev, ...fresh]
+      })
       setHasMore(res.hasMore)
       setCurrentPage(nextPage)
     }
