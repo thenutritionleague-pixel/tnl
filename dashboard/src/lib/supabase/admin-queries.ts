@@ -582,6 +582,7 @@ export interface OrgApproval {
   id: string
   member: string
   userId: string
+  taskId: string
   teamName: string
   taskTitle: string
   taskDescription: string
@@ -671,6 +672,7 @@ export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approv
       id: s.id,
       member: profileMap[s.user_id] ?? 'Unknown',
       userId: s.user_id,
+      taskId: s.task_id,
       teamName: teamMap[s.user_id] ?? 'Unassigned',
       taskTitle: s.tasks?.title ?? '—',
       taskDescription: s.tasks?.description ?? '',

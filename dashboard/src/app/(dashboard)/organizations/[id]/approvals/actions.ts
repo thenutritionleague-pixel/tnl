@@ -103,3 +103,28 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
     .createSignedUrl(path, 300) // 5 min expiry
   return data?.signedUrl ?? null
 }
+
+export async function getPreviousApprovedProof(
+  userId: string,
+  taskId: string,
+  excludeSubmissionId: string,
+): Promise<string | null> {
+  const profile = await getAdminProfile()
+  if (!profile) return null
+  const client = await createAdminClient()
+  const { data } = await client
+    .from('task_submissions')
+    .select('proof_url')
+    .eq('user_id', userId)
+    .eq('task_id', taskId)
+    .eq('status', 'approved')
+    .neq('id', excludeSubmissionId)
+    .order('submitted_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!data?.proof_url) return null
+  const { data: signed } = await client.storage
+    .from('task-proofs')
+    .createSignedUrl(data.proof_url, 300)
+  return signed?.signedUrl ?? null
+}

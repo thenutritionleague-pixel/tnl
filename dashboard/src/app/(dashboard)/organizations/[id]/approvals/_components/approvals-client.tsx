@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage } from '../actions'
+import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof } from '../actions'
 import { runAiAnalysis } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission } from '@/lib/supabase/admin-queries'
 
@@ -279,6 +279,13 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   }, [reviewTarget?.id])
 
   const [aiChecking, setAiChecking] = useState(false)
+  const [prevProofUrl, setPrevProofUrl] = useState<string | null | 'loading' | 'none'>('none')
+
+  async function loadPrevProof(a: OrgApproval) {
+    setPrevProofUrl('loading')
+    const url = await getPreviousApprovedProof(a.userId, a.taskId, a.id)
+    setPrevProofUrl(url ?? null)
+  }
 
   async function runAiChecks() {
     const toAnalyze = approvals.filter(a => a.status === 'pending' && a.aiStatus !== 'analyzing')
@@ -351,7 +358,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
       setPointsOverride('')
     }
   }
-  function closeReview() { setReviewTarget(null) }
+  function closeReview() { setReviewTarget(null); setPrevProofUrl('none') }
 
   async function handleApprove() {
     if (!reviewTarget) return
@@ -621,6 +628,40 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                     </div>
                     {reviewTarget.aiFeedback && (
                       <p className="text-xs text-muted-foreground leading-relaxed">{reviewTarget.aiFeedback}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Compare with previous proof — shown when AI flagged duplicate */}
+                {reviewTarget.aiStatus === 'rejected' && (
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 flex items-center justify-between gap-3">
+                    <p className="text-xs text-muted-foreground">Compare with member&apos;s last approved submission</p>
+                    {prevProofUrl === 'none' && (
+                      <button
+                        type="button"
+                        onClick={() => loadPrevProof(reviewTarget)}
+                        className="text-xs text-primary hover:underline shrink-0"
+                      >
+                        Load previous
+                      </button>
+                    )}
+                    {prevProofUrl === 'loading' && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                      </span>
+                    )}
+                    {prevProofUrl === null && (
+                      <span className="text-xs text-muted-foreground shrink-0">No previous submission found</span>
+                    )}
+                    {prevProofUrl && prevProofUrl !== 'loading' && prevProofUrl !== 'none' && prevProofUrl !== null && (
+                      <a
+                        href={prevProofUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary hover:underline shrink-0"
+                      >
+                        Open previous proof ↗
+                      </a>
                     )}
                   </div>
                 )}

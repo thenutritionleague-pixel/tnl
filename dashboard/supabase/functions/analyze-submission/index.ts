@@ -142,19 +142,20 @@ Image 1 is the current submission proof.${prevNote ? `\n${prevNote}` : ''}
 APPROVE when ALL of the following are clearly true:
 • The photo genuinely shows completion of this specific task.
 • It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
-${hasPrev ? '• It is meaningfully different from any previous submission images.\n' : ''}${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
+${hasPrev ? '• The key DATA visible in the image (step count, distance, calories, date, time) is different from the previous submission — the app UI looking similar is NORMAL and expected.\n' : ''}${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
 
 REJECT when ANY of the following are clearly true:
 • The photo has no obvious connection to the task.
 • It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
-${hasPrev ? '• It is the same or near-identical photo as a previous submission.\n' : ''}${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
+${hasPrev ? '• The exact same numbers/metrics AND the same date/time are visible in both the current and a previous submission (meaning it is literally the same screenshot reused).\n' : ''}${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
 
 LENIENCY RULES:
 • Blurry, casual, or low-quality real photos → approve if task completion is still evident.
 • Tasks hard to photograph (meditation, hydration, sleep) → approve any sincere real attempt.
 • For fitness metrics (steps, distance, calories, time) numbers must be visible and match the claimed tier.
+• FITNESS TRACKER APPS (StepUp, Google Fit, Apple Health, Samsung Health, Garmin, etc.): many members use the same app. The UI will look visually identical across days — this is NORMAL. Only flag as duplicate if the EXACT same step count or metric value is visible in both images. Different numbers = different day = valid.
 • Only set confidence ≥ 0.78 when clearly sure it should be approved.
-• Only set confidence < 0.40 when clearly fake, duplicate, or wrong task.
+• Only set confidence < 0.40 when clearly fake or literally the same screenshot reused.
 • Use 0.40–0.77 sparingly for genuinely uncertain cases.
 
 Respond in JSON only — no markdown:
