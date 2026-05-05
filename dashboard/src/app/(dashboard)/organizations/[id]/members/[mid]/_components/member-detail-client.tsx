@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Crown, Shield, CheckCircle2, XCircle, Clock,
@@ -263,16 +263,53 @@ interface ProofDialogProps {
 }
 
 function ProofDialog({ submission, onClose }: ProofDialogProps) {
+  const [signedUrl, setSignedUrl] = useState<string | null>(null)
+  const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
+
+  // Auto-load the image whenever the dialog opens with a new submission
+  useEffect(() => {
+    if (!submission?.proofUrl) return
+    setSignedUrl(null)
+    setImgState('loading')
+    getProofSignedUrl(submission.proofUrl).then(url => {
+      if (url) { setSignedUrl(url) }
+      else setImgState('error')
+    })
+  }, [submission?.id])
+
   return (
     <Dialog open={!!submission} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-sm font-semibold">{submission?.taskTitle ?? ''}</DialogTitle>
         </DialogHeader>
         {submission && (
           <div className="space-y-3 mt-1">
             <p className="text-xs text-muted-foreground">{submission.challenge} · WK{submission.week} · {submission.submittedDate}</p>
-            <ProofViewer proofUrl={submission.proofUrl} />
+            <div className="relative w-full rounded-xl overflow-hidden bg-muted/30 border border-border flex items-center justify-center" style={{ minHeight: 280 }}>
+              {imgState === 'loading' && !signedUrl && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-xs">Loading proof…</span>
+                </div>
+              )}
+              {imgState === 'error' && (
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <ImageIcon className="w-8 h-8 opacity-40" />
+                  <p className="text-xs">Failed to load image</p>
+                </div>
+              )}
+              {signedUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={signedUrl}
+                  alt="Proof"
+                  className={cn('max-w-full max-h-[60vh] object-contain transition-opacity duration-300', imgState === 'loaded' ? 'opacity-100' : 'opacity-0')}
+                  onLoad={() => setImgState('loaded')}
+                  onError={() => setImgState('error')}
+                />
+              )}
+            </div>
             {submission.rejectionReason && (
               <p className="text-xs text-destructive">Rejection reason: {submission.rejectionReason}</p>
             )}
