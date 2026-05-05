@@ -127,29 +127,27 @@ Deno.serve(async (req: Request) => {
       ? `CLAIMED TIER: ${claimedTier.label} (${claimedTier.points} pts)\nTiers are MINIMUM thresholds. The member must prove they reached at least the "${claimedTier.label}" level. Achieving MORE than the minimum is perfectly valid — do NOT reject because a higher result could have earned a higher tier. Only reject if the proof clearly shows they fell BELOW this tier's minimum.`
       : `POINTS: ${taskPoints}`
 
-    const prevNote = prevCount > 0
+    const hasPrev = prevCount > 0
+    const prevNote = hasPrev
       ? `Images 2–${prevCount + 1} are this member's previous approved submissions for the SAME task (duplicate detection only).`
-      : 'No previous submissions to compare.'
+      : ''
 
     const prompt = `You are a strict but fair AI reviewer for a wellness challenge app. Your goal is to make a confident approve/reject decision on every submission to minimise human review.
 
 TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
 ${tierBlock}
 
-Image 1 is the current submission proof.
-${prevNote}
+Image 1 is the current submission proof.${prevNote ? `\n${prevNote}` : ''}
 
 APPROVE when ALL of the following are clearly true:
 • The photo genuinely shows completion of this specific task.
 • It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
-• It is meaningfully different from any previous submission images.
-${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
+${hasPrev ? '• It is meaningfully different from any previous submission images.\n' : ''}${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
 
 REJECT when ANY of the following are clearly true:
 • The photo has no obvious connection to the task.
 • It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
-• It is the same or near-identical photo as a previous submission.
-${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
+${hasPrev ? '• It is the same or near-identical photo as a previous submission.\n' : ''}${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
 
 LENIENCY RULES:
 • Blurry, casual, or low-quality real photos → approve if task completion is still evident.

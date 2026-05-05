@@ -67,6 +67,35 @@ class TaskService {
     final dateStr = submittedDate ??
         DateTime.now().toLocal().toString().split(' ')[0];
 
+    // If there's a rejected submission for the same task/date, UPDATE it in-place
+    // instead of inserting a new row. This keeps one row per (user, task, date).
+    final rejectedQuery = _client
+        .from('task_submissions')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('user_id', userId)
+        .eq('org_id', orgId)
+        .eq('submitted_date', dateStr)
+        .eq('status', 'rejected');
+    final existing = challengeId != null
+        ? await rejectedQuery.eq('challenge_id', challengeId).maybeSingle()
+        : await rejectedQuery.maybeSingle();
+
+    if (existing != null) {
+      await _client.from('task_submissions').update({
+        'submitted_at': DateTime.now().toUtc().toIso8601String(),
+        'status': 'pending',
+        'proof_url': fileName,
+        'rejection_reason': null,
+        'ai_status': null,
+        'ai_feedback': null,
+        'ai_confidence': null,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
+      }).eq('id', existing['id']);
+      return;
+    }
+
     try {
       await _client.from('task_submissions').insert({
         'task_id': taskId,
@@ -82,7 +111,6 @@ class TaskService {
       });
     } on PostgrestException catch (e) {
       if (e.code == '23505') {
-        // Unique constraint violation — already submitted today
         throw AlreadySubmittedTodayException();
       }
       rethrow;

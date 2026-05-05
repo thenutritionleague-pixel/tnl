@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Crown, Shield, CheckCircle2, XCircle, Clock,
-  SlidersHorizontal, Eye, Loader2, ImageIcon,
+  SlidersHorizontal, Eye, Loader2, ImageIcon, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -255,6 +255,34 @@ function ReviewModal({ submission, orgId, memberId, onClose, onDone }: ReviewMod
   )
 }
 
+// ── Proof-only Dialog ─────────────────────────────────────────────────────────
+
+interface ProofDialogProps {
+  submission: Submission | null
+  onClose: () => void
+}
+
+function ProofDialog({ submission, onClose }: ProofDialogProps) {
+  return (
+    <Dialog open={!!submission} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold">{submission?.taskTitle ?? ''}</DialogTitle>
+        </DialogHeader>
+        {submission && (
+          <div className="space-y-3 mt-1">
+            <p className="text-xs text-muted-foreground">{submission.challenge} · WK{submission.week} · {submission.submittedDate}</p>
+            <ProofViewer proofUrl={submission.proofUrl} />
+            {submission.rejectionReason && (
+              <p className="text-xs text-destructive">Rejection reason: {submission.rejectionReason}</p>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Main Client Component ─────────────────────────────────────────────────────
 
 interface Props {
@@ -266,7 +294,18 @@ interface Props {
 export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
   const [submissions, setSubmissions] = useState(member.submissions)
   const [reviewSub, setReviewSub] = useState<Submission | null>(null)
+  const [viewSub, setViewSub] = useState<Submission | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [adjustOpen, setAdjustOpen] = useState(false)
+
+  function toggleExpand(id: string) {
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const totalTasks = member.tasksCompleted + member.tasksRejected + member.tasksPending
   const approvalRate = totalTasks > 0 ? Math.round((member.tasksCompleted / totalTasks) * 100) : 0
@@ -289,6 +328,7 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
         onClose={() => setReviewSub(null)}
         onDone={handleReviewDone}
       />
+      <ProofDialog submission={viewSub} onClose={() => setViewSub(null)} />
       <AdjustPointsModal
         orgId={orgId}
         members={[adjustMember]}
@@ -390,39 +430,97 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
               <tbody className="divide-y divide-border">
                 {submissions.map(sub => {
                   const cfg = statusConfig[sub.status]
+                  const isExpanded = expandedRows.has(sub.id)
+                  const hasPrev = (sub.previousAttempts?.length ?? 0) > 0
                   return (
-                    <tr key={sub.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-5 py-3 font-medium text-foreground">{sub.taskTitle}</td>
-                      <td className="px-5 py-3 text-muted-foreground text-xs hidden sm:table-cell">{sub.challenge}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className="text-xs text-muted-foreground">WK{sub.week}</span>
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground text-xs hidden md:table-cell">{sub.submittedDate}</td>
-                      <td className="px-5 py-3">
-                        <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', cfg.className)}>
-                          {cfg.icon} {cfg.label}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        {sub.pointsAwarded > 0
-                          ? <span className="font-semibold text-foreground">🥦 {sub.pointsAwarded}</span>
-                          : <span className="text-muted-foreground/40 text-xs">—</span>
-                        }
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        {sub.status === 'pending' ? (
-                          <button
-                            type="button"
-                            onClick={() => setReviewSub(sub)}
-                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 text-xs h-7')}
-                          >
-                            <Eye className="w-3 h-3" /> Review
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground/30 text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={sub.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-5 py-3 font-medium text-foreground">
+                          <div className="flex items-center gap-1.5">
+                            {sub.taskTitle}
+                            {hasPrev && (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpand(sub.id)}
+                                className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+                                title="Show previous attempts"
+                              >
+                                <span className="bg-muted rounded px-1">{sub.previousAttempts.length} prev</span>
+                                {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-muted-foreground text-xs hidden sm:table-cell">{sub.challenge}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className="text-xs text-muted-foreground">WK{sub.week}</span>
+                        </td>
+                        <td className="px-5 py-3 text-muted-foreground text-xs hidden md:table-cell">{sub.submittedDate}</td>
+                        <td className="px-5 py-3">
+                          <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', cfg.className)}>
+                            {cfg.icon} {cfg.label}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          {sub.pointsAwarded > 0
+                            ? <span className="font-semibold text-foreground">🥦 {sub.pointsAwarded}</span>
+                            : <span className="text-muted-foreground/40 text-xs">—</span>
+                          }
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {sub.status === 'pending' && (
+                              <button
+                                type="button"
+                                onClick={() => setReviewSub(sub)}
+                                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 text-xs h-7')}
+                              >
+                                <Eye className="w-3 h-3" /> Review
+                              </button>
+                            )}
+                            {sub.proofUrl && sub.status !== 'pending' && (
+                              <button
+                                type="button"
+                                onClick={() => setViewSub(sub)}
+                                className="text-xs text-primary hover:underline"
+                              >
+                                View Proof
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {hasPrev && isExpanded && sub.previousAttempts.map(prev => {
+                        const pcfg = statusConfig[prev.status]
+                        return (
+                          <tr key={prev.id} className="bg-muted/20">
+                            <td className="px-5 py-2 text-xs text-muted-foreground pl-10">↳ Earlier attempt · {prev.submittedAt}</td>
+                            <td className="hidden sm:table-cell" />
+                            <td className="hidden" />
+                            <td className="hidden md:table-cell" />
+                            <td className="px-5 py-2">
+                              <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', pcfg.className)}>
+                                {pcfg.icon} {pcfg.label}
+                              </span>
+                            </td>
+                            <td className="px-5 py-2 text-right text-xs text-muted-foreground">
+                              {prev.pointsAwarded > 0 ? `🥦 ${prev.pointsAwarded}` : '—'}
+                            </td>
+                            <td className="px-5 py-2 text-right">
+                              {prev.proofUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => setViewSub({ ...sub, id: prev.id, status: prev.status, proofUrl: prev.proofUrl, rejectionReason: prev.rejectionReason, pointsAwarded: prev.pointsAwarded, previousAttempts: [] })}
+                                  className="text-xs text-primary hover:underline"
+                                >
+                                  View Proof
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </>
                   )
                 })}
               </tbody>

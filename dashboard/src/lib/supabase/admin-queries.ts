@@ -954,6 +954,14 @@ export interface MemberDetailAdmin {
     pointsAwarded: number
     proofUrl: string | null
     rejectionReason: string | null
+    previousAttempts: Array<{
+      id: string
+      status: 'pending' | 'approved' | 'rejected'
+      submittedAt: string
+      proofUrl: string | null
+      rejectionReason: string | null
+      pointsAwarded: number
+    }>
   }>
 }
 
@@ -987,12 +995,23 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
 
   const { data: submissions } = await client
     .from('task_submissions')
-    .select('id, task_id, challenge_id, status, submitted_date, points_awarded, proof_url, rejection_reason, tasks(title, start_week), challenges(name)')
+    .select('id, task_id, challenge_id, status, submitted_at, submitted_date, points_awarded, proof_url, rejection_reason, tasks(title, start_week), challenges(name)')
     .eq('user_id', memberId)
-    .order('submitted_date', { ascending: false })
+    .order('submitted_at', { ascending: false })
+
+  // Group by (task_id, challenge_id, submitted_date) — newest-first within each group.
+  // This collapses same-day resubmissions into one row with the rest as history.
+  const groupMap = new Map<string, any[]>()
+  for (const s of submissions ?? []) {
+    const key = `${s.task_id}::${s.challenge_id}::${s.submitted_date}`
+    const grp = groupMap.get(key)
+    if (grp) grp.push(s)
+    else groupMap.set(key, [s])
+  }
 
   let pending = 0, completed = 0, rejected = 0
-  const mappedSubmissions = (submissions ?? []).map((s: any) => {
+  const mappedSubmissions = Array.from(groupMap.values()).map(group => {
+    const s = group[0] // latest submission in this group
     if (s.status === 'pending') pending++
     if (s.status === 'approved') completed++
     if (s.status === 'rejected') rejected++
@@ -1009,6 +1028,14 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
       pointsAwarded: s.points_awarded ?? 0,
       proofUrl: s.proof_url ?? null,
       rejectionReason: s.rejection_reason ?? null,
+      previousAttempts: group.slice(1).map((p: any) => ({
+        id: p.id,
+        status: p.status as 'pending' | 'approved' | 'rejected',
+        submittedAt: new Date(p.submitted_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        proofUrl: p.proof_url ?? null,
+        rejectionReason: p.rejection_reason ?? null,
+        pointsAwarded: p.points_awarded ?? 0,
+      })),
     }
   })
 
