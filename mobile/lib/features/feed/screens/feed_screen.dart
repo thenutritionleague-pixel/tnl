@@ -61,7 +61,8 @@ class _FeedScreenState extends State<FeedScreen>
         });
         _subscribeRealtime(orgId);
       }
-    } catch (_) {
+    } catch (e) {
+      if (handleLoadError(e)) return;
       if (mounted) setState(() => _loading = false);
     }
   }

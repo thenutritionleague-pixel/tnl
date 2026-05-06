@@ -251,12 +251,19 @@ class LeaderboardService {
       final sub = t['task_submissions'] as Map?;
       final task = sub?['tasks'] as Map?;
       final subDate = sub?['submitted_date'] as String? ?? '';
-      final dateForWeek = subDate.isNotEmpty ? subDate : createdAt;
+
+      // Extract the actual missed date from the reason string:
+      // "Task missed: Title (2026-05-05)" — this is the correct date, not created_at
+      // (created_at is the day after, when the cron ran at 00:05 UTC)
+      final reason = t['reason'] as String? ?? '';
+      final dateMatch = RegExp(r'\((\d{4}-\d{2}-\d{2})\)\s*$').firstMatch(reason);
+      final missedDate = dateMatch?.group(1) ?? '';
+
+      final displayDate = subDate.isNotEmpty ? subDate : (missedDate.isNotEmpty ? missedDate : createdAt);
+      final dateForWeek = displayDate;
 
       String title = task?['title'] as String? ?? '';
       if (title.isEmpty) {
-        // Fall back: parse "Task missed: Meal Photo (2026-04-15)" → "Meal Photo"
-        final reason = t['reason'] as String? ?? '';
         title = reason
             .replaceFirst(RegExp(r'^Task missed:\s*', caseSensitive: false), '')
             .replaceAll(RegExp(r'\s*\(\d{4}-\d{2}-\d{2}\)\s*$'), '')
@@ -269,7 +276,7 @@ class LeaderboardService {
       grouped.putIfAbsent(week, () => []).add({
         'title': title,
         'icon': icon,
-        'date': fmtDate(subDate.isNotEmpty ? subDate : createdAt),
+        'date': fmtDate(displayDate),
         'status': 'missed',
         'points': basePts, // base task points (not earned — earned stays 0 for missed)
       });

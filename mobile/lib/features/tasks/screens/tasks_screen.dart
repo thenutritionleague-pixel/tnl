@@ -18,6 +18,7 @@ class TasksScreen extends StatefulWidget {
 class _TasksScreenState extends State<TasksScreen>
     with SessionAwareMixin {
   bool _loading = true;
+  bool _loadError = false;
   List<Map<String, dynamic>> _tasks = [];
   List<Map<String, dynamic>> _submissions = [];
   String? _profileId;
@@ -51,6 +52,7 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() { _loading = true; _loadError = false; });
     final authId = Supabase.instance.client.auth.currentUser?.id;
     if (authId == null) {
       if (mounted) setState(() => _loading = false);
@@ -75,11 +77,13 @@ class _TasksScreenState extends State<TasksScreen>
           _tasks = tasks;
           _submissions = subs;
           _loading = false;
+          _loadError = false;
         });
       }
     } catch (e) {
       debugPrint('TASKS_LOAD_ERROR: $e');
-      if (mounted) setState(() => _loading = false);
+      if (handleLoadError(e)) return;
+      if (mounted) setState(() { _loading = false; _loadError = true; });
     }
   }
 
@@ -249,7 +253,26 @@ class _TasksScreenState extends State<TasksScreen>
             ),
 
             // ── Task list ────────────────────────────────────────────
-            if (_tasks.isEmpty)
+            if (_loadError)
+              SliverFillRemaining(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('😕', style: TextStyle(fontSize: 48)),
+                      const SizedBox(height: 12),
+                      Text('Could not load tasks.',
+                          style: TextStyle(color: context.textSecondary, fontSize: 16)),
+                      const SizedBox(height: 16),
+                      TextButton(
+                        onPressed: _load,
+                        child: const Text('Tap to retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else if (_tasks.isEmpty)
               SliverFillRemaining(
                 child: Center(
                   child: Column(

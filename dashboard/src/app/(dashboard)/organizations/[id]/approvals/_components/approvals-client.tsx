@@ -229,6 +229,27 @@ function SubmissionHistory({ submissions }: { submissions?: PreviousSubmission[]
 
 const inputCls = 'w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40'
 
+type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all'
+
+const STATUS_TABS: { value: StatusFilter; label: string }[] = [
+  { value: 'all',      label: 'All'      },
+  { value: 'pending',  label: 'Pending'  },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+]
+
+function fmtShortDate(dateStr: string): string {
+  if (!dateStr) return ''
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function StatusBadge({ status }: { status: OrgApproval['status'] }) {
+  if (status === 'approved') return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Approved</span>
+  if (status === 'rejected') return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-600">Rejected</span>
+  return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Pending</span>
+}
+
 interface Props {
   orgId: string
   initialApprovals: OrgApproval[]
@@ -236,17 +257,17 @@ interface Props {
 }
 
 export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Props) {
-  const [approvals, setApprovals]         = useState<OrgApproval[]>(initialApprovals)
-  const [hasMore, setHasMore]             = useState(initialHasMore)
-  const [loadingMore, setLoadingMore]     = useState(false)
-  const [currentPage, setCurrentPage]     = useState(0)
-  const [reviewTarget, setReviewTarget]   = useState<OrgApproval | null>(null)
-  const [adminNotes, setAdminNotes]       = useState('')
+  const [approvals, setApprovals]       = useState<OrgApproval[]>(initialApprovals)
+  const [hasMore, setHasMore]           = useState(initialHasMore)
+  const [loading, setLoading]           = useState(false)
+  const [currentPage, setCurrentPage]   = useState(0)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [reviewTarget, setReviewTarget] = useState<OrgApproval | null>(null)
+  const [adminNotes, setAdminNotes]     = useState('')
   const [pointsOverride, setPointsOverride] = useState('')
-  const [showReviewed, setShowReviewed]   = useState(true)
-  const [submitting, setSubmitting]       = useState(false)
+  const [submitting, setSubmitting]     = useState(false)
 
-  // Filters
+  // Client-side filters (applied within the current page)
   const [search, setSearch]         = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
@@ -256,20 +277,22 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
     [approvals]
   )
 
-  async function loadMore() {
-    setLoadingMore(true)
-    const nextPage = currentPage + 1
-    const res = await loadApprovalsPage(orgId, nextPage)
+  async function loadPage(page: number, status: StatusFilter) {
+    setLoading(true)
+    const s = status === 'all' ? undefined : status
+    const res = await loadApprovalsPage(orgId, page, s)
     if (res) {
-      setApprovals(prev => {
-        const existingIds = new Set(prev.map(a => a.id))
-        const fresh = res.approvals.filter(a => !existingIds.has(a.id))
-        return [...prev, ...fresh]
-      })
+      setApprovals(res.approvals)
       setHasMore(res.hasMore)
-      setCurrentPage(nextPage)
+      setCurrentPage(page)
     }
-    setLoadingMore(false)
+    setLoading(false)
+  }
+
+  function handleStatusChange(s: StatusFilter) {
+    setStatusFilter(s)
+    setSearch(''); setTeamFilter('all'); setDateFilter('')
+    loadPage(0, s)
   }
 
   const modalScrollRef = useRef<HTMLDivElement>(null)
@@ -333,25 +356,19 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
     setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...update } : prev)
   }
 
-  function applyFilters(list: OrgApproval[]) {
-    return list.filter(a => {
-      if (search && !a.member.toLowerCase().includes(search.toLowerCase())) return false
-      if (teamFilter !== 'all' && a.teamName !== teamFilter) return false
-      if (dateFilter && a.submittedDate !== dateFilter) return false
-      return true
-    })
-  }
+  const filtered = useMemo(() => approvals.filter(a => {
+    if (search && !a.member.toLowerCase().includes(search.toLowerCase())) return false
+    if (teamFilter !== 'all' && a.teamName !== teamFilter) return false
+    if (dateFilter && a.submittedDate !== dateFilter) return false
+    return true
+  }), [approvals, search, teamFilter, dateFilter])
 
-  const allPending  = approvals.filter(a => a.status === 'pending')
-  const allReviewed = approvals.filter(a => a.status !== 'pending')
-  const pending  = applyFilters(allPending)
-  const reviewed = applyFilters(allReviewed)
   const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter)
+  const pendingCount = statusFilter === 'pending' ? approvals.length : 0
 
   function openReview(a: OrgApproval) {
     setReviewTarget(a)
     setAdminNotes('')
-    // Pre-fill points override with the claimed tier's points if tiered
     if (a.taskPointsTiers && a.selectedTierIndex != null && a.taskPointsTiers[a.selectedTierIndex]) {
       setPointsOverride(String(a.taskPointsTiers[a.selectedTierIndex].points))
     } else {
@@ -374,10 +391,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
       toast.error(result.error)
     } else {
       toast.success('Submission approved.')
-      setApprovals(prev => prev.map(a => a.id === reviewTarget.id
-        ? { ...a, status: 'approved' as const, pointsAwarded: pts ?? a.taskPoints }
-        : a
-      ))
+      setApprovals(prev => prev.filter(a => a.id !== reviewTarget.id))
       closeReview()
     }
     setSubmitting(false)
@@ -391,10 +405,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
       toast.error(result.error)
     } else {
       toast.success('Submission rejected.')
-      setApprovals(prev => prev.map(a => a.id === reviewTarget.id
-        ? { ...a, status: 'rejected' as const, rejectionReason: adminNotes || null }
-        : a
-      ))
+      setApprovals(prev => prev.filter(a => a.id !== reviewTarget.id))
       closeReview()
     }
     setSubmitting(false)
@@ -408,27 +419,25 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
       toast.error(result.error)
     } else {
       toast.success('Approval revoked.')
-      setApprovals(prev => prev.map(a => a.id === reviewTarget.id
-        ? { ...a, status: 'rejected' as const, rejectionReason: adminNotes || 'Approval revoked.' }
-        : a
-      ))
+      setApprovals(prev => prev.filter(a => a.id !== reviewTarget.id))
       closeReview()
     }
     setSubmitting(false)
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-heading text-2xl text-foreground">Approvals</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {allPending.length} pending · {allReviewed.length} reviewed
+            {statusFilter === 'pending' ? `${approvals.length} pending` : `${approvals.length} ${statusFilter === 'all' ? 'total' : statusFilter}`} on this page
           </p>
         </div>
         <button
           onClick={runAiChecks}
-          disabled={aiChecking || allPending.length === 0}
+          disabled={aiChecking || statusFilter !== 'pending' || approvals.length === 0}
           className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0 gap-1.5 border-primary/40 text-primary hover:bg-primary/5 disabled:opacity-50')}
         >
           {aiChecking
@@ -438,117 +447,147 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
         </button>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          <input type="text" placeholder="Search by member name…" value={search} onChange={e => setSearch(e.target.value)} className={cn(inputCls, 'pl-8')} />
-        </div>
-        <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)} className={cn(inputCls, 'sm:w-44')}>
-          <option value="all">All Teams</option>
-          {teams.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <DatePicker value={dateFilter} onChange={setDateFilter} placeholder="Filter by date" />
-        {hasActiveFilter && (
-          <button onClick={() => { setSearch(''); setTeamFilter('all'); setDateFilter('') }} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'shrink-0 text-muted-foreground')}>
-            <X className="w-3.5 h-3.5 mr-1" /> Clear
-          </button>
-        )}
-      </div>
-
-      {/* Pending */}
-      {pending.length === 0 ? (
-        <div className="bg-card border border-border rounded-xl p-10 text-center">
-          <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-          <p className="font-medium text-foreground">{hasActiveFilter ? 'No matching pending submissions.' : 'All caught up!'}</p>
-          <p className="text-sm text-muted-foreground mt-1">{hasActiveFilter ? 'Try adjusting your filters.' : 'No pending submissions to review.'}</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <h2 className="font-semibold text-foreground">Pending ({pending.length})</h2>
-          {pending.map(a => (
-            <div key={a.id} className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-4">
-              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">
-                {a.member.charAt(0)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground">
-                  {a.member}<span className="text-muted-foreground font-normal"> · {a.teamName}</span>
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">&ldquo;{a.taskTitle}&rdquo; · {a.taskPointsTiers && a.taskPointsTiers.length > 0 ? `${a.taskPointsTiers[0].points}–${a.taskPointsTiers[a.taskPointsTiers.length - 1].points}` : a.taskPoints} 🥦 pts · {a.submittedAt}</p>
-                <div className="mt-1.5">
-                  {a.aiStatus === 'analyzing' && (
-                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Loader2 className="w-3 h-3 animate-spin" /> AI analyzing…
-                    </span>
-                  )}
-                  {a.aiStatus === 'needs_review' && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/40 rounded-full px-2 py-0.5">
-                      ⚠ AI: Needs Review
-                    </span>
-                  )}
-                  {a.aiStatus === 'approved' && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 rounded-full px-2 py-0.5">
-                      ✓ AI Approved
-                    </span>
-                  )}
-                  {a.aiStatus === 'rejected' && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 dark:bg-red-950/40 rounded-full px-2 py-0.5">
-                      ✗ AI Rejected
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button onClick={() => openReview(a)} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0 gap-1.5')}>
-                <ImageIcon className="w-3.5 h-3.5" /> Review Submission
-              </button>
-            </div>
+      {/* Status tabs + filters row */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        {/* Status tabs */}
+        <div className="flex items-center bg-muted rounded-xl p-1 gap-0.5 shrink-0">
+          {STATUS_TABS.map(tab => (
+            <button
+              key={tab.value}
+              onClick={() => handleStatusChange(tab.value)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                statusFilter === tab.value
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {tab.value === 'pending' && pendingCount > 0 ? `Pending (${pendingCount})` : tab.label}
+            </button>
           ))}
         </div>
-      )}
 
-      {/* Reviewed */}
-      {allReviewed.length > 0 && (
-        <div className="space-y-3">
-          <button onClick={() => setShowReviewed(v => !v)} className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors">
-            {showReviewed ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            Recently Reviewed ({reviewed.length}{hasActiveFilter && reviewed.length !== allReviewed.length ? ` of ${allReviewed.length}` : ''})
-          </button>
-          {showReviewed && (
-            reviewed.length === 0
-              ? <p className="text-sm text-muted-foreground py-2">No reviewed submissions match your filters.</p>
-              : reviewed.map(a => (
-                <div key={a.id} className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-4 opacity-70">
-                  <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground shrink-0">
-                    {a.member.charAt(0)}
+        {/* Filters */}
+        <div className="flex flex-1 gap-2 flex-wrap sm:flex-nowrap">
+          <div className="relative flex-1 min-w-40">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <input type="text" placeholder="Search member…" value={search} onChange={e => setSearch(e.target.value)} className={cn(inputCls, 'pl-8')} />
+          </div>
+          <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)} className={cn(inputCls, 'sm:w-40')}>
+            <option value="all">All Teams</option>
+            {teams.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <DatePicker value={dateFilter} onChange={setDateFilter} placeholder="Filter by date" />
+          {hasActiveFilter && (
+            <button onClick={() => { setSearch(''); setTeamFilter('all'); setDateFilter('') }} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'shrink-0 text-muted-foreground px-2')}>
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-card border border-border rounded-xl p-12 text-center">
+          <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
+          <p className="font-medium text-foreground">
+            {hasActiveFilter ? 'No matching submissions.' : statusFilter === 'pending' ? 'All caught up!' : `No ${statusFilter} submissions.`}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {hasActiveFilter ? 'Try adjusting your filters.' : statusFilter === 'pending' ? 'No pending submissions to review.' : ''}
+          </p>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          {/* Table header */}
+          <div className="grid text-xs font-semibold text-muted-foreground uppercase tracking-wide bg-muted/40 border-b border-border px-4 py-2.5"
+            style={{ gridTemplateColumns: '2fr 3fr 110px 110px 80px' }}>
+            <div>Member</div>
+            <div>Task</div>
+            <div>Date</div>
+            <div>Status</div>
+            <div />
+          </div>
+
+          {/* Rows */}
+          <div className="divide-y divide-border">
+            {filtered.map(a => (
+              <div key={a.id}
+                className="grid items-center px-4 py-3 hover:bg-muted/30 transition-colors"
+                style={{ gridTemplateColumns: '2fr 3fr 110px 110px 80px' }}
+              >
+                {/* Member */}
+                <div className="flex items-center gap-3 min-w-0 pr-3">
+                  <div className={cn(
+                    'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0',
+                    a.status === 'pending' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  )}>
+                    {a.member.charAt(0).toUpperCase()}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground">{a.member}<span className="text-muted-foreground font-normal"> · {a.teamName}</span></p>
-                    <p className="text-xs text-muted-foreground mt-0.5">&ldquo;{a.taskTitle}&rdquo; · {a.submittedAt}</p>
-                    {a.rejectionReason && <p className="text-xs text-destructive mt-1">Reason: {a.rejectionReason}</p>}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <button onClick={() => openReview(a)} className="text-xs text-primary hover:underline whitespace-nowrap">Review Submission</button>
-                    <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full capitalize', a.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600')}>
-                      {a.status}
-                    </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{a.member}</p>
+                    <p className="text-xs text-muted-foreground truncate">{a.teamName}</p>
                   </div>
                 </div>
-              ))
-          )}
+
+                {/* Task */}
+                <div className="min-w-0 pr-3">
+                  <p className="text-sm text-foreground truncate">{a.taskTitle}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {a.taskPointsTiers && a.taskPointsTiers.length > 0
+                      ? `${a.taskPointsTiers[0].points}–${a.taskPointsTiers[a.taskPointsTiers.length - 1].points}`
+                      : a.taskPoints} 🥦 pts
+                  </p>
+                </div>
+
+                {/* Date */}
+                <div>
+                  <p className="text-xs font-medium text-foreground">{fmtShortDate(a.submittedDate)}</p>
+                  <p className="text-xs text-muted-foreground">{a.submittedAt}</p>
+                </div>
+
+                {/* Status */}
+                <div><StatusBadge status={a.status} /></div>
+
+                {/* Action */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => openReview(a)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5')}
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" /> Review
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Load More */}
-      {hasMore && (
-        <div className="flex justify-center pt-2">
-          <button
-            onClick={loadMore}
-            disabled={loadingMore}
-            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5 text-muted-foreground')}
-          >
-            {loadingMore ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</> : 'Load more submissions'}
-          </button>
+      {/* Pagination */}
+      {(currentPage > 0 || hasMore) && !loading && !hasActiveFilter && (
+        <div className="flex items-center justify-between pt-1">
+          <p className="text-xs text-muted-foreground">Page {currentPage + 1}</p>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={currentPage === 0}
+              onClick={() => loadPage(currentPage - 1, statusFilter)}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
+            >
+              <ChevronLeft className="w-3.5 h-3.5" /> Prev
+            </button>
+            <button
+              disabled={!hasMore}
+              onClick={() => loadPage(currentPage + 1, statusFilter)}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
+            >
+              Next <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

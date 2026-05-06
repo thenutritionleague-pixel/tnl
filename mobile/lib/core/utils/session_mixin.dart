@@ -9,11 +9,20 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 ///   - Silent API failures leaving `_loading = true` forever
 ///
 /// Usage:
-///   class _MyScreenState extends State<MyScreen> with _SessionAwareMixin {
+///   class _MyScreenState extends State<MyScreen> with SessionAwareMixin {
 ///     @override
 ///     void initState() {
 ///       super.initState();
 ///       waitForSession(then: _load);
+///     }
+///
+///     Future<void> _load() async {
+///       try {
+///         ...
+///       } catch (e) {
+///         if (handleLoadError(e)) return; // auth error → auto sign-out
+///         if (mounted) setState(() => _loadError = true);
+///       }
 ///     }
 ///   }
 mixin SessionAwareMixin<T extends StatefulWidget> on State<T> {
@@ -68,6 +77,43 @@ mixin SessionAwareMixin<T extends StatefulWidget> on State<T> {
         }
       }
     });
+  }
+
+  /// Call from every _load() catch block.
+  ///
+  /// Returns true if [error] was an auth/session error — in that case the user
+  /// is automatically signed out and sent to /login so they get a fresh token.
+  /// Returns false for any other error, letting the caller show its own error UI.
+  bool handleLoadError(Object error) {
+    if (!_isAuthError(error)) return false;
+    debugPrint('AUTH_ERROR_AUTO_SIGNOUT: $error');
+    if (!mounted) return true;
+    Supabase.instance.client.auth.signOut().then((_) {
+      if (mounted) context.go('/login');
+    });
+    return true;
+  }
+
+  /// Detects auth/session errors from Supabase.
+  static bool _isAuthError(Object error) {
+    if (error is AuthException) return true;
+    if (error is PostgrestException) {
+      final code = error.code ?? '';
+      final msg = error.message.toLowerCase();
+      // 401 = unauthorized, 403 = forbidden
+      if (code == '401' || code == '403') return true;
+      // JWT-related error messages
+      if (msg.contains('jwt') || msg.contains('invalid_jwt') ||
+          msg.contains('token is expired') || msg.contains('not authenticated') ||
+          msg.contains('session') || msg.contains('no api key')) return true;
+    }
+    // Catch-all: error string inspection
+    final str = error.toString().toLowerCase();
+    if (str.contains('jwt expired') || str.contains('invalid_jwt') ||
+        str.contains('not authenticated') || str.contains('refresh_token_not_found')) {
+      return true;
+    }
+    return false;
   }
 
   bool _isExpiringSoon(Session session) {

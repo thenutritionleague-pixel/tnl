@@ -87,11 +87,11 @@ export async function rejectSubmission(
   return { success: true }
 }
 
-export async function loadApprovalsPage(orgId: string, page: number) {
+export async function loadApprovalsPage(orgId: string, page: number, status?: 'pending' | 'approved' | 'rejected') {
   const profile = await getAdminProfile()
   if (!profile) return null
   const { getOrgApprovals } = await import('@/lib/supabase/admin-queries')
-  return getOrgApprovals(orgId, page)
+  return getOrgApprovals(orgId, page, status)
 }
 
 export async function getProofSignedUrl(path: string): Promise<string | null> {

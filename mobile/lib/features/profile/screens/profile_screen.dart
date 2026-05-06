@@ -70,7 +70,8 @@ class _ProfileScreenState extends State<ProfileScreen>
           if (mounted) _pointsController.forward(from: 0);
         });
       }
-    } catch (_) {
+    } catch (e) {
+      if (handleLoadError(e)) return;
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -288,11 +289,20 @@ class _ProfileScreenState extends State<ProfileScreen>
 
                     final submission = h['task_submissions'] as Map?;
                     final taskName = (submission?['tasks'] as Map?)?['title'] as String?;
-                    final submittedAt = submission?['submitted_at'] as String?;
+                    final submittedDate = submission?['submitted_date'] as String?;
 
                     final isMissed = amount == 0 && reason.toLowerCase().startsWith('task missed');
                     final label = taskName ?? _formatReason(reason);
-                    final date = _formatDate(submittedAt ?? h['created_at'] as String? ?? '');
+
+                    // For missed entries, extract the date from the reason string
+                    // "Task missed: Title (2026-05-05)" — more accurate than created_at
+                    // which is the day the pg_cron job ran (always one day later)
+                    String? missedDate;
+                    if (isMissed) {
+                      final m = RegExp(r'\((\d{4}-\d{2}-\d{2})\)\s*$').firstMatch(reason);
+                      missedDate = m?.group(1);
+                    }
+                    final date = _formatDate(submittedDate ?? missedDate ?? h['created_at'] as String? ?? '');
 
                     final String iconEmoji;
                     final Color iconBg;

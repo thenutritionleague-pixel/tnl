@@ -67,7 +67,7 @@ class ProfileService {
         .select('''
           id, amount, reason, is_manual, created_at,
           task_submissions(
-            submitted_at,
+            submitted_date,
             tasks(title)
           )
         ''')

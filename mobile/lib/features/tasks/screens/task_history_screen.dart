@@ -54,6 +54,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
       }
     } catch (e) {
       debugPrint('TASK_HISTORY_LOAD_ERROR: $e');
+      if (handleLoadError(e)) return;
       if (mounted) setState(() => _loading = false);
     }
   }

@@ -218,9 +218,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                                 <p className="text-sm text-foreground">{task.taskTitle}</p>
                               </div>
                               <div className="flex items-center gap-3">
-                                <p className="text-xs text-muted-foreground">
-                                  {task.daysCompleted} days × {task.pointsPerDay} pts
-                                </p>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <p className="text-xs text-muted-foreground">
+                                    {task.daysCompleted} / {task.daysEligible} days · {task.pointsPerDay} pts/day
+                                  </p>
+                                  {task.daysMissed > 0 && (
+                                    <p className="text-xs font-medium text-red-500">
+                                      {task.daysMissed} day{task.daysMissed !== 1 ? 's' : ''} missed
+                                    </p>
+                                  )}
+                                </div>
                                 <p className="text-xs font-semibold text-foreground w-12 text-right">
                                   {task.subtotal} pts
                                 </p>

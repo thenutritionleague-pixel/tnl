@@ -134,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } catch (e) {
       debugPrint('HOME_LOAD_ERROR: $e');
+      if (handleLoadError(e)) return;
       if (mounted) setState(() => _loading = false);
     }
   }

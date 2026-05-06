@@ -87,6 +87,8 @@ export interface TaskBreakdownUI {
   taskTitle: string
   icon: string
   daysCompleted: number
+  daysEligible: number
+  daysMissed: number
   pointsPerDay: number
   subtotal: number
 }
@@ -675,26 +677,44 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     let total = 0
 
     if (challenge) {
-      const { data: subs } = await supabase
-        .from('task_submissions')
-        .select('submitted_at, status, points_awarded, tasks(id, title, icon, points, category)')
-        .eq('user_id', profile.id)
-        .eq('challenge_id', challenge.id)
-        .eq('status', 'approved')
+      const [subsRes, challengeTasksRes] = await Promise.all([
+        supabase
+          .from('task_submissions')
+          .select('submitted_at, status, points_awarded, tasks(id, title, icon, points, start_date, end_date, category)')
+          .eq('user_id', profile.id)
+          .eq('challenge_id', challenge.id)
+          .eq('status', 'approved'),
+        supabase
+          .from('tasks')
+          .select('id, title, icon, points, start_date, end_date')
+          .eq('challenge_id', challenge.id)
+          .eq('is_active', true),
+      ])
 
       type SubRaw = {
         submitted_at: string
         status: string
         points_awarded: number | null
-        tasks: { id: string; title: string; icon: string; points: number; category: string } | null
+        tasks: { id: string; title: string; icon: string; points: number; start_date: string | null; end_date: string | null; category: string } | null
       }
+      type ChallengeTaskRaw = { id: string; title: string; icon: string; points: number; start_date: string | null; end_date: string | null }
 
       const startDate = new Date(challenge.start_date)
+      const todayMidnight = new Date()
+      todayMidnight.setHours(0, 0, 0, 0)
 
-      // Group by week
-      const weekMap: Record<number, Record<string, { daysCompleted: number; pointsPerDay: number; icon: string }>> = {}
+      function eligibleDays(startStr: string, endStr: string): number {
+        const start = new Date(startStr)
+        const end = new Date(endStr)
+        const effective = end < todayMidnight ? end : todayMidnight
+        if (effective < start) return 0
+        return Math.floor((effective.getTime() - start.getTime()) / 86400000) + 1
+      }
 
-      for (const s of (subs ?? []) as unknown as SubRaw[]) {
+      // Group approved submissions by week
+      const weekMap: Record<number, Record<string, { daysCompleted: number; pointsPerDay: number; icon: string; daysEligible: number }>> = {}
+
+      for (const s of (subsRes.data ?? []) as unknown as SubRaw[]) {
         if (!s.tasks) continue
         const pts = s.points_awarded ?? s.tasks.points
         const subDate = new Date(s.submitted_at)
@@ -703,10 +723,27 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         if (!weekMap[week]) weekMap[week] = {}
         const key = s.tasks.title
         if (!weekMap[week][key]) {
-          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, icon: s.tasks.icon }
+          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, icon: s.tasks.icon, daysEligible: 0 }
         }
         weekMap[week][key].daysCompleted++
         total += pts
+      }
+
+      // Merge all active challenge tasks (adds tasks with 0 completions + fills daysEligible)
+      for (const ct of (challengeTasksRes.data ?? []) as unknown as ChallengeTaskRaw[]) {
+        if (!ct.start_date || !ct.end_date) continue
+        const eligible = eligibleDays(ct.start_date, ct.end_date)
+        if (eligible === 0) continue
+        const diffDays = Math.floor(
+          (new Date(ct.start_date).getTime() - startDate.getTime()) / 86400000
+        )
+        const week = Math.floor(diffDays / 7) + 1
+        if (!weekMap[week]) weekMap[week] = {}
+        if (!weekMap[week][ct.title]) {
+          weekMap[week][ct.title] = { daysCompleted: 0, pointsPerDay: ct.points, icon: ct.icon, daysEligible: eligible }
+        } else {
+          weekMap[week][ct.title].daysEligible = eligible
+        }
       }
 
       weekPoints = Object.entries(weekMap)
@@ -718,6 +755,8 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
             taskTitle: title,
             icon: t.icon,
             daysCompleted: t.daysCompleted,
+            daysEligible: t.daysEligible,
+            daysMissed: Math.max(0, t.daysEligible - t.daysCompleted),
             pointsPerDay: t.pointsPerDay,
             subtotal: t.daysCompleted * t.pointsPerDay,
           })),

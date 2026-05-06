@@ -110,25 +110,33 @@ function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWee
               )
             })}
 
-            {isExpanded && !isPastWeek && wk.entries.map((entry, i) => {
-              const s = statusStyle[entry.status]
-              return (
-                <div key={i} className={cn('flex items-center justify-between px-5 py-2 border-t border-border/40', s.bg)}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm shrink-0">{entry.taskIcon}</span>
-                    <span className="text-sm shrink-0">{s.icon}</span>
-                    <p className="text-sm text-foreground truncate">{entry.taskTitle}</p>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0 ml-2">
-                    <p className="text-xs text-muted-foreground">{entry.date}</p>
-                    {entry.status === 'approved'
-                      ? <p className={cn('text-xs w-14 text-right', s.pts)}>+{entry.points} pts</p>
-                      : <p className={cn('text-xs w-14 text-right', s.pts)}>{s.label}</p>
-                    }
-                  </div>
-                </div>
+            {isExpanded && !isPastWeek && (() => {
+              // If a task+date has an approved entry, hide rejected entries for that same slot
+              const approvedKeys = new Set(
+                wk.entries.filter(e => e.status === 'approved').map(e => `${e.taskTitle}|${e.date}`)
               )
-            })}
+              return wk.entries
+                .filter(e => !(e.status === 'rejected' && approvedKeys.has(`${e.taskTitle}|${e.date}`)))
+                .map((entry, i) => {
+                  const s = statusStyle[entry.status]
+                  return (
+                    <div key={i} className={cn('flex items-center justify-between px-5 py-2 border-t border-border/40', s.bg)}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm shrink-0">{entry.taskIcon}</span>
+                        <span className="text-sm shrink-0">{s.icon}</span>
+                        <p className="text-sm text-foreground truncate">{entry.taskTitle}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0 ml-2">
+                        <p className="text-xs text-muted-foreground">{entry.date}</p>
+                        {entry.status === 'approved'
+                          ? <p className={cn('text-xs w-14 text-right', s.pts)}>+{entry.points} pts</p>
+                          : <p className={cn('text-xs w-14 text-right', s.pts)}>{s.label}</p>
+                        }
+                      </div>
+                    </div>
+                  )
+                })
+            })()}
           </div>
         )
       })}

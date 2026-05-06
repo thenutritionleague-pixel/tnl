@@ -604,19 +604,23 @@ export interface OrgApproval {
 
 const APPROVALS_PAGE_SIZE = 50
 
-export async function getOrgApprovals(orgId: string, page = 0): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
+export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected'): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
   const client = await createAdminClient()
   const from = page * APPROVALS_PAGE_SIZE
   const to   = from + APPROVALS_PAGE_SIZE - 1
 
+  let subsQuery = client
+    .from('task_submissions')
+    .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
+    .eq('org_id', orgId)
+  if (status) subsQuery = subsQuery.eq('status', status)
+  subsQuery = subsQuery
+    .order('submitted_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(from, to + 1)
+
   const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
-    client
-      .from('task_submissions')
-      .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
-      .eq('org_id', orgId)
-      .order('submitted_at', { ascending: false })
-      .order('id', { ascending: false }) // stable tiebreaker prevents duplicate rows across pages
-      .range(from, to + 1), // fetch one extra to detect hasMore
+    subsQuery,
     client
       .from('team_members')
       .select('user_id, teams!team_id(name)')

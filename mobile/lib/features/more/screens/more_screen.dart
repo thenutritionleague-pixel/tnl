@@ -47,7 +47,9 @@ class _MoreScreenState extends State<MoreScreen>
           _loaded = true;
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      handleLoadError(e);
+    }
   }
 
   bool _isCaptainOrVC() {

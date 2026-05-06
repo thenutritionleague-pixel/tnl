@@ -28,6 +28,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 
   // ── Data ──────────────────────────────────────────────────────────────────
   bool _loading = true;
+  bool _loadError = false;
   int _selectedTab = 0;
   List<Map<String, dynamic>> _teams = [];
   String? _myProfileId;
@@ -71,6 +72,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
 
   // ── Load top-level data ───────────────────────────────────────────────────
   Future<void> _load() async {
+    if (mounted) setState(() { _loading = true; _loadError = false; });
     _teamMembersCache.clear();
     _breakdownCache.clear();
     final authId = Supabase.instance.client.auth.currentUser?.id;
@@ -130,8 +132,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           _loadTeamMembers(myTeamId);
         }
       }
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      debugPrint('LEADERBOARD_LOAD_ERROR: $e');
+      if (handleLoadError(e)) return;
+      if (mounted) setState(() { _loading = false; _loadError = true; });
     }
   }
 
@@ -198,12 +202,26 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   child: _loading
                       ? const Center(
                           child: CircularProgressIndicator(color: AppColors.primary))
-                      : SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          child: _selectedTab == 0
-                              ? _buildTeamTab()
-                              : _buildMemberTab(),
-                        ),
+                      : _loadError
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text('😕', style: TextStyle(fontSize: 48)),
+                                  const SizedBox(height: 12),
+                                  Text('Could not load leaderboard.',
+                                      style: TextStyle(color: context.textSecondary, fontSize: 16)),
+                                  const SizedBox(height: 16),
+                                  TextButton(onPressed: _load, child: const Text('Tap to retry')),
+                                ],
+                              ),
+                            )
+                          : SingleChildScrollView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              child: _selectedTab == 0
+                                  ? _buildTeamTab()
+                                  : _buildMemberTab(),
+                            ),
                 ),
               ),
             ],
