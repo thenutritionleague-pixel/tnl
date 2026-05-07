@@ -985,20 +985,15 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     .eq('user_id', memberId)
     .maybeSingle()
 
-  // To find rank, sort everyone in the org. In a real highly-scaled app, we'd cache this.
-  const { data: allPoints } = await client
-    .from('task_submissions')
-    .select('user_id, points_awarded')
+  // Rank by total_points (includes manual adjustments, not just task submissions)
+  const { data: allProfiles } = await client
+    .from('profiles')
+    .select('id, total_points')
     .eq('org_id', orgId)
-    .eq('status', 'approved')
 
-  const userPts: Record<string, number> = {}
-  for (const p of allPoints ?? []) {
-    userPts[p.user_id] = (userPts[p.user_id] ?? 0) + (p.points_awarded ?? 0)
-  }
-  const orderedUserIds = Object.keys(userPts).sort((a, b) => userPts[b] - userPts[a])
-  let rank = orderedUserIds.indexOf(memberId) + 1
-  if (rank === 0) rank = orderedUserIds.length + 1 // if no points, they are at the bottom
+  const orderedProfiles = (allProfiles ?? []).sort((a, b) => (b.total_points ?? 0) - (a.total_points ?? 0))
+  let rank = orderedProfiles.findIndex(p => p.id === memberId) + 1
+  if (rank === 0) rank = orderedProfiles.length + 1
 
   const { data: submissions } = await client
     .from('task_submissions')
@@ -1054,7 +1049,7 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     email: profile.email ?? '—',
     team: teamInfo?.name ?? 'Unassigned',
     role: teamMember?.role as MemberDetailAdmin['role'] ?? 'member',
-    totalPoints: userPts[memberId] ?? 0,
+    totalPoints: profile.total_points ?? 0,
     rank,
     joinedAt: fmtDate(profile.created_at),
     avatarColor: profile.avatar_color ?? '#94a3b8',

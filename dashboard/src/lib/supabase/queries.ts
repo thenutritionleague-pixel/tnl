@@ -654,7 +654,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
   // Active challenge for this org
   const { data: challenge } = await supabase
     .from('challenges')
-    .select('id, start_date')
+    .select('id, start_date, end_date')
     .eq('org_id', orgId)
     .eq('status', 'active')
     .limit(1)
@@ -699,19 +699,22 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       }
       type ChallengeTaskRaw = { id: string; title: string; icon: string; points: number; start_date: string | null; end_date: string | null }
 
-      const startDate = new Date(challenge.start_date)
-      const todayMidnight = new Date()
-      todayMidnight.setHours(0, 0, 0, 0)
+      const challengeStartStr = challenge.start_date
+      const challengeEndStr = challenge.end_date ?? new Date().toISOString().slice(0, 10)
+      // Use UTC-consistent today cutoff: "YYYY-MM-DD" string comparison avoids local-timezone drift
+      const todayUtc = new Date().toISOString().slice(0, 10)
 
       function eligibleDays(startStr: string, endStr: string): number {
+        const effectiveEnd = endStr < todayUtc ? endStr : todayUtc
+        if (effectiveEnd < startStr) return 0
         const start = new Date(startStr)
-        const end = new Date(endStr)
-        const effective = end < todayMidnight ? end : todayMidnight
-        if (effective < start) return 0
-        return Math.floor((effective.getTime() - start.getTime()) / 86400000) + 1
+        const end = new Date(effectiveEnd)
+        return Math.floor((end.getTime() - start.getTime()) / 86400000) + 1
       }
 
-      // Group approved submissions by week
+      const startDate = new Date(challengeStartStr)
+
+      // Group approved submissions by week (use submitted_date for timezone-safe week assignment)
       const weekMap: Record<number, Record<string, { daysCompleted: number; pointsPerDay: number; icon: string; daysEligible: number }>> = {}
 
       for (const s of (subsRes.data ?? []) as unknown as SubRaw[]) {
@@ -730,12 +733,13 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       }
 
       // Merge all active challenge tasks (adds tasks with 0 completions + fills daysEligible)
+      // Fall back to challenge start/end when task has no specific date range
       for (const ct of (challengeTasksRes.data ?? []) as unknown as ChallengeTaskRaw[]) {
-        if (!ct.start_date || !ct.end_date) continue
-        const eligible = eligibleDays(ct.start_date, ct.end_date)
-        if (eligible === 0) continue
+        const taskStart = ct.start_date ?? challengeStartStr
+        const taskEnd = ct.end_date ?? challengeEndStr
+        const eligible = eligibleDays(taskStart, taskEnd)
         const diffDays = Math.floor(
-          (new Date(ct.start_date).getTime() - startDate.getTime()) / 86400000
+          (new Date(taskStart).getTime() - startDate.getTime()) / 86400000
         )
         const week = Math.floor(diffDays / 7) + 1
         if (!weekMap[week]) weekMap[week] = {}

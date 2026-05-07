@@ -50,5 +50,8 @@ export async function addManualAdjustment(
   await client.rpc('increment_member_points', { p_user_id: userId, p_amount: amount })
 
   revalidatePath(`/organizations/${orgId}/points`)
+  revalidatePath(`/organizations/${orgId}/members/${userId}`)
+  revalidatePath(`/organizations/${orgId}/members`)
+  revalidatePath(`/organizations/${orgId}/teams`)
   return { success: true }
 }
