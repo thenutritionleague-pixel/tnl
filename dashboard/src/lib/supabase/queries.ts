@@ -83,33 +83,21 @@ export interface AvailableMember {
   avatarColor: string
 }
 
-export interface TaskEntryUI {
+export type EntryStatus = 'approved' | 'missed' | 'adjustment'
+
+export interface WeekEntryUI {
+  status: EntryStatus
+  icon: string
+  title: string
+  subtitle?: string
   date: string
   points: number
 }
 
-export interface TaskBreakdownUI {
-  taskTitle: string
-  icon: string
-  daysCompleted: number
-  daysEligible: number
-  daysMissed: number
-  pointsPerDay: number
-  subtotal: number
-  entries: TaskEntryUI[]
-}
-
-export interface WeekPointsUI {
+export interface WeekGroupUI {
   week: number
-  points: number
-  tasks: TaskBreakdownUI[]
-}
-
-export interface AdjustmentUI {
-  id: string
-  amount: number
-  reason: string
-  createdAt: string
+  totalPoints: number
+  entries: WeekEntryUI[]
 }
 
 export interface TeamMemberRowUI {
@@ -117,10 +105,8 @@ export interface TeamMemberRowUI {
   name: string
   avatarColor: string
   role: 'captain' | 'vice_captain' | 'member'
-  weekPoints: WeekPointsUI[]
   total: number
-  manualPoints: number
-  adjustments: AdjustmentUI[]
+  weekGroups: WeekGroupUI[]
 }
 
 export interface TeamDetailUI {
@@ -681,147 +667,133 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
   const captain = teamRaw.team_members.find(m => m.role === 'captain')?.profiles?.name ?? '—'
   const viceCaptain = teamRaw.team_members.find(m => m.role === 'vice_captain')?.profiles?.name ?? '—'
 
-  // Build member rows with week points
+  // Helpers
+  const SD_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  function shortDate(iso: string): string {
+    const d = new Date(iso)
+    return `${SD_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`
+  }
+
+  // Batch-fetch all points_transactions for all team members in one query
+  type TxnRaw = {
+    user_id: string
+    amount: number
+    reason: string
+    is_manual: boolean
+    created_at: string
+    task_submissions: { submitted_date: string | null; tasks: { title: string; icon: string; points: number } | null } | null
+  }
+
+  const memberIds = teamRaw.team_members
+    .map(tm => tm.profiles?.id)
+    .filter(Boolean) as string[]
+
+  let txnsByUser: Record<string, TxnRaw[]> = {}
+  if (challenge && memberIds.length > 0) {
+    const { data: txnData } = await supabase
+      .from('points_transactions')
+      .select('user_id, amount, reason, is_manual, created_at, task_submissions(submitted_date, tasks(title, icon, points))')
+      .in('user_id', memberIds)
+      .gte('created_at', challenge.start_date)
+      .order('created_at', { ascending: true })
+    for (const t of (txnData ?? []) as unknown as TxnRaw[]) {
+      if (!txnsByUser[t.user_id]) txnsByUser[t.user_id] = []
+      txnsByUser[t.user_id].push(t)
+    }
+  }
+
+  const challengeStartDate = challenge ? new Date(challenge.start_date) : null
+
+  function weekFor(dateStr: string): number {
+    if (!challengeStartDate || !dateStr) return 1
+    const d = new Date(dateStr)
+    const diff = Math.floor((d.getTime() - challengeStartDate.getTime()) / 86400000)
+    return Math.max(1, Math.floor(diff / 7) + 1)
+  }
+
+  // Build member rows
   const memberRows: TeamMemberRowUI[] = []
 
   for (const tm of teamRaw.team_members) {
     const profile = tm.profiles
     if (!profile) continue
 
-    let weekPoints: WeekPointsUI[] = []
-    let total = 0
+    const txns = txnsByUser[profile.id] ?? []
+    const weekGroupMap: Record<number, { totalPoints: number; entries: WeekEntryUI[] }> = {}
 
-    // Fetch manual adjustments for this member regardless of challenge
-    const { data: adjData } = await supabase
-      .from('points_transactions')
-      .select('id, amount, reason, created_at')
-      .eq('user_id', profile.id)
-      .eq('is_manual', true)
-      .neq('amount', 0)
-      .order('created_at', { ascending: false })
+    for (const t of txns) {
+      const amount = (t.amount as number) ?? 0
+      const isManual = (t.is_manual as boolean) ?? false
+      const createdAt = t.created_at ?? ''
+      const rawReason = t.reason ?? ''
+      const sub = t.task_submissions
+      const task = sub?.tasks
 
-    type AdjRaw = { id: string; amount: number; reason: string; created_at: string }
-    const adjustments: AdjustmentUI[] = (adjData ?? []).map((a: AdjRaw) => ({
-      id: a.id,
-      amount: a.amount,
-      reason: a.reason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim(),
-      createdAt: a.created_at,
-    }))
-    const manualPoints = adjustments.reduce((s, a) => s + a.amount, 0)
-    total += manualPoints
+      let entry: WeekEntryUI
+      let week: number
 
-    if (challenge) {
-      const [subsRes, challengeTasksRes] = await Promise.all([
-        supabase
-          .from('task_submissions')
-          .select('submitted_at, status, points_awarded, tasks(id, title, icon, points, start_date, end_date, category)')
-          .eq('user_id', profile.id)
-          .eq('challenge_id', challenge.id)
-          .eq('status', 'approved'),
-        supabase
-          .from('tasks')
-          .select('id, title, icon, points, start_date, end_date')
-          .eq('challenge_id', challenge.id)
-          .eq('is_active', true),
-      ])
-
-      type SubRaw = {
-        submitted_at: string
-        status: string
-        points_awarded: number | null
-        tasks: { id: string; title: string; icon: string; points: number; start_date: string | null; end_date: string | null; category: string } | null
-      }
-      type ChallengeTaskRaw = { id: string; title: string; icon: string; points: number; start_date: string | null; end_date: string | null }
-
-      const challengeStartStr = challenge.start_date
-      const challengeEndStr = challenge.end_date ?? new Date().toISOString().slice(0, 10)
-      // Use UTC-consistent today cutoff: "YYYY-MM-DD" string comparison avoids local-timezone drift
-      const todayUtc = new Date().toISOString().slice(0, 10)
-
-      function eligibleDays(startStr: string, endStr: string): number {
-        const effectiveEnd = endStr < todayUtc ? endStr : todayUtc
-        if (effectiveEnd < startStr) return 0
-        const start = new Date(startStr)
-        const end = new Date(effectiveEnd)
-        return Math.floor((end.getTime() - start.getTime()) / 86400000) + 1
-      }
-
-      const startDate = new Date(challengeStartStr)
-
-      function shortDate(iso: string): string {
-        const d = new Date(iso)
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-        return `${months[d.getUTCMonth()]} ${d.getUTCDate()}`
-      }
-
-      // Group approved submissions by week (use submitted_at for week assignment)
-      const weekMap: Record<number, Record<string, {
-        daysCompleted: number; pointsPerDay: number; actualPoints: number;
-        entries: TaskEntryUI[]; icon: string; daysEligible: number
-      }>> = {}
-
-      for (const s of (subsRes.data ?? []) as unknown as SubRaw[]) {
-        if (!s.tasks) continue
-        const pts = s.points_awarded ?? s.tasks.points
-        const subDate = new Date(s.submitted_at)
-        const diffDays = Math.floor((subDate.getTime() - startDate.getTime()) / 86400000)
-        const week = Math.floor(diffDays / 7) + 1
-        if (!weekMap[week]) weekMap[week] = {}
-        const key = s.tasks.title
-        if (!weekMap[week][key]) {
-          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, actualPoints: 0, entries: [], icon: s.tasks.icon, daysEligible: 0 }
+      if (isManual) {
+        const byMatch = /\[by ([^\]]+)\]$/.exec(rawReason)
+        const adminName = byMatch?.[1] ?? ''
+        const title = rawReason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim()
+        week = weekFor(createdAt)
+        entry = {
+          status: 'adjustment',
+          icon: '✏️',
+          title: title || (amount >= 0 ? 'Bonus Points' : 'Point Deduction'),
+          subtitle: adminName ? `Added by ${adminName}` : 'Added by Admin',
+          date: shortDate(createdAt),
+          points: amount,
         }
-        weekMap[week][key].daysCompleted++
-        weekMap[week][key].actualPoints += pts
-        weekMap[week][key].entries.push({ date: shortDate(s.submitted_at), points: pts })
-        total += pts
-      }
-
-      // Merge all active challenge tasks (adds tasks with 0 completions + fills daysEligible)
-      // Fall back to challenge start/end when task has no specific date range
-      for (const ct of (challengeTasksRes.data ?? []) as unknown as ChallengeTaskRaw[]) {
-        const taskStart = ct.start_date ?? challengeStartStr
-        const taskEnd = ct.end_date ?? challengeEndStr
-        const eligible = eligibleDays(taskStart, taskEnd)
-        const diffDays = Math.floor(
-          (new Date(taskStart).getTime() - startDate.getTime()) / 86400000
-        )
-        const week = Math.floor(diffDays / 7) + 1
-        if (!weekMap[week]) weekMap[week] = {}
-        if (!weekMap[week][ct.title]) {
-          weekMap[week][ct.title] = { daysCompleted: 0, pointsPerDay: ct.points, actualPoints: 0, entries: [], icon: ct.icon, daysEligible: eligible }
-        } else {
-          weekMap[week][ct.title].daysEligible = eligible
+      } else if (amount === 0) {
+        // Missed task — date from reason string (cron runs next day, so created_at is off)
+        const dateMatch = /\((\d{4}-\d{2}-\d{2})\)\s*$/.exec(rawReason)
+        const missedDate = dateMatch?.[1] ?? ''
+        const subDate = sub?.submitted_date ?? ''
+        const displayDate = subDate || missedDate || createdAt
+        const title = task?.title ?? rawReason
+          .replace(/^Task missed:\s*/i, '')
+          .replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '')
+          .trim()
+        week = weekFor(missedDate || subDate || createdAt)
+        entry = {
+          status: 'missed',
+          icon: task?.icon ?? '📋',
+          title,
+          date: shortDate(displayDate),
+          points: task?.points ?? 0,
+        }
+      } else {
+        // Approved task
+        const subDate = sub?.submitted_date ?? ''
+        week = weekFor(subDate || createdAt)
+        entry = {
+          status: 'approved',
+          icon: task?.icon ?? '📋',
+          title: task?.title ?? rawReason,
+          date: shortDate(subDate || createdAt),
+          points: amount,
         }
       }
 
-      weekPoints = Object.entries(weekMap)
-        .sort(([a], [b]) => Number(a) - Number(b))
-        .map(([week, tasks]) => ({
-          week: Number(week),
-          points: Object.values(tasks).reduce((s, t) => s + t.actualPoints, 0),
-          tasks: Object.entries(tasks).map(([title, t]) => ({
-            taskTitle: title,
-            icon: t.icon,
-            daysCompleted: t.daysCompleted,
-            daysEligible: t.daysEligible,
-            daysMissed: Math.max(0, t.daysEligible - t.daysCompleted),
-            pointsPerDay: t.pointsPerDay,
-            subtotal: t.actualPoints,
-            entries: t.entries,
-          })),
-        }))
+      if (!weekGroupMap[week]) weekGroupMap[week] = { totalPoints: 0, entries: [] }
+      if (entry.status !== 'missed') weekGroupMap[week].totalPoints += amount
+      weekGroupMap[week].entries.push(entry)
     }
+
+    const weekGroups: WeekGroupUI[] = Object.entries(weekGroupMap)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([wk, data]) => ({ week: Number(wk), totalPoints: data.totalPoints, entries: data.entries }))
+
+    const total = weekGroups.reduce((s, wg) => s + wg.totalPoints, 0)
 
     memberRows.push({
       id: profile.id,
       name: profile.name,
       avatarColor: profile.avatar_color,
       role: tm.role as TeamMemberRowUI['role'],
-      weekPoints,
       total,
-      manualPoints,
-      adjustments,
+      weekGroups,
     })
   }
 

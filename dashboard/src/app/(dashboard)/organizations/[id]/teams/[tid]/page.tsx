@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Crown, Shield, ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowLeft, Crown, Shield, ChevronDown, ChevronRight, CheckCircle2, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getTeamDetail, type TeamDetailUI } from '@/lib/supabase/queries'
 
@@ -31,11 +31,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   if (!team) return <p className="text-sm text-muted-foreground">Team not found.</p>
 
   function weekPts(member: TeamDetailUI['members'][number], week: number) {
-    return member.weekPoints.find(w => w.week === week)?.points ?? 0
-  }
-
-  function weekBreakdown(member: TeamDetailUI['members'][number], week: number) {
-    return member.weekPoints.find(w => w.week === week)?.tasks ?? []
+    return member.weekGroups.find(wg => wg.week === week)?.totalPoints ?? 0
   }
 
   return (
@@ -188,95 +184,64 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 </button>
 
-                {/* Expanded task breakdown */}
+                {/* Expanded breakdown — flat entry list per week, matching mobile */}
                 {isExpanded && (
                   <div className="bg-muted/20 border-t border-border">
-                    <div className="px-5 py-2 flex items-center gap-2">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">
-                        Task Breakdown
-                      </p>
-                    </div>
-
-                    {WEEKS.map(w => {
-                      const tasks = weekBreakdown(member, w)
-                      const weekTotal = tasks.reduce((s, t) => s + t.subtotal, 0)
-                      if (tasks.length === 0) return null
-                      return (
-                        <div key={w} className="border-t border-border/60">
+                    {member.weekGroups.length === 0 ? (
+                      <p className="px-5 py-4 text-xs text-muted-foreground">No activity yet.</p>
+                    ) : (
+                      member.weekGroups.map(wg => (
+                        <div key={wg.week} className="border-t border-border/60">
                           {/* Week header */}
                           <div className="flex items-center justify-between px-5 py-1.5 bg-muted/30">
-                            <p className="text-xs font-semibold text-muted-foreground">Week {w}</p>
+                            <p className="text-xs font-semibold text-muted-foreground">Week {wg.week}</p>
                             <p className="text-xs font-semibold" style={{ color: '#059669' }}>
-                              {weekTotal} pts
+                              🥦 {wg.totalPoints}
                             </p>
                           </div>
-                          {/* Task rows */}
-                          {tasks.map((task, i) => (
-                            <div key={i} className="border-t border-border/40">
-                              {/* Task header */}
-                              <div className="flex items-center justify-between px-5 py-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-base">{task.icon}</span>
-                                  <p className="text-sm text-foreground">{task.taskTitle}</p>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <div className="flex flex-col items-end gap-0.5">
-                                    <p className="text-xs text-muted-foreground">
-                                      {task.daysCompleted} / {task.daysEligible} days · {task.pointsPerDay} pts/day
-                                    </p>
-                                    {task.daysMissed > 0 && (
-                                      <p className="text-xs font-medium text-red-500">
-                                        {task.daysMissed} day{task.daysMissed !== 1 ? 's' : ''} missed
-                                      </p>
-                                    )}
-                                  </div>
-                                  <p className="text-xs font-semibold text-foreground w-12 text-right">
-                                    {task.subtotal} pts
-                                  </p>
-                                </div>
+                          {/* Entry rows */}
+                          {wg.entries.map((entry, i) => (
+                            <div key={i} className="flex items-center gap-3 px-5 py-2.5 border-t border-border/40">
+                              {/* Status icon */}
+                              <div className="shrink-0 w-5 flex items-center justify-center">
+                                {entry.status === 'approved' && (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                                )}
+                                {entry.status === 'missed' && (
+                                  <XCircle className="w-4 h-4 text-red-400" />
+                                )}
+                                {entry.status === 'adjustment' && (
+                                  <span className="text-sm leading-none">✏️</span>
+                                )}
                               </div>
-                              {/* Per-day entry rows (shown when points vary across days) */}
-                              {task.entries.length > 0 && (
-                                <div className="pb-1">
-                                  {task.entries.map((entry, j) => (
-                                    <div key={j} className="flex items-center justify-between px-5 py-1 pl-12">
-                                      <p className="text-xs text-muted-foreground">{entry.date}</p>
-                                      <p className="text-xs font-medium text-emerald-600 w-12 text-right">
-                                        +{entry.points} pts
-                                      </p>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                              {/* Task icon */}
+                              <span className="text-base leading-none shrink-0">{entry.icon}</span>
+                              {/* Title + subtitle */}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-foreground truncate">{entry.title}</p>
+                                {entry.subtitle && (
+                                  <p className="text-xs text-muted-foreground">{entry.subtitle}</p>
+                                )}
+                              </div>
+                              {/* Date + points */}
+                              <div className="shrink-0 text-right">
+                                <p className="text-xs text-muted-foreground">{entry.date}</p>
+                                {entry.status === 'missed' ? (
+                                  <p className="text-xs font-semibold text-red-500">Missed</p>
+                                ) : (
+                                  <p className={cn(
+                                    'text-xs font-semibold',
+                                    entry.points >= 0 ? 'text-emerald-600' : 'text-red-500',
+                                  )}>
+                                    {entry.points >= 0 ? '+' : ''}{entry.points} 🥦
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
-                      )
-                    })}
-
-                    {/* Manual Adjustments */}
-                    {member.adjustments.length > 0 && (
-                      <div className="border-t border-border/60">
-                        <div className="flex items-center justify-between px-5 py-1.5 bg-muted/30">
-                          <p className="text-xs font-semibold text-muted-foreground">Manual Adjustments</p>
-                          <p className="text-xs font-semibold" style={{ color: member.manualPoints >= 0 ? '#059669' : '#ef4444' }}>
-                            {member.manualPoints > 0 ? '+' : ''}{member.manualPoints} pts
-                          </p>
-                        </div>
-                        {member.adjustments.map((adj) => (
-                          <div key={adj.id} className="flex items-center justify-between px-5 py-2 border-t border-border/40">
-                            <p className="text-sm text-foreground">{adj.reason}</p>
-                            <p className={cn(
-                              'text-xs font-semibold w-16 text-right',
-                              adj.amount > 0 ? 'text-emerald-600' : 'text-red-500',
-                            )}>
-                              {adj.amount > 0 ? '+' : ''}{adj.amount} pts
-                            </p>
-                          </div>
-                        ))}
-                      </div>
+                      ))
                     )}
-
                     <div className="h-2" />
                   </div>
                 )}
