@@ -67,9 +67,10 @@ LENIENCY RULES:
 • Blurry, casual, or low-quality real photos → approve if the task completion is still evident.
 • Tasks that are hard to photograph (meditation, hydration, sleep) → approve any sincere real attempt.
 • For fitness metrics (steps, distance, calories, time) the numbers must be visible and match the claimed tier.
-• When genuinely uncertain, set confidence 0.40–0.77 (this routes to human review — use it sparingly).
+• IMPORTANT — fitness tracker / step counter screenshots: daily submissions that show the SAME APP with a different day's progress are NOT duplicates. The app UI looking similar across days is completely normal and expected. Only flag as duplicate if it is literally the exact same screenshot reused (identical step count AND identical timestamp AND identical date shown on screen). Similar step counts (e.g. ~10,000 steps on different days) are NOT evidence of duplication.
+• When genuinely uncertain — especially about duplicates for fitness apps — set confidence 0.40–0.77 to route to human review. Do not auto-reject when uncertain.
 • Only set confidence ≥ 0.78 when you are clearly sure it should be approved.
-• Only set confidence < 0.40 when it is clearly fake, duplicate, or wrong task.
+• Only set confidence < 0.30 when it is clearly fake, an obvious duplicate (identical photo), or completely wrong task.
 
 Respond in JSON only — no markdown, no extra text:
 {"approved":true|false,"confidence":0.0-1.0,"issues":["short issue codes if any"],"feedback":"If not approved: 1–2 actionable sentences telling the member exactly what was wrong and how to resubmit correctly."}`
@@ -222,7 +223,7 @@ export async function runAiAnalysis(
   let aiStatus: string
   if (result.approved && confidence >= 0.78) {
     aiStatus = 'approved'
-  } else if (!result.approved || confidence < 0.40) {
+  } else if (!result.approved || confidence < 0.30) {
     aiStatus = 'rejected'
   } else {
     aiStatus = 'needs_review'
