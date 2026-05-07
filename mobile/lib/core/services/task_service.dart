@@ -1,6 +1,7 @@
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
+import '../utils/org_date_utils.dart';
 
 class AlreadySubmittedTodayException implements Exception {
   const AlreadySubmittedTodayException();
@@ -133,9 +134,10 @@ class TaskService {
   /// - rejected: member can resubmit (shows Resubmit button)
   static Future<List<Map<String, dynamic>>> getPastSubmissions(
     String userId,
-    String orgId,
-  ) async {
-    final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+    String orgId, {
+    String orgTimezone = 'UTC',
+  }) async {
+    final todayStr = orgTodayStr(orgTimezone);
 
     final data = await _client
         .from('task_submissions')

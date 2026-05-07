@@ -5,6 +5,7 @@
  */
 
 import { createAdminClient } from './server'
+import { todayInTimezone } from '../date-utils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -840,30 +841,37 @@ function effectiveStatus(
   startDate: string,
   endDate: string,
   manuallyClosed: boolean,
+  orgTimezone = 'UTC',
 ): ChallengeUI['status'] {
   if (manuallyClosed || dbStatus === 'completed') return 'completed'
-  const now = new Date()
-  const start = new Date(startDate + 'T00:00:00')
-  if (now < start) return 'upcoming'
-  if (endDate && endDate < NO_END_DATE) {
-    const end = new Date(endDate + 'T23:59:59')
-    if (now > end) return 'completed'
-  }
+  const today = todayInTimezone(orgTimezone)
+  if (today < startDate) return 'upcoming'
+  if (endDate && endDate < NO_END_DATE && today > endDate) return 'completed'
   return 'active'
+}
+
+export async function getOrgTimezone(orgId: string): Promise<string> {
+  const supabase = await db()
+  const { data } = await supabase.from('organizations').select('timezone').eq('id', orgId).single()
+  return data?.timezone ?? 'UTC'
 }
 
 export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   const supabase = await db()
 
-  const { data: challenges } = await supabase
-    .from('challenges')
-    .select(`
-      id, name, description, status, start_date, end_date, manually_closed,
-      challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
-    `)
-    .eq('org_id', orgId)
-    .order('created_at', { ascending: false })
+  const [{ data: challenges }, orgData] = await Promise.all([
+    supabase
+      .from('challenges')
+      .select(`
+        id, name, description, status, start_date, end_date, manually_closed,
+        challenge_teams(team_id, teams(name)),
+        tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
+      `)
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false }),
+    supabase.from('organizations').select('timezone').eq('id', orgId).single(),
+  ])
+  const orgTz: string = (orgData.data as { timezone?: string } | null)?.timezone ?? 'UTC'
 
   if (!challenges) return []
 
@@ -885,7 +893,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   })
 
   for (const ch of challenges as unknown as ChRaw[]) {
-    const computed = effectiveStatus(ch.status, ch.start_date, ch.end_date, ch.manually_closed)
+    const computed = effectiveStatus(ch.status, ch.start_date, ch.end_date, ch.manually_closed, orgTz)
     
     // Sync stale DB status silently 
     if (computed !== ch.status && ch.status !== 'completed') {

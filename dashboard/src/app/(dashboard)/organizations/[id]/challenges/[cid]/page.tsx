@@ -22,9 +22,10 @@ import {
 import {
   getChallengeById, getChallengeSubCounts, getChallengeSubs, getOrgTeamList,
   addTask, updateTask as dbUpdateTask, deleteTask as dbDeleteTask,
-  setChallengeStatus, setTaskActive,
+  setChallengeStatus, setTaskActive, getOrgTimezone,
   type ChallengeUI, type TaskUI, type TaskTier, type ChallengeSub,
 } from '@/lib/supabase/queries'
+import { todayInTimezone } from '@/lib/date-utils'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -488,6 +489,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
   const [deleteTarget, setDeleteTarget] = useState<TaskUI | null>(null)
   const [confirmClose, setConfirmClose] = useState<'close' | 'reopen' | null>(null)
   const [toggling, setToggling]     = useState(false)
+  const [orgTimezone, setOrgTimezone] = useState('UTC')
 
   useEffect(() => {
     Promise.all([
@@ -495,11 +497,13 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
       getChallengeSubCounts(cid),
       getChallengeSubs(cid),
       getOrgTeamList(orgId),
-    ]).then(([ch, counts, subs, teams]) => {
+      getOrgTimezone(orgId),
+    ]).then(([ch, counts, subs, teams, tz]) => {
       setChallenge(ch)
       setSubCounts(counts)
       setRecentSubs(subs)
       setTeamList(teams.map(t => t.name))
+      setOrgTimezone(tz)
     }).finally(() => setIsLoading(false))
   }, [cid, orgId])
 
@@ -538,9 +542,9 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
     setChallenge(prev => {
       if (!prev) return prev
       if (closing) return { ...prev, status: 'completed', manuallyClosed: true }
-      const now = new Date()
-      const start = new Date(prev.startDate + 'T00:00:00')
-      const newStatus: ChallengeUI['status'] = now < start ? 'upcoming' : 'active'
+      // Reopen: compute effective status using org timezone
+      const today = todayInTimezone(orgTimezone)
+      const newStatus: ChallengeUI['status'] = today < prev.startDate ? 'upcoming' : 'active'
       return { ...prev, status: newStatus, manuallyClosed: false }
     })
     setConfirmClose(null)

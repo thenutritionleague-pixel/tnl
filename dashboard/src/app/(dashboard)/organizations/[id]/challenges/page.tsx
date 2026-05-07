@@ -30,9 +30,10 @@ import {
 
 import {
   getOrgChallenges, createChallenge, updateChallenge, setChallengeStatus, deleteChallenge as dbDeleteChallenge,
-  deleteTask as dbDeleteTask, getOrgTeamList,
+  deleteTask as dbDeleteTask, getOrgTeamList, getOrgTimezone,
   type ChallengeUI, type TaskUI,
 } from '@/lib/supabase/queries'
+import { todayInTimezone } from '@/lib/date-utils'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -693,14 +694,17 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [teamList, setTeamList]     = useState<{ id: string; name: string }[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [orgTimezone, setOrgTimezone] = useState('UTC')
 
   useEffect(() => {
     Promise.all([
       getOrgChallenges(id),
       getOrgTeamList(id),
-    ]).then(([chs, teams]) => {
+      getOrgTimezone(id),
+    ]).then(([chs, teams, tz]) => {
       setChallenges(chs)
       setTeamList(teams)
+      setOrgTimezone(tz)
       if (chs.length > 0) setExpandedId(chs[0].id)
     }).finally(() => setIsLoading(false))
   }, [id])
@@ -756,11 +760,9 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
     setChallenges(prev => prev.map(ch => {
       if (ch.id !== cid) return ch
       if (newClosed) return { ...ch, status: 'completed' as const, manuallyClosed: true }
-      // Reopen: compute effective status from dates
-      const now = new Date()
-      const start = new Date(ch.startDate + 'T00:00:00')
-      const end   = new Date(ch.endDate   + 'T23:59:59')
-      const newStatus: Challenge['status'] = now < start ? 'upcoming' : now > end ? 'completed' : 'active'
+      // Reopen: compute effective status using org timezone
+      const today = todayInTimezone(orgTimezone)
+      const newStatus: Challenge['status'] = today < ch.startDate ? 'upcoming' : (ch.endDate && today > ch.endDate) ? 'completed' : 'active'
       return { ...ch, status: newStatus, manuallyClosed: false }
     }))
   }

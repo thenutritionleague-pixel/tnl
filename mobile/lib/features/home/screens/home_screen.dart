@@ -9,6 +9,7 @@ import '../../../core/services/task_service.dart';
 import '../../../core/services/leaderboard_service.dart';
 import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/utils/org_date_utils.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -88,8 +89,11 @@ class _HomeScreenState extends State<HomeScreen>
       final submissions = orgId != null ? await TaskService.getUserSubmissions(profile['id'], orgId) : <Map<String, dynamic>>[];
 
       if (mounted) {
-        // Precompute status cache before setState so build uses fresh values
-        final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+        final org = firstIfList(profile['organizations']);
+        final orgTz = (org?['timezone'] as String?) ?? 'UTC';
+
+        // Precompute status cache — compare submitted_date (org timezone) with org today
+        final todayStr = orgTodayStr(orgTz);
         final Map<String, List<Map<String, dynamic>>> byTask = {};
         for (final s in submissions) {
           final tid = s['task_id'] as String?;
@@ -103,18 +107,21 @@ class _HomeScreenState extends State<HomeScreen>
                 .compareTo(a['submitted_at'] as String? ?? ''));
           statusCache[entry.key] = sorted.first['status'] as String? ?? 'pending';
         }
-        // Precompute progress and week label
+        // Precompute progress and week label using org timezone today
         double progress = 0.0;
         String weekLabel = '';
         if (activeChallenge != null) {
-          final start = DateTime.tryParse(activeChallenge['start_date'] ?? '');
-          final end   = DateTime.tryParse(activeChallenge['end_date']   ?? '');
-          if (start != null && end != null) {
+          final startStr = activeChallenge['start_date'] as String? ?? '';
+          final endStr   = activeChallenge['end_date']   as String? ?? '';
+          final start = DateTime.tryParse(startStr);
+          final end   = DateTime.tryParse(endStr);
+          final today = DateTime.tryParse(todayStr);
+          if (start != null && end != null && today != null) {
             final total   = end.difference(start).inDays;
-            final elapsed = DateTime.now().difference(start).inDays;
-            progress = (elapsed / total).clamp(0.0, 1.0);
-            final weekNum   = ((DateTime.now().difference(start).inDays) / 7).floor() + 1;
-            final totalWeeks = (end.difference(start).inDays / 7).ceil();
+            final elapsed = today.difference(start).inDays;
+            progress = total > 0 ? (elapsed / total).clamp(0.0, 1.0) : 0.0;
+            final weekNum    = (elapsed / 7).floor() + 1;
+            final totalWeeks = (total / 7).ceil();
             weekLabel = 'Week $weekNum/$totalWeeks';
           }
         }

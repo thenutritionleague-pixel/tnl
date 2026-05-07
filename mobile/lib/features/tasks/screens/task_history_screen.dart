@@ -40,9 +40,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
         if (mounted) setState(() => _loading = false);
         return;
       }
+      dynamic firstIfList(dynamic v) => (v is List) ? (v.isNotEmpty ? v.first : null) : v;
+      final org = firstIfList(profile['organizations']);
+      final orgTz = (org?['timezone'] as String?) ?? 'UTC';
       final subs = await TaskService.getPastSubmissions(
         profile['id'] as String,
         profile['org_id'] as String,
+        orgTimezone: orgTz,
       );
       if (mounted) {
         setState(() {

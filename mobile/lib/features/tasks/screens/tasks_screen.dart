@@ -7,6 +7,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
+import '../../../core/utils/org_date_utils.dart';
 import '../../../core/theme/theme_colors.dart';
 
 class TasksScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _TasksScreenState extends State<TasksScreen>
   List<Map<String, dynamic>> _submissions = [];
   String? _profileId;
   String? _orgId;
+  String _orgTimezone = 'UTC';
   int? _selectedWeek; // null = show all
   Timer? _timer;
   Duration _untilMidnight = Duration.zero;
@@ -46,9 +48,7 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   void _updateCountdown() {
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day + 1);
-    if (mounted) setState(() => _untilMidnight = midnight.difference(now));
+    if (mounted) setState(() => _untilMidnight = untilOrgMidnight(_orgTimezone));
   }
 
   Future<void> _load() async {
@@ -66,6 +66,8 @@ class _TasksScreenState extends State<TasksScreen>
       dynamic firstIfList(dynamic v) => (v is List) ? (v.isNotEmpty ? v.first : null) : v;
       final team = firstIfList(teamMembership?['teams']);
       final teamId = team?['id'] as String?;
+      final org = firstIfList(profile['organizations']);
+      final orgTz = (org?['timezone'] as String?) ?? 'UTC';
 
       final tasks = await TaskService.getActiveTasks(profile['org_id'], teamId);
       final subs = await TaskService.getUserSubmissions(profile['id'], profile['org_id']);
@@ -74,11 +76,14 @@ class _TasksScreenState extends State<TasksScreen>
         setState(() {
           _profileId = profile['id'];
           _orgId = profile['org_id'];
+          _orgTimezone = orgTz;
           _tasks = tasks;
           _submissions = subs;
           _loading = false;
           _loadError = false;
         });
+        // Recalculate countdown using the now-correct org timezone
+        _updateCountdown();
       }
     } catch (e) {
       debugPrint('TASKS_LOAD_ERROR: $e');
@@ -88,11 +93,9 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   /// Returns today's submission status for a specific task.
-  /// Only looks at submissions where submitted_date == today (local date).
-  /// Previous-day rows (approved/rejected) are irrelevant —
-  /// each day is a fresh slate, so return 'not_submitted' if nothing for today.
+  /// Compares submitted_date (org timezone from DB) with today in org timezone.
   String _submissionStatus(String taskId) {
-    final todayStr = DateTime.now().toLocal().toString().split(' ')[0]; // 'YYYY-MM-DD'
+    final todayStr = orgTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();
@@ -105,7 +108,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   /// Returns the rejection reason only if TODAY's submission is rejected.
   String? _rejectionReason(String taskId) {
-    final todayStr = DateTime.now().toLocal().toString().split(' ')[0];
+    final todayStr = orgTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();

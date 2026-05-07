@@ -292,7 +292,7 @@ export interface TeamStatAdmin {
 export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[]; currentWeek: number }> {
   const client = await createAdminClient()
 
-  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes] = await Promise.all([
+  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes, orgRes] = await Promise.all([
     client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
@@ -314,6 +314,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
       .select('user_id, submitted_date, tasks(title, icon, start_week)')
       .eq('org_id', orgId)
       .eq('status', 'rejected'),
+    client.from('organizations').select('timezone').eq('id', orgId).single(),
   ])
 
   const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
@@ -461,7 +462,8 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   }
   const teams = Object.values(teamStatMap).sort((a, b) => b.total - a.total)
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const orgTz: string = (orgRes as any).data?.timezone ?? 'UTC'
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: orgTz }).format(new Date())
   const currentWeek = startDate ? calcWeek(todayStr) : 1
 
   return { members, teams, currentWeek }
