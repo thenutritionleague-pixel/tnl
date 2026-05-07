@@ -970,6 +970,13 @@ export interface MemberDetailAdmin {
       pointsAwarded: number
     }>
   }>
+  pointsHistory: Array<{
+    id: string
+    amount: number
+    reason: string
+    isManual: boolean
+    createdAt: string
+  }>
 }
 
 export async function getMemberDetail(orgId: string, memberId: string): Promise<MemberDetailAdmin | null> {
@@ -1010,6 +1017,13 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     if (grp) grp.push(s)
     else groupMap.set(key, [s])
   }
+
+  const { data: pointsTxns } = await client
+    .from('points_transactions')
+    .select('id, amount, reason, is_manual, created_at')
+    .eq('user_id', memberId)
+    .order('created_at', { ascending: false })
+    .limit(100)
 
   let pending = 0, completed = 0, rejected = 0
   const mappedSubmissions = Array.from(groupMap.values()).map(group => {
@@ -1057,5 +1071,12 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     tasksRejected: rejected,
     tasksPending: pending,
     submissions: mappedSubmissions,
+    pointsHistory: (pointsTxns ?? []).map((t: any) => ({
+      id: t.id,
+      amount: t.amount,
+      reason: t.reason ?? '',
+      isManual: t.is_manual ?? false,
+      createdAt: t.created_at,
+    })),
   }
 }

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Crown, Shield, CheckCircle2, XCircle, Clock,
   SlidersHorizontal, Eye, Loader2, ImageIcon, ChevronDown, ChevronUp,
+  ListOrdered, History,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -328,12 +329,15 @@ interface Props {
   adjustMember: OrgMemberForAdjust
 }
 
+type Tab = 'submissions' | 'history'
+
 export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
   const [submissions, setSubmissions] = useState(member.submissions)
   const [reviewSub, setReviewSub] = useState<Submission | null>(null)
   const [viewSub, setViewSub] = useState<Submission | null>(null)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [adjustOpen, setAdjustOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('submissions')
 
   function toggleExpand(id: string) {
     setExpandedRows(prev => {
@@ -440,128 +444,190 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
           ))}
         </div>
 
-        {/* Task submissions */}
+        {/* Tabs */}
         <div className="bg-card border border-border rounded-2xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-border">
-            <h2 className="font-heading text-base text-foreground">Task Submissions</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">{submissions.length} submissions total</p>
+          {/* Tab bar */}
+          <div className="flex items-center gap-0 border-b border-border">
+            {([
+              { id: 'submissions' as Tab, label: 'Submissions', icon: <ListOrdered className="w-3.5 h-3.5" />, count: submissions.length },
+              { id: 'history'     as Tab, label: 'Points History', icon: <History className="w-3.5 h-3.5" />, count: member.pointsHistory.length },
+            ]).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-5 py-3.5 text-sm font-medium border-b-2 transition-colors',
+                  activeTab === tab.id
+                    ? 'border-primary text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {tab.icon} {tab.label}
+                <span className={cn(
+                  'text-xs px-1.5 py-0.5 rounded-full font-semibold',
+                  activeTab === tab.id ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+                )}>{tab.count}</span>
+              </button>
+            ))}
           </div>
 
-          {submissions.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-muted-foreground">
-              No submissions yet.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground">Task</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground hidden sm:table-cell">Challenge</th>
-                  <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Week</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground hidden md:table-cell">Submitted</th>
-                  <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-medium text-muted-foreground">Points</th>
-                  <th className="text-right px-5 py-2.5 text-xs font-medium text-muted-foreground">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {submissions.map(sub => {
-                  const cfg = statusConfig[sub.status]
-                  const isExpanded = expandedRows.has(sub.id)
-                  const hasPrev = (sub.previousAttempts?.length ?? 0) > 0
-                  return (
-                    <React.Fragment key={sub.id}>
-                      <tr className="hover:bg-muted/20 transition-colors">
-                        <td className="px-5 py-3 font-medium text-foreground">
-                          <div className="flex items-center gap-1.5">
-                            {sub.taskTitle}
-                            {hasPrev && (
-                              <button
-                                type="button"
-                                onClick={() => toggleExpand(sub.id)}
-                                className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
-                                title="Show previous attempts"
-                              >
-                                <span className="bg-muted rounded px-1">{sub.previousAttempts.length} prev</span>
-                                {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3 text-muted-foreground text-xs hidden sm:table-cell">{sub.challenge}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className="text-xs text-muted-foreground">WK{sub.week}</span>
-                        </td>
-                        <td className="px-5 py-3 text-muted-foreground text-xs hidden md:table-cell">{sub.submittedDate}</td>
-                        <td className="px-5 py-3">
-                          <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', cfg.className)}>
-                            {cfg.icon} {cfg.label}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3 text-right">
-                          {sub.pointsAwarded > 0
-                            ? <span className="font-semibold text-foreground">🥦 {sub.pointsAwarded}</span>
-                            : <span className="text-muted-foreground/40 text-xs">—</span>
-                          }
-                        </td>
-                        <td className="px-5 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            {sub.status === 'pending' && (
-                              <button
-                                type="button"
-                                onClick={() => setReviewSub(sub)}
-                                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 text-xs h-7')}
-                              >
-                                <Eye className="w-3 h-3" /> Review
-                              </button>
-                            )}
-                            {sub.proofUrl && sub.status !== 'pending' && (
-                              <button
-                                type="button"
-                                onClick={() => setViewSub(sub)}
-                                className="text-xs text-primary hover:underline"
-                              >
-                                View Proof
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                      {hasPrev && isExpanded && sub.previousAttempts.map(prev => {
-                        const pcfg = statusConfig[prev.status]
-                        return (
-                          <tr key={`prev-${prev.id}`} className="bg-muted/20">
-                            <td className="px-5 py-2 text-xs text-muted-foreground pl-10">↳ Earlier attempt · {prev.submittedAt}</td>
-                            <td className="hidden sm:table-cell" />
-                            <td className="hidden" />
-                            <td className="hidden md:table-cell" />
-                            <td className="px-5 py-2">
-                              <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', pcfg.className)}>
-                                {pcfg.icon} {pcfg.label}
-                              </span>
-                            </td>
-                            <td className="px-5 py-2 text-right text-xs text-muted-foreground">
-                              {prev.pointsAwarded > 0 ? `🥦 ${prev.pointsAwarded}` : '—'}
-                            </td>
-                            <td className="px-5 py-2 text-right">
-                              {prev.proofUrl && (
+          {/* Submissions tab */}
+          {activeTab === 'submissions' && (
+            submissions.length === 0 ? (
+              <div className="px-5 py-10 text-center text-sm text-muted-foreground">No submissions yet.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground">Task</th>
+                    <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground hidden sm:table-cell">Challenge</th>
+                    <th className="text-center px-4 py-2.5 text-xs font-medium text-muted-foreground">Week</th>
+                    <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground hidden md:table-cell">Submitted</th>
+                    <th className="text-left px-5 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-right px-5 py-2.5 text-xs font-medium text-muted-foreground">Points</th>
+                    <th className="text-right px-5 py-2.5 text-xs font-medium text-muted-foreground">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {submissions.map(sub => {
+                    const cfg = statusConfig[sub.status]
+                    const isExpanded = expandedRows.has(sub.id)
+                    const hasPrev = (sub.previousAttempts?.length ?? 0) > 0
+                    return (
+                      <React.Fragment key={sub.id}>
+                        <tr className="hover:bg-muted/20 transition-colors">
+                          <td className="px-5 py-3 font-medium text-foreground">
+                            <div className="flex items-center gap-1.5">
+                              {sub.taskTitle}
+                              {hasPrev && (
                                 <button
                                   type="button"
-                                  onClick={() => setViewSub({ ...sub, id: prev.id, status: prev.status, proofUrl: prev.proofUrl, rejectionReason: prev.rejectionReason, pointsAwarded: prev.pointsAwarded, previousAttempts: [] })}
-                                  className="text-xs text-primary hover:underline"
+                                  onClick={() => toggleExpand(sub.id)}
+                                  className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
                                 >
+                                  <span className="bg-muted rounded px-1">{sub.previousAttempts.length} prev</span>
+                                  {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-muted-foreground text-xs hidden sm:table-cell">{sub.challenge}</td>
+                          <td className="px-4 py-3 text-center"><span className="text-xs text-muted-foreground">WK{sub.week}</span></td>
+                          <td className="px-5 py-3 text-muted-foreground text-xs hidden md:table-cell">{sub.submittedDate}</td>
+                          <td className="px-5 py-3">
+                            <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', cfg.className)}>
+                              {cfg.icon} {cfg.label}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3 text-right">
+                            {sub.pointsAwarded > 0
+                              ? <span className="font-semibold text-foreground">🥦 {sub.pointsAwarded}</span>
+                              : <span className="text-muted-foreground/40 text-xs">—</span>}
+                          </td>
+                          <td className="px-5 py-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {sub.status === 'pending' && (
+                                <button type="button" onClick={() => setReviewSub(sub)}
+                                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 text-xs h-7')}>
+                                  <Eye className="w-3 h-3" /> Review
+                                </button>
+                              )}
+                              {sub.proofUrl && sub.status !== 'pending' && (
+                                <button type="button" onClick={() => setViewSub(sub)}
+                                  className="text-xs text-primary hover:underline">
                                   View Proof
                                 </button>
                               )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </React.Fragment>
+                            </div>
+                          </td>
+                        </tr>
+                        {hasPrev && isExpanded && sub.previousAttempts.map(prev => {
+                          const pcfg = statusConfig[prev.status]
+                          return (
+                            <tr key={`prev-${prev.id}`} className="bg-muted/20">
+                              <td className="px-5 py-2 text-xs text-muted-foreground pl-10">↳ Earlier attempt · {prev.submittedAt}</td>
+                              <td className="hidden sm:table-cell" /><td className="hidden" /><td className="hidden md:table-cell" />
+                              <td className="px-5 py-2">
+                                <span className={cn('inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full', pcfg.className)}>
+                                  {pcfg.icon} {pcfg.label}
+                                </span>
+                              </td>
+                              <td className="px-5 py-2 text-right text-xs text-muted-foreground">
+                                {prev.pointsAwarded > 0 ? `🥦 ${prev.pointsAwarded}` : '—'}
+                              </td>
+                              <td className="px-5 py-2 text-right">
+                                {prev.proofUrl && (
+                                  <button type="button"
+                                    onClick={() => setViewSub({ ...sub, id: prev.id, status: prev.status, proofUrl: prev.proofUrl, rejectionReason: prev.rejectionReason, pointsAwarded: prev.pointsAwarded, previousAttempts: [] })}
+                                    className="text-xs text-primary hover:underline">View Proof</button>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </React.Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {/* Points History tab */}
+          {activeTab === 'history' && (
+            member.pointsHistory.length === 0 ? (
+              <div className="px-5 py-10 text-center text-sm text-muted-foreground">No points transactions yet.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {member.pointsHistory.map(tx => {
+                  const isMissed = tx.amount === 0 && !tx.isManual
+                  const isManual = tx.isManual
+                  const isEarned = tx.amount > 0 && !tx.isManual
+
+                  // Strip admin attribution suffix for display
+                  const displayReason = tx.reason.replace(/\s*\[by [^\]]+\]$/, '')
+
+                  const date = new Date(tx.createdAt).toLocaleDateString('en-IN', {
+                    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                  })
+
+                  return (
+                    <div key={tx.id} className="flex items-center gap-4 px-5 py-3 hover:bg-muted/20 transition-colors">
+                      {/* Icon dot */}
+                      <div className={cn(
+                        'w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm',
+                        isEarned && 'bg-emerald-100 text-emerald-700',
+                        isMissed && 'bg-muted text-muted-foreground',
+                        isManual && tx.amount > 0 && 'bg-blue-100 text-blue-700',
+                        isManual && tx.amount < 0 && 'bg-red-100 text-red-600',
+                      )}>
+                        {isMissed ? '✗' : isManual ? '✏️' : '🥦'}
+                      </div>
+
+                      {/* Description */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{displayReason}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{date}</p>
+                      </div>
+
+                      {/* Amount */}
+                      <div className={cn(
+                        'text-sm font-bold shrink-0',
+                        isEarned && 'text-emerald-600',
+                        isMissed && 'text-muted-foreground',
+                        isManual && tx.amount > 0 && 'text-blue-600',
+                        isManual && tx.amount < 0 && 'text-red-600',
+                      )}>
+                        {isMissed
+                          ? 'Missed'
+                          : tx.amount > 0 ? `+${tx.amount} 🥦` : `${tx.amount} 🥦`}
+                      </div>
+                    </div>
                   )
                 })}
-              </tbody>
-            </table>
+              </div>
+            )
           )}
         </div>
       </div>
