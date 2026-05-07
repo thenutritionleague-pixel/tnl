@@ -104,43 +104,17 @@ class LeaderboardService {
         .map((m) => m['user_id'] as String)
         .toList();
 
-    final Map<String, int> challengePoints = {};
-    if (userIds.isNotEmpty && challengeId.isNotEmpty) {
-      final subs = await _client
-          .from('task_submissions')
-          .select('user_id, points_awarded')
-          .eq('challenge_id', challengeId)
-          .eq('status', 'approved')
-          .inFilter('user_id', userIds);
-      for (final s in subs as List) {
-        final uid = s['user_id'] as String;
-        challengePoints[uid] =
-            (challengePoints[uid] ?? 0) + ((s['points_awarded'] as int?) ?? 0);
-      }
-
-      // Include true manual adjustments only (is_manual=true)
-      final manualPts = await _client
-          .from('points_transactions')
-          .select('user_id, amount')
-          .eq('org_id', orgId)
-          .eq('is_manual', true)
-          .inFilter('user_id', userIds);
-      for (final pt in manualPts as List) {
-        final uid = pt['user_id'] as String;
-        challengePoints[uid] =
-            (challengePoints[uid] ?? 0) + ((pt['amount'] as int?) ?? 0);
-      }
-    }
-
     final result = members.map<Map<String, dynamic>>((m) {
       final profile = m['profiles'] as Map;
-      final uid = m['user_id'] as String;
+      // Use profiles.total_points as the source of truth — it includes task
+      // approvals AND manual adjustments (kept in sync by DB trigger + RPC).
+      final pts = (profile['total_points'] as int?) ?? 0;
       return {
         'id': profile['id'],
         'name': profile['name'] ?? '',
         'avatar_color': profile['avatar_color'],
-        'total_points': profile['total_points'] ?? 0,
-        'challenge_points': challengePoints[uid] ?? 0,
+        'total_points': pts,
+        'challenge_points': pts,
         'role': m['role'] ?? 'member',
       };
     }).toList();
@@ -182,12 +156,13 @@ class LeaderboardService {
         .ilike('reason', 'Task missed:%')
         .order('created_at', ascending: true);
 
-    // Manual adjustments (is_manual=true)
+    // Manual adjustments: non-zero amount that isn't a missed-task entry
     final manualFuture = _client
         .from('points_transactions')
-        .select('amount, reason, created_at')
+        .select('id, amount, reason, created_at')
         .eq('user_id', userId)
-        .eq('is_manual', true)
+        .neq('amount', 0)
+        .not('reason', 'ilike', 'Task missed:%')
         .order('created_at', ascending: true);
 
     final results = await Future.wait<dynamic>([challengeFuture, subsFuture, missedFuture, manualFuture]);

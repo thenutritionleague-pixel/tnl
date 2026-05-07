@@ -841,8 +841,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           final isLastWeek = e.key == sortedWeeks.length - 1;
           final week = e.value;
           final entries = breakdown[week]!;
-          final weekTotal = entries.fold<int>(
-              0, (sum, t) => sum + ((t['points'] as int?) ?? 0));
+          final weekTotal = entries.fold<int>(0, (sum, t) {
+            final status = t['status'] as String? ?? '';
+            if (status == 'missed' || status == 'rejected' || status == 'pending') return sum;
+            return sum + ((t['points'] as int?) ?? 0);
+          });
           final isPastWeek = week < currentWeek;
 
           return Padding(
