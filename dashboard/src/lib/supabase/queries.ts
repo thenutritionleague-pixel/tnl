@@ -743,7 +743,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       const startDate = new Date(challengeStartStr)
 
       // Group approved submissions by week (use submitted_date for timezone-safe week assignment)
-      const weekMap: Record<number, Record<string, { daysCompleted: number; pointsPerDay: number; icon: string; daysEligible: number }>> = {}
+      const weekMap: Record<number, Record<string, { daysCompleted: number; pointsPerDay: number; actualPoints: number; icon: string; daysEligible: number }>> = {}
 
       for (const s of (subsRes.data ?? []) as unknown as SubRaw[]) {
         if (!s.tasks) continue
@@ -754,9 +754,10 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         if (!weekMap[week]) weekMap[week] = {}
         const key = s.tasks.title
         if (!weekMap[week][key]) {
-          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, icon: s.tasks.icon, daysEligible: 0 }
+          weekMap[week][key] = { daysCompleted: 0, pointsPerDay: pts, actualPoints: 0, icon: s.tasks.icon, daysEligible: 0 }
         }
         weekMap[week][key].daysCompleted++
+        weekMap[week][key].actualPoints += pts
         total += pts
       }
 
@@ -772,7 +773,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         const week = Math.floor(diffDays / 7) + 1
         if (!weekMap[week]) weekMap[week] = {}
         if (!weekMap[week][ct.title]) {
-          weekMap[week][ct.title] = { daysCompleted: 0, pointsPerDay: ct.points, icon: ct.icon, daysEligible: eligible }
+          weekMap[week][ct.title] = { daysCompleted: 0, pointsPerDay: ct.points, actualPoints: 0, icon: ct.icon, daysEligible: eligible }
         } else {
           weekMap[week][ct.title].daysEligible = eligible
         }
@@ -782,7 +783,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         .sort(([a], [b]) => Number(a) - Number(b))
         .map(([week, tasks]) => ({
           week: Number(week),
-          points: Object.values(tasks).reduce((s, t) => s + t.daysCompleted * t.pointsPerDay, 0),
+          points: Object.values(tasks).reduce((s, t) => s + t.actualPoints, 0),
           tasks: Object.entries(tasks).map(([title, t]) => ({
             taskTitle: title,
             icon: t.icon,
@@ -790,7 +791,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
             daysEligible: t.daysEligible,
             daysMissed: Math.max(0, t.daysEligible - t.daysCompleted),
             pointsPerDay: t.pointsPerDay,
-            subtotal: t.daysCompleted * t.pointsPerDay,
+            subtotal: t.actualPoints,
           })),
         }))
     }
