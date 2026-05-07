@@ -64,15 +64,11 @@ class TaskService {
     );
 
     // Use the provided date (history resubmit) or fall back to today (local).
-    // 15-minute grace window: submissions at 00:00–00:14 local time are
-    // treated as the previous day — covers IST users submitting just after midnight.
-    final dateStr = submittedDate ?? () {
-      final now = DateTime.now().toLocal();
-      final effective = (now.hour == 0 && now.minute < 15)
-          ? now.subtract(const Duration(days: 1))
-          : now;
-      return effective.toString().split(' ')[0];
-    }();
+    // Note: the DB trigger set_submitted_date_local() always overrides this
+    // with the org-timezone-correct date (including a 15-min grace window),
+    // so this value is just a fallback placeholder.
+    final dateStr = submittedDate ??
+        DateTime.now().toLocal().toString().split(' ')[0];
 
     // If there's a rejected submission for the same task/date, UPDATE it in-place
     // instead of inserting a new row. This keeps one row per (user, task, date).
