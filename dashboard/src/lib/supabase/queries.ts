@@ -99,6 +99,13 @@ export interface WeekPointsUI {
   tasks: TaskBreakdownUI[]
 }
 
+export interface AdjustmentUI {
+  id: string
+  amount: number
+  reason: string
+  createdAt: string
+}
+
 export interface TeamMemberRowUI {
   id: string
   name: string
@@ -106,6 +113,8 @@ export interface TeamMemberRowUI {
   role: 'captain' | 'vice_captain' | 'member'
   weekPoints: WeekPointsUI[]
   total: number
+  manualPoints: number
+  adjustments: AdjustmentUI[]
 }
 
 export interface TeamDetailUI {
@@ -676,6 +685,25 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     let weekPoints: WeekPointsUI[] = []
     let total = 0
 
+    // Fetch manual adjustments for this member regardless of challenge
+    const { data: adjData } = await supabase
+      .from('points_transactions')
+      .select('id, amount, reason, created_at')
+      .eq('user_id', profile.id)
+      .eq('is_manual', true)
+      .neq('amount', 0)
+      .order('created_at', { ascending: false })
+
+    type AdjRaw = { id: string; amount: number; reason: string; created_at: string }
+    const adjustments: AdjustmentUI[] = (adjData ?? []).map((a: AdjRaw) => ({
+      id: a.id,
+      amount: a.amount,
+      reason: a.reason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim(),
+      createdAt: a.created_at,
+    }))
+    const manualPoints = adjustments.reduce((s, a) => s + a.amount, 0)
+    total += manualPoints
+
     if (challenge) {
       const [subsRes, challengeTasksRes] = await Promise.all([
         supabase
@@ -774,6 +802,8 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       role: tm.role as TeamMemberRowUI['role'],
       weekPoints,
       total,
+      manualPoints,
+      adjustments,
     })
   }
 
