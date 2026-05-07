@@ -124,53 +124,27 @@ class LeaderboardService {
     return result;
   }
 
-  /// Get a member's full submission history grouped by week.
-  /// Returns approved, rejected, pending, and missed entries — each with date and status.
-  /// Also returns the challenge start date so the caller can compute the current week.
+  /// Get a member's full point history grouped by week.
+  /// Single source of truth: points_transactions has every event —
+  /// task approvals (is_manual=false, amount>0), missed (amount=0),
+  /// and manual adjustments (is_manual=true).
   static Future<(Map<int, List<Map<String, dynamic>>>, DateTime?)> getMemberWeeklyBreakdown(
     String userId,
     String challengeId,
   ) async {
     if (challengeId.isEmpty) return (<int, List<Map<String, dynamic>>>{}, null);
 
-    final challengeFuture = _client
-        .from('challenges')
-        .select('start_date')
-        .eq('id', challengeId)
-        .single();
-
-    // All statuses — approved, rejected, pending
-    final subsFuture = _client
-        .from('task_submissions')
-        .select('status, points_awarded, submitted_date, tasks!inner(title, icon, week_number, points)')
-        .eq('user_id', userId)
-        .eq('challenge_id', challengeId)
-        .order('submitted_date', ascending: true);
-
-    // Missed-day penalty entries from points_transactions (amount=0)
-    final missedFuture = _client
-        .from('points_transactions')
-        .select('reason, created_at, task_submissions(submitted_date, tasks(title, icon, points))')
-        .eq('user_id', userId)
-        .eq('amount', 0)
-        .ilike('reason', 'Task missed:%')
-        .order('created_at', ascending: true);
-
-    // Manual adjustments: non-zero amount that isn't a missed-task entry
-    final manualFuture = _client
-        .from('points_transactions')
-        .select('id, amount, reason, created_at')
-        .eq('user_id', userId)
-        .neq('amount', 0)
-        .not('reason', 'ilike', 'Task missed:%')
-        .order('created_at', ascending: true);
-
-    final results = await Future.wait<dynamic>([challengeFuture, subsFuture, missedFuture, manualFuture]);
+    final results = await Future.wait<dynamic>([
+      _client.from('challenges').select('start_date').eq('id', challengeId).single(),
+      _client
+          .from('points_transactions')
+          .select('amount, reason, is_manual, created_at, task_submissions(submitted_date, tasks(title, icon, points))')
+          .eq('user_id', userId)
+          .order('created_at', ascending: true),
+    ]);
 
     final challengeData = results[0] as Map<String, dynamic>;
-    final subs = results[1] as List;
-    final missedTxns = results[2] as List;
-    final manualTxns = results[3] as List;
+    final txns = results[1] as List;
 
     final DateTime? startDate =
         DateTime.tryParse(challengeData['start_date'] as String? ?? '');
@@ -195,85 +169,67 @@ class LeaderboardService {
 
     final Map<int, List<Map<String, dynamic>>> grouped = {};
 
-    for (final s in subs) {
-      final task = s['tasks'] as Map;
-      final status = s['status'] as String? ?? 'pending';
-      final dateStr = s['submitted_date'] as String? ?? '';
-      final week = dateStr.isNotEmpty ? weekFor(dateStr) : ((task['week_number'] as int?) ?? 1);
-
-      grouped.putIfAbsent(week, () => []).add({
-        'title': task['title'] ?? '',
-        'icon': task['icon'] ?? '📋',
-        'date': fmtDate(dateStr),
-        'status': status,
-        'points': status == 'approved'
-            ? ((s['points_awarded'] as int?) ?? (task['points'] as int?) ?? 0)
-            : 0,
-      });
-    }
-
-    // Merge missed transactions, filtering to on/after challenge start
-    for (final t in missedTxns) {
+    for (final t in txns) {
+      final amount = (t['amount'] as int?) ?? 0;
+      final isManual = (t['is_manual'] as bool?) ?? false;
       final createdAt = t['created_at'] as String? ?? '';
+      final rawReason = t['reason'] as String? ?? '';
+      final sub = t['task_submissions'] as Map?;
+      final task = sub?['tasks'] as Map?;
+
+      // Skip entries that predate this challenge
       if (startDate != null && createdAt.isNotEmpty) {
         final d = DateTime.tryParse(createdAt);
         if (d != null && d.isBefore(DateTime(startDate.year, startDate.month, startDate.day))) {
-          continue; // skip entries before this challenge started
+          continue;
         }
       }
 
-      // Try to get title/icon from joined task_submission
-      final sub = t['task_submissions'] as Map?;
-      final task = sub?['tasks'] as Map?;
-      final subDate = sub?['submitted_date'] as String? ?? '';
-
-      // Extract the actual missed date from the reason string:
-      // "Task missed: Title (2026-05-05)" — this is the correct date, not created_at
-      // (created_at is the day after, when the cron ran at 00:05 UTC)
-      final reason = t['reason'] as String? ?? '';
-      final dateMatch = RegExp(r'\((\d{4}-\d{2}-\d{2})\)\s*$').firstMatch(reason);
-      final missedDate = dateMatch?.group(1) ?? '';
-
-      final displayDate = subDate.isNotEmpty ? subDate : (missedDate.isNotEmpty ? missedDate : createdAt);
-      final dateForWeek = displayDate;
-
-      String title = task?['title'] as String? ?? '';
-      if (title.isEmpty) {
-        title = reason
-            .replaceFirst(RegExp(r'^Task missed:\s*', caseSensitive: false), '')
-            .replaceAll(RegExp(r'\s*\(\d{4}-\d{2}-\d{2}\)\s*$'), '')
-            .trim();
+      if (isManual) {
+        // Admin manual adjustment (+ or -)
+        final byMatch = RegExp(r'\[by ([^\]]+)\]$').firstMatch(rawReason);
+        final adminName = byMatch?.group(1) ?? '';
+        final title = rawReason.replaceAll(RegExp(r'\s*\[by [^\]]+\]$'), '').trim();
+        final week = weekFor(createdAt);
+        grouped.putIfAbsent(week, () => []).add({
+          'title': title.isNotEmpty ? title : (amount >= 0 ? 'Bonus Points' : 'Point Deduction'),
+          'icon': '✏️',
+          'date': fmtDate(createdAt),
+          'status': 'approved',
+          'points': amount,
+          'admin_hint': adminName.isNotEmpty ? 'Added by $adminName' : 'Added by admin',
+        });
+      } else if (amount == 0) {
+        // Missed task — use date from reason string, NOT created_at (cron runs next day)
+        final dateMatch = RegExp(r'\((\d{4}-\d{2}-\d{2})\)\s*$').firstMatch(rawReason);
+        final missedDate = dateMatch?.group(1) ?? '';
+        final subDate = sub?['submitted_date'] as String? ?? '';
+        final displayDate = subDate.isNotEmpty ? subDate : (missedDate.isNotEmpty ? missedDate : createdAt);
+        final title = task?['title'] as String? ??
+            rawReason
+                .replaceFirst(RegExp(r'^Task missed:\s*', caseSensitive: false), '')
+                .replaceAll(RegExp(r'\s*\(\d{4}-\d{2}-\d{2}\)\s*$'), '')
+                .trim();
+        final week = weekFor(missedDate.isNotEmpty ? missedDate : (subDate.isNotEmpty ? subDate : createdAt));
+        grouped.putIfAbsent(week, () => []).add({
+          'title': title,
+          'icon': task?['icon'] as String? ?? '📋',
+          'date': fmtDate(displayDate),
+          'status': 'missed',
+          'points': task?['points'] as int? ?? 0,
+        });
+      } else {
+        // Task approved — use submitted_date for week assignment
+        final subDate = sub?['submitted_date'] as String? ?? '';
+        final week = weekFor(subDate.isNotEmpty ? subDate : createdAt);
+        grouped.putIfAbsent(week, () => []).add({
+          'title': task?['title'] as String? ?? rawReason,
+          'icon': task?['icon'] as String? ?? '📋',
+          'date': fmtDate(subDate.isNotEmpty ? subDate : createdAt),
+          'status': 'approved',
+          'points': amount,
+        });
       }
-      final icon = task?['icon'] as String? ?? '📋';
-      final basePts = task?['points'] as int? ?? 0;
-      final week = weekFor(dateForWeek.isNotEmpty ? dateForWeek : createdAt);
-
-      grouped.putIfAbsent(week, () => []).add({
-        'title': title,
-        'icon': icon,
-        'date': fmtDate(displayDate),
-        'status': 'missed',
-        'points': basePts, // base task points (not earned — earned stays 0 for missed)
-      });
-    }
-
-    // Manual adjustments — inserted into the correct week bucket like normal tasks
-    for (final t in manualTxns) {
-      final amount = (t['amount'] as int?) ?? 0;
-      final createdAt = t['created_at'] as String? ?? '';
-      final rawReason = t['reason'] as String? ?? '';
-      final byMatch = RegExp(r'\[by ([^\]]+)\]$').firstMatch(rawReason);
-      final adminName = byMatch?.group(1) ?? '';
-      final reason = rawReason.replaceAll(RegExp(r'\s*\[by [^\]]+\]$'), '').trim();
-      final week = weekFor(createdAt);
-      grouped.putIfAbsent(week, () => []).add({
-        'title': reason.isNotEmpty ? reason : 'Bonus Points',
-        'icon': '✏️',
-        'date': fmtDate(createdAt),
-        'status': 'approved',
-        'points': amount,
-        'admin_hint': adminName.isNotEmpty ? 'Added by $adminName' : 'Added by admin',
-      });
     }
 
     return (grouped, startDate);
