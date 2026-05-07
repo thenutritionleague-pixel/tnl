@@ -212,26 +212,42 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                           </div>
                           {/* Task rows */}
                           {tasks.map((task, i) => (
-                            <div key={i} className="flex items-center justify-between px-5 py-2 border-t border-border/40">
-                              <div className="flex items-center gap-2">
-                                <span className="text-base">{task.icon}</span>
-                                <p className="text-sm text-foreground">{task.taskTitle}</p>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <p className="text-xs text-muted-foreground">
-                                    {task.daysCompleted} / {task.daysEligible} days · {task.pointsPerDay} pts/day
-                                  </p>
-                                  {task.daysMissed > 0 && (
-                                    <p className="text-xs font-medium text-red-500">
-                                      {task.daysMissed} day{task.daysMissed !== 1 ? 's' : ''} missed
-                                    </p>
-                                  )}
+                            <div key={i} className="border-t border-border/40">
+                              {/* Task header */}
+                              <div className="flex items-center justify-between px-5 py-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-base">{task.icon}</span>
+                                  <p className="text-sm text-foreground">{task.taskTitle}</p>
                                 </div>
-                                <p className="text-xs font-semibold text-foreground w-12 text-right">
-                                  {task.subtotal} pts
-                                </p>
+                                <div className="flex items-center gap-3">
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    <p className="text-xs text-muted-foreground">
+                                      {task.daysCompleted} / {task.daysEligible} days · {task.pointsPerDay} pts/day
+                                    </p>
+                                    {task.daysMissed > 0 && (
+                                      <p className="text-xs font-medium text-red-500">
+                                        {task.daysMissed} day{task.daysMissed !== 1 ? 's' : ''} missed
+                                      </p>
+                                    )}
+                                  </div>
+                                  <p className="text-xs font-semibold text-foreground w-12 text-right">
+                                    {task.subtotal} pts
+                                  </p>
+                                </div>
                               </div>
+                              {/* Per-day entry rows (shown when points vary across days) */}
+                              {task.entries.length > 0 && (
+                                <div className="pb-1">
+                                  {task.entries.map((entry, j) => (
+                                    <div key={j} className="flex items-center justify-between px-5 py-1 pl-12">
+                                      <p className="text-xs text-muted-foreground">{entry.date}</p>
+                                      <p className="text-xs font-medium text-emerald-600 w-12 text-right">
+                                        +{entry.points} pts
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
