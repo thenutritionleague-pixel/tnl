@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -20,8 +21,27 @@ import '../features/more/screens/about_screen.dart';
 import '../features/profile/screens/edit_profile_screen.dart';
 import 'main_shell.dart';
 
+/// Makes GoRouter re-evaluate its redirect whenever Supabase auth state changes.
+/// When a session expires, Supabase fires signedOut → redirect runs → /login.
+class _AuthStateRefreshNotifier extends ChangeNotifier {
+  _AuthStateRefreshNotifier(Stream<AuthState> stream) {
+    _sub = stream.listen((_) => notifyListeners());
+  }
+
+  late final StreamSubscription<AuthState> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
 final GoRouter appRouter = GoRouter(
   initialLocation: '/splash',
+  refreshListenable: _AuthStateRefreshNotifier(
+    Supabase.instance.client.auth.onAuthStateChange,
+  ),
   redirect: (context, state) {
     final session = Supabase.instance.client.auth.currentSession;
     final isAuth = session != null;

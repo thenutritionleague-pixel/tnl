@@ -37,8 +37,13 @@ class ProfileService {
   /// Upload a new avatar image and save the public URL to the profile.
   /// Returns the new public URL.
   static Future<String> uploadAvatar(String profileId, XFile imageFile) async {
+    if (_client.auth.currentSession == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
     final ext = p.extension(imageFile.name).toLowerCase();
-    final path = '$profileId/${DateTime.now().millisecondsSinceEpoch}$ext';
+    // Storage policy requires folder = auth.uid(), not profiles.id
+    final authUid = _client.auth.currentUser!.id;
+    final path = '$authUid/${DateTime.now().millisecondsSinceEpoch}$ext';
     final bytes = await imageFile.readAsBytes();
     final mime = switch (ext) {
       '.png' => 'image/png', '.gif' => 'image/gif', '.webp' => 'image/webp', _ => 'image/jpeg'
@@ -47,7 +52,7 @@ class ProfileService {
     await _client.storage.from('avatars').uploadBinary(
       path,
       bytes,
-      fileOptions: FileOptions(upsert: true, contentType: mime),
+      fileOptions: FileOptions(upsert: false, contentType: mime),
     );
 
     final publicUrl = _client.storage.from('avatars').getPublicUrl(path);

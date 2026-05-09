@@ -24,6 +24,9 @@ class EventService {
     required String eventId,
     required String userId,
   }) async {
+    if (_client.auth.currentSession == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
     await _client.from('event_participations').upsert({
       'event_id': eventId,
       'user_id': userId,

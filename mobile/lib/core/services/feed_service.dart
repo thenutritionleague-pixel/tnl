@@ -27,6 +27,9 @@ class FeedService {
     required String userId,
     required String reaction,
   }) async {
+    if (_client.auth.currentSession == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
     await _client.from('feed_reactions').upsert({
       'post_id': postId,
       'user_id': userId,
@@ -40,6 +43,9 @@ class FeedService {
     required String userId,
     required String reaction,
   }) async {
+    if (_client.auth.currentSession == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
     await _client
         .from('feed_reactions')
         .delete()

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/profile_service.dart';
@@ -86,6 +87,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final newUrl = await ProfileService.uploadAvatar(
           widget.profile['id'] as String, picked);
       if (mounted) setState(() { _avatarUrl = newUrl; _uploadingAvatar = false; });
+    } on AuthException {
+      if (mounted) {
+        setState(() => _uploadingAvatar = false);
+        Supabase.instance.client.auth.signOut();
+        context.go('/login');
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _uploadingAvatar = false);

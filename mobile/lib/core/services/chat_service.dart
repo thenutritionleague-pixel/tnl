@@ -49,6 +49,9 @@ class ChatService {
     required String userId,
     required String content,
   }) async {
+    if (_client.auth.currentSession == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
     await _client.from('messages').insert({
       'team_id': teamId,
       'user_id': userId,
