@@ -4,6 +4,7 @@ import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/theme/theme_colors.dart';
@@ -121,6 +122,13 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
             backgroundColor: AppColors.error,
           ),
         );
+      }
+    } on AuthException {
+      // Session expired — sign out (fire & forget) and navigate to login
+      if (mounted) {
+        setState(() => _submitting = false);
+        Supabase.instance.client.auth.signOut();
+        context.go('/login');
       }
     } catch (e) {
       if (mounted) {

@@ -54,6 +54,14 @@ class TaskService {
     String? note,
     int? selectedTierIndex,
   }) async {
+    // Ensure the session is alive before touching storage.
+    // supabase_flutter auto-refreshes, but if the refresh token is expired
+    // (e.g. app unused for days) the upload gets a 403 RLS error.
+    final session = _client.auth.currentSession;
+    if (session == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
+
     final ext = p.extension(imageFile.name).toLowerCase();
     final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$ext';
     final bytes = await imageFile.readAsBytes();
