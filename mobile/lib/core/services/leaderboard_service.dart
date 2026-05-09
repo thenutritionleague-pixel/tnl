@@ -46,7 +46,7 @@ class LeaderboardService {
   ) async {
     final data = await _client
         .from('profiles')
-        .select('id, name, avatar_color, total_points, team_members(teams(name, emoji))')
+        .select('id, name, avatar_color, avatar_url, total_points, team_members(teams(name, emoji))')
         .eq('org_id', orgId)
         .order('total_points', ascending: false);
 
@@ -59,6 +59,7 @@ class LeaderboardService {
         'id': member['id'],
         'name': member['name'],
         'avatar_color': member['avatar_color'],
+        'avatar_url': member['avatar_url'],
         'total_points': member['total_points'],
         'team_name': team?['name'] ?? 'No Team',
         'team_emoji': team?['emoji'] ?? '🏃',
@@ -73,7 +74,7 @@ class LeaderboardService {
   ) async {
     final data = await _client
         .from('team_members')
-        .select('team_id, profiles!inner(name, avatar_color)')
+        .select('team_id, profiles!inner(name, avatar_color, avatar_url)')
         .eq('org_id', orgId);
 
     final Map<String, List<Map<String, dynamic>>> result = {};
@@ -83,6 +84,7 @@ class LeaderboardService {
       result.putIfAbsent(teamId, () => []).add({
         'name': profile['name'] ?? '',
         'avatar_color': profile['avatar_color'],
+        'avatar_url': profile['avatar_url'],
       });
     }
     return result;
@@ -96,7 +98,7 @@ class LeaderboardService {
   ) async {
     final members = await _client
         .from('team_members')
-        .select('user_id, role, profiles!inner(id, name, avatar_color, total_points)')
+        .select('user_id, role, profiles!inner(id, name, avatar_color, avatar_url, total_points)')
         .eq('team_id', teamId)
         .eq('org_id', orgId);
 
@@ -106,13 +108,12 @@ class LeaderboardService {
 
     final result = members.map<Map<String, dynamic>>((m) {
       final profile = m['profiles'] as Map;
-      // Use profiles.total_points as the source of truth — it includes task
-      // approvals AND manual adjustments (kept in sync by DB trigger + RPC).
       final pts = (profile['total_points'] as int?) ?? 0;
       return {
         'id': profile['id'],
         'name': profile['name'] ?? '',
         'avatar_color': profile['avatar_color'],
+        'avatar_url': profile['avatar_url'],
         'total_points': pts,
         'challenge_points': pts,
         'role': m['role'] ?? 'member',

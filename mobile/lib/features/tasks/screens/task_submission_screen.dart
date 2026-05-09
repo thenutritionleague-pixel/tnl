@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/theme/theme_colors.dart';
+import '../../../core/utils/org_date_utils.dart';
 
 class TaskSubmissionScreen extends StatefulWidget {
   final Map<String, dynamic> task;
@@ -40,9 +41,12 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       widget.task['task'] as Map<String, dynamic>? ?? widget.task;
   String  get _profileId    => widget.task['profileId']    as String? ?? '';
   String  get _orgId        => widget.task['orgId']        as String? ?? '';
+  String  get _orgTimezone  => widget.task['orgTimezone']  as String? ?? 'UTC';
   bool    get _isResubmit   => widget.task['isResubmit']   as bool?   ?? false;
   /// Original submitted_date from Task History — null means use today.
   String? get _submittedDate => widget.task['submittedDate'] as String?;
+
+  bool get _isLocked => isInSubmissionLockout(_orgTimezone);
 
   Future<void> _pickImage(ImageSource source) async {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 82);
@@ -73,6 +77,18 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       _selectedImage != null && (!_hasTiers || _selectedTierIndex != null);
 
   Future<void> _submit() async {
+    if (_isLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🕐  Task submission opens at 4:00 AM. Try again then!',
+              style: TextStyle(color: AppColors.surface, fontWeight: FontWeight.w600)),
+          backgroundColor: AppColors.secondary,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
     if (_selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -575,16 +591,52 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
             const SizedBox(height: 24),
 
+            // ── Lockout banner ─────────────────────────────────────────────
+            if (_isLocked) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.secondary,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Row(
+                  children: [
+                    Text('🕐', style: TextStyle(fontSize: 20)),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Submissions closed',
+                            style: TextStyle(color: AppColors.surface, fontWeight: FontWeight.w700, fontSize: 14),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Task for next day opens at 4:00 AM.',
+                            style: TextStyle(color: AppColors.surface, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Submit button
             GestureDetector(
-              onTap: _submitting ? null : _submit,
+              onTap: (_submitting || _isLocked) ? null : _submit,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 decoration: BoxDecoration(
                   color: _submitting
                       ? AppColors.primary.withValues(alpha: 0.6)
-                      : (_canSubmit ? AppColors.primary : Theme.of(context).colorScheme.outline),
+                      : (_isLocked
+                          ? Theme.of(context).colorScheme.outline
+                          : (_canSubmit ? AppColors.primary : Theme.of(context).colorScheme.outline)),
                   borderRadius: BorderRadius.circular(28),
                 ),
                 child: Center(
@@ -593,9 +645,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                           height: 20, width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                         )
-                      : const Text(
-                          'Submit Proof',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+                      : Text(
+                          _isLocked ? 'Opens at 4:00 AM 🕐' : 'Submit Proof',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
                         ),
                 ),
               ),

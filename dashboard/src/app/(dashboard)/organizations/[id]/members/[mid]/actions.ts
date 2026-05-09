@@ -57,6 +57,29 @@ export async function approveMemberSubmission(
   return { success: true }
 }
 
+export async function updateMemberAvatarColor(
+  memberId: string,
+  orgId: string,
+  color: string,
+): Promise<{ success?: true; error?: string }> {
+  const profile = await getAdminProfile()
+  if (!profile) return { error: 'Unauthorized.' }
+  if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
+  if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return { error: 'Unauthorized.' }
+
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return { error: 'Invalid color.' }
+
+  const client = await createAdminClient()
+  const { error } = await client
+    .from('profiles')
+    .update({ avatar_color: color })
+    .eq('id', memberId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/organizations/${orgId}/members/${memberId}`)
+  return { success: true }
+}
+
 export async function rejectMemberSubmission(
   submissionId: string,
   orgId: string,

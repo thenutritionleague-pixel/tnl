@@ -416,13 +416,16 @@ export async function updateMember(orgId: string, userId: string, data: {
   teamRole: 'captain' | 'vice_captain' | 'member'
   orgRole: 'org_admin' | 'sub_admin' | 'member'
   oldEmail?: string
+  avatarColor?: string
 }) {
   const supabase = await db()
 
   // 1. Update Profile
+  const profileUpdate: Record<string, string> = { name: data.name, email: data.email }
+  if (data.avatarColor) profileUpdate.avatar_color = data.avatarColor
   const { error: pErr } = await supabase
     .from('profiles')
-    .update({ name: data.name, email: data.email })
+    .update(profileUpdate)
     .eq('id', userId)
   if (pErr) throw pErr
 

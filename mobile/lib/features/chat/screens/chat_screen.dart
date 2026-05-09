@@ -24,6 +24,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _profileId;
   String? _myName;
   String? _myAvatarColor;
+  String? _myAvatarUrl;
 
   @override
   void initState() {
@@ -52,6 +53,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _profileId = profile['id'];
           _myName = profile['name'] as String?;
           _myAvatarColor = profile['avatar_color'] as String?;
+          _myAvatarUrl = profile['avatar_url'] as String?;
           _messages = messages;
           _loading = false;
         });
@@ -64,7 +66,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // Enrich realtime payload with profile data
           if (msg['profiles'] == null) {
             if (msg['user_id'] == _profileId) {
-              msg['profiles'] = {'id': _profileId, 'name': _myName, 'avatar_color': _myAvatarColor};
+              msg['profiles'] = {'id': _profileId, 'name': _myName, 'avatar_color': _myAvatarColor, 'avatar_url': _myAvatarUrl};
             } else {
               // Find profile from existing messages cache
               final cached = _messages.firstWhere(
@@ -154,7 +156,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   if (!isMe) ...[
-                                    UserAvatar(name: senderName, avatarColor: avatarColor, radius: 16),
+                                    UserAvatar(name: senderName, avatarColor: avatarColor, avatarUrl: sender['avatar_url'] as String?, radius: 16),
                                     const SizedBox(width: 8),
                                   ],
                                   Flexible(
@@ -194,6 +196,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     UserAvatar(
                                         name: _myName ?? 'Me',
                                         avatarColor: _myAvatarColor,
+                                        avatarUrl: _myAvatarUrl,
                                         radius: 16),
                                   ],
                                 ],

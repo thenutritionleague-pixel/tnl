@@ -26,14 +26,23 @@ class UserAvatar extends StatelessWidget {
     return name.isNotEmpty ? name[0].toUpperCase() : '?';
   }
 
+  static const _palette = [
+    Color(0xFF059669), Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFF59E0B),
+    Color(0xFFEC4899), Color(0xFF14B8A6), Color(0xFFEF4444), Color(0xFF6366F1),
+    Color(0xFFF97316), Color(0xFF06B6D4), Color(0xFFA855F7), Color(0xFF10B981),
+  ];
+
   Color get bgColor {
-    if (avatarColor != null) {
+    const defaultGreen = '#059669';
+    if (avatarColor != null && avatarColor!.isNotEmpty &&
+        avatarColor!.toLowerCase() != defaultGreen) {
       try {
         final hex = avatarColor!.replaceFirst('#', '');
         return Color(int.parse('FF$hex', radix: 16));
       } catch (_) {}
     }
-    return AppColors.primary;
+    final hash = name.codeUnits.fold(0, (h, c) => h * 31 + c);
+    return _palette[hash.abs() % _palette.length];
   }
 
   @override

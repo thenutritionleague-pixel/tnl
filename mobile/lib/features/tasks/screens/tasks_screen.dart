@@ -314,6 +314,7 @@ class _TasksScreenState extends State<TasksScreen>
                               rejectionReason: rejectionReason,
                               profileId: _profileId ?? '',
                               orgId: _orgId ?? '',
+                              orgTimezone: _orgTimezone,
                               onDone: _load,
                             );
                           }),
@@ -417,6 +418,7 @@ class _TaskCard extends StatelessWidget {
   final String? rejectionReason;
   final String profileId;
   final String orgId;
+  final String orgTimezone;
   final VoidCallback onDone;
 
   const _TaskCard({
@@ -425,6 +427,7 @@ class _TaskCard extends StatelessWidget {
     this.rejectionReason,
     required this.profileId,
     required this.orgId,
+    required this.orgTimezone,
     required this.onDone,
   });
 
@@ -438,10 +441,23 @@ class _TaskCard extends StatelessWidget {
   }
 
   void _openSubmit(BuildContext context) async {
+    if (isInSubmissionLockout(orgTimezone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🕐  Task submission opens at 4:00 AM. Try again then!',
+              style: TextStyle(color: AppColors.surface, fontWeight: FontWeight.w600)),
+          backgroundColor: AppColors.secondary,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
     await context.push('/tasks/submit', extra: {
       'task': task,
       'profileId': profileId,
       'orgId': orgId,
+      'orgTimezone': orgTimezone,
       'isResubmit': status == 'rejected',
     });
     onDone();

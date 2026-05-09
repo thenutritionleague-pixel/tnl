@@ -28,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<Map<String, dynamic>> _fullTeamLeaderboard = [];
 
   String? _teamId;
+  String _orgTimezone = 'UTC';
 
   // Precomputed per-load (avoids O(tasks×submissions) on every build)
   Map<String, String> _submissionStatusCache = {};
@@ -133,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen>
           _fullTeamLeaderboard = teamLeaderboard;
           _teamLeaderboard = teamLeaderboard.take(5).toList();
           _teamId = teamId;
+          _orgTimezone = orgTz;
           _submissionStatusCache = statusCache;
           _cachedProgress = progress;
           _cachedWeekLabel = weekLabel;
@@ -439,6 +441,7 @@ class _HomeScreenState extends State<HomeScreen>
                               isLast: isLast,
                               profileId: _profile?['id'] as String? ?? '',
                               orgId: _profile?['org_id'] as String? ?? '',
+                              orgTimezone: _orgTimezone,
                             );
                           }),
                         const SizedBox(height: 6),
@@ -578,12 +581,14 @@ class _ChallengeRow extends StatelessWidget {
   final bool isLast;
   final String profileId;
   final String orgId;
+  final String orgTimezone;
   const _ChallengeRow({
     required this.task,
     required this.status,
     required this.isLast,
     required this.profileId,
     required this.orgId,
+    required this.orgTimezone,
   });
 
   @override
@@ -648,11 +653,26 @@ class _ChallengeRow extends StatelessWidget {
     return Column(
       children: [
         InkWell(
-          onTap: canSubmit ? () => context.push('/tasks/submit', extra: {
-            ...task,
-            'profileId': profileId,
-            'orgId': orgId,
-          }) : null,
+          onTap: canSubmit ? () {
+            if (isInSubmissionLockout(orgTimezone)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('🕐  Task submission opens at 4:00 AM. Try again then!',
+                      style: TextStyle(color: AppColors.surface, fontWeight: FontWeight.w600)),
+                  backgroundColor: AppColors.secondary,
+                  behavior: SnackBarBehavior.floating,
+                  duration: Duration(seconds: 4),
+                ),
+              );
+              return;
+            }
+            context.push('/tasks/submit', extra: {
+              ...task,
+              'profileId': profileId,
+              'orgId': orgId,
+              'orgTimezone': orgTimezone,
+            });
+          } : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             child: Row(

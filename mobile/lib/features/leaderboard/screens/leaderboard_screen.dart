@@ -507,6 +507,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       UserAvatar(
                         name: member['name'] as String? ?? '?',
                         avatarColor: member['avatar_color'] as String?,
+                        avatarUrl: member['avatar_url'] as String?,
                         radius: 14,
                       ),
                       const SizedBox(width: 10),
@@ -638,6 +639,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         UserAvatar(
                             name: m['name'] as String? ?? '?',
                             avatarColor: m['avatar_color'] as String?,
+                            avatarUrl: m['avatar_url'] as String?,
                             radius: 18),
                         const SizedBox(width: 12),
                         Expanded(
@@ -1003,6 +1005,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                           ? padded[1]['team_id'] == _myTeamId
                           : padded[1]['id'] == _myProfileId,
                       avatarColor: isTeam ? null : padded[1]['avatar_color'] as String?,
+                      avatarUrl: isTeam ? null : padded[1]['avatar_url'] as String?,
                     ),
             ),
             const SizedBox(width: 8),
@@ -1021,6 +1024,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     ? padded[0]['team_id'] == _myTeamId
                     : padded[0]['id'] == _myProfileId,
                 avatarColor: isTeam ? null : padded[0]['avatar_color'] as String?,
+                avatarUrl: isTeam ? null : padded[0]['avatar_url'] as String?,
               ),
             ),
             const SizedBox(width: 8),
@@ -1040,6 +1044,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                           ? padded[2]['team_id'] == _myTeamId
                           : padded[2]['id'] == _myProfileId,
                       avatarColor: isTeam ? null : padded[2]['avatar_color'] as String?,
+                      avatarUrl: isTeam ? null : padded[2]['avatar_url'] as String?,
                     ),
             ),
           ],
@@ -1063,6 +1068,7 @@ class _PodiumCard extends StatelessWidget {
   final bool showCrown;
   final bool isHighlighted;
   final String? avatarColor;
+  final String? avatarUrl;
 
   const _PodiumCard({
     required this.item,
@@ -1076,6 +1082,7 @@ class _PodiumCard extends StatelessWidget {
     this.showCrown = false,
     this.isHighlighted = false,
     this.avatarColor,
+    this.avatarUrl,
   });
 
   @override
@@ -1102,6 +1109,7 @@ class _PodiumCard extends StatelessWidget {
           UserAvatar(
             name: name,
             avatarColor: avatarColor,
+            avatarUrl: avatarUrl,
             radius: rank == 1 ? 26 : 20,
           ),
         const SizedBox(height: 6),
@@ -1328,14 +1336,34 @@ class _TeamAvatarRow extends StatelessWidget {
   static const double _radius = 11.0;
   static const double _overlap = 8.0; // how much each circle overlaps the previous
 
-  /// Parse hex color string → opaque Color (no alpha reduction).
-  Color _solidColor(String? hex) {
-    if (hex != null) {
+  static const _palette = [
+    Color(0xFF059669), // emerald
+    Color(0xFF3B82F6), // blue
+    Color(0xFF8B5CF6), // violet
+    Color(0xFFF59E0B), // amber
+    Color(0xFFEC4899), // pink
+    Color(0xFF14B8A6), // teal
+    Color(0xFFEF4444), // red
+    Color(0xFF6366F1), // indigo
+    Color(0xFFF97316), // orange
+    Color(0xFF06B6D4), // cyan
+    Color(0xFFA855F7), // purple
+    Color(0xFF10B981), // green
+  ];
+
+  /// Returns a color for an avatar. Uses `avatar_color` if it's not the
+  /// default green, otherwise picks a consistent color from the palette
+  /// based on the member's name so every user always looks the same.
+  Color _solidColor(String? hex, String name) {
+    const defaultGreen = '#059669';
+    if (hex != null && hex.isNotEmpty && hex.toLowerCase() != defaultGreen) {
       try {
         return Color(int.parse('FF${hex.replaceFirst('#', '')}', radix: 16));
       } catch (_) {}
     }
-    return AppColors.primary;
+    // Hash name → palette index for a stable, varied color
+    final hash = name.codeUnits.fold(0, (h, c) => h * 31 + c);
+    return _palette[hash.abs() % _palette.length];
   }
 
   /// First letter(s) of name as initials.
@@ -1364,7 +1392,7 @@ class _TeamAvatarRow extends StatelessWidget {
             children: List.generate(show.length, (i) {
               final member = show[show.length - 1 - i]; // reverse order
               final pos = show.length - 1 - i;          // original left position
-              final bg = _solidColor(member['avatar_color'] as String?);
+              final bg = _solidColor(member['avatar_color'] as String?, member['name'] as String? ?? '');
               return Positioned(
                 left: pos * (_radius * 2 - _overlap),
                 child: Container(
@@ -1377,19 +1405,28 @@ class _TeamAvatarRow extends StatelessWidget {
                         color: Theme.of(context).scaffoldBackgroundColor,
                         width: 1.5),
                   ),
-                  child: CircleAvatar(
-                    radius: _radius,
-                    // Fully opaque background — no transparency bleed
-                    backgroundColor: bg,
-                    child: Text(
-                      _initials(member['name'] as String? ?? '?'),
-                      style: TextStyle(
-                        fontSize: _radius * 0.75,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                  child: () {
+                    final url = member['avatar_url'] as String?;
+                    if (url != null && url.isNotEmpty) {
+                      return CircleAvatar(
+                        radius: _radius,
+                        backgroundColor: bg,
+                        backgroundImage: NetworkImage(url),
+                      );
+                    }
+                    return CircleAvatar(
+                      radius: _radius,
+                      backgroundColor: bg,
+                      child: Text(
+                        _initials(member['name'] as String? ?? '?'),
+                        style: TextStyle(
+                          fontSize: _radius * 0.75,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  }(),
                 ),
               );
             }),

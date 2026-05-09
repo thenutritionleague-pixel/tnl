@@ -43,6 +43,12 @@ const roleStyle: Record<DisplayRole, string> = {
   member:       'bg-muted text-muted-foreground',
 }
 
+const AVATAR_PALETTE = [
+  '#059669', '#3B82F6', '#8B5CF6', '#F59E0B',
+  '#EC4899', '#14B8A6', '#EF4444', '#6366F1',
+  '#F97316', '#06B6D4', '#A855F7', '#10B981',
+]
+
 function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
 }
@@ -70,6 +76,7 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
   const [editTeamId, setEditTeamId] = useState<string | null>(null)
   const [editRole, setEditRole]     = useState<DisplayRole>('member')
   const [editOrgRole, setEditOrgRole] = useState<OrgMember['role']>('member')
+  const [editAvatarColor, setEditAvatarColor] = useState('#059669')
   const [roleError, setRoleError]   = useState<string | null>(null)
   const [saving, setSaving]         = useState(false)
 
@@ -106,6 +113,7 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
     setEditTeamId(m.teamId)
     setEditRole(displayRole(m))
     setEditOrgRole(m.role)
+    setEditAvatarColor(m.avatarColor)
     setRoleError(null)
   }
 
@@ -134,20 +142,22 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
         teamId: editTeamId,
         teamRole: editRole,
         orgRole: editOrgRole,
-        oldEmail: editTarget.email
+        oldEmail: editTarget.email,
+        avatarColor: editAvatarColor,
       })
-      
+
       const updatedTeamName = allTeams.find(t => t.id === editTeamId)?.name ?? 'Unassigned'
 
       setMembers(prev => prev.map(m =>
-        m.id === editTarget.id ? { 
-          ...m, 
-          name: editName, 
-          email: editEmail, 
-          teamId: editTeamId, 
+        m.id === editTarget.id ? {
+          ...m,
+          name: editName,
+          email: editEmail,
+          teamId: editTeamId,
           team: updatedTeamName,
           teamRole: editRole,
-          role: editOrgRole 
+          role: editOrgRole,
+          avatarColor: editAvatarColor,
         } : m
       ))
       setEditTarget(null)
@@ -325,6 +335,33 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
                   onChange={e => setEditEmail(e.target.value)}
                   placeholder="user@example.com"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Avatar Color</label>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold text-white shrink-0"
+                    style={{ backgroundColor: editAvatarColor }}
+                  >
+                    {editTarget ? initials(editName || editTarget.name) : ''}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {AVATAR_PALETTE.map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setEditAvatarColor(c)}
+                        className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
+                        style={{
+                          backgroundColor: c,
+                          borderColor: c === editAvatarColor ? 'white' : 'transparent',
+                          outline: c === editAvatarColor ? `2px solid ${c}` : 'none',
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-1.5">

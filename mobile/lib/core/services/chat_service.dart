@@ -11,7 +11,7 @@ class ChatService {
         .from('messages')
         .select('''
           id, content, media_url, media_type, created_at,
-          profiles!messages_user_id_fkey(id, name, avatar_color)
+          profiles!messages_user_id_fkey(id, name, avatar_color, avatar_url)
         ''')
         .eq('team_id', teamId)
         .order('created_at', ascending: true)
