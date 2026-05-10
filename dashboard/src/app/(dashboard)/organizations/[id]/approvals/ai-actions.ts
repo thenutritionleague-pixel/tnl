@@ -235,7 +235,8 @@ export async function runAiAnalysis(
     .update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: confidence })
     .eq('id', submissionId)
 
-  // Auto-approve: inline using admin client (no user session in webhook context)
+  // Auto-approve: inline using admin client (no user session in webhook context).
+  // ONLY if the row is still 'pending' — admin's manual decision wins concurrent races.
   if (aiStatus === 'approved') {
     const finalPoints = claimedTier?.points ?? sub.tasks?.points ?? 0
     const memberName = await client
@@ -245,7 +246,7 @@ export async function runAiAnalysis(
       .single()
       .then(r => r.data?.name ?? 'A member')
 
-    await client
+    const { data: updated } = await client
       .from('task_submissions')
       .update({
         status: 'approved',
@@ -254,34 +255,42 @@ export async function runAiAnalysis(
       })
       .eq('id', submissionId)
       .eq('status', 'pending')
+      .select('id')
 
-    await client.from('feed_items').insert({
-      org_id: orgId,
-      type: 'submission_approved',
-      title: `${memberName} completed ${taskTitle}`,
-      content: `+${finalPoints} 🥦 broccoli points earned`,
-      is_auto_generated: true,
-      author_id: sub.user_id,
-      challenge_id: sub.challenge_id ?? null,
-    })
+    if (updated && updated.length > 0) {
+      await client.from('feed_items').insert({
+        org_id: orgId,
+        type: 'submission_approved',
+        title: `${memberName} completed ${taskTitle}`,
+        content: `+${finalPoints} 🥦 broccoli points earned`,
+        is_auto_generated: true,
+        author_id: sub.user_id,
+        challenge_id: sub.challenge_id ?? null,
+      })
+    }
   }
 
-  // Auto-reject: inline using admin client + notify member via feed item
+  // Auto-reject: inline using admin client + notify member via feed item.
+  // ONLY if the row is still 'pending' — admin's manual decision wins races.
   if (aiStatus === 'rejected') {
-    await client
+    const { data: updated } = await client
       .from('task_submissions')
       .update({ status: 'rejected', rejection_reason: feedback || 'Rejected by AI review.' })
       .eq('id', submissionId)
+      .eq('status', 'pending')
+      .select('id')
 
-    await client.from('feed_items').insert({
-      org_id: orgId,
-      type: 'submission_rejected',
-      title: `Your ${taskTitle} submission was not approved`,
-      content: feedback || 'Please resubmit with a clear proof photo.',
-      is_auto_generated: true,
-      author_id: sub.user_id,
-      challenge_id: sub.challenge_id ?? null,
-    })
+    if (updated && updated.length > 0) {
+      await client.from('feed_items').insert({
+        org_id: orgId,
+        type: 'submission_rejected',
+        title: `Your ${taskTitle} submission was not approved`,
+        content: feedback || 'Please resubmit with a clear proof photo.',
+        is_auto_generated: true,
+        author_id: sub.user_id,
+        challenge_id: sub.challenge_id ?? null,
+      })
+    }
   }
 
   return { aiStatus, aiFeedback: feedback, aiConfidence: confidence }

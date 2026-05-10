@@ -78,6 +78,9 @@ export async function rejectSubmission(
       status: 'rejected',
       rejection_reason: reason || null,
       reviewed_at: new Date().toISOString(),
+      ai_status: null,
+      ai_feedback: null,
+      ai_confidence: null,
     })
     .eq('id', submissionId)
     .eq('org_id', orgId)

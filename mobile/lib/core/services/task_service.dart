@@ -34,7 +34,8 @@ class TaskService {
         .select('id, task_id, status, submitted_at, submitted_date, points_awarded, rejection_reason')
         .eq('user_id', userId)
         .eq('org_id', orgId)
-        .order('submitted_at', ascending: false);
+        .order('submitted_at', ascending: false)
+        .limit(200);
 
     return List<Map<String, dynamic>>.from(data);
   }
@@ -51,6 +52,7 @@ class TaskService {
     required String orgId,
     required XFile imageFile,
     String? submittedDate,
+    String? orgTimezone,
     String? note,
     int? selectedTierIndex,
   }) async {
@@ -72,15 +74,16 @@ class TaskService {
       fileOptions: FileOptions(upsert: false, contentType: _mimeType(ext)),
     );
 
-    // Use the provided date (history resubmit) or fall back to today (local).
-    // Note: the DB trigger set_submitted_date_local() always overrides this
-    // with the org-timezone-correct date (including a 15-min grace window),
-    // so this value is just a fallback placeholder.
-    final dateStr = submittedDate ??
-        DateTime.now().toLocal().toString().split(' ')[0];
+    // Use the provided date (history resubmit) or fall back to the grace-aware
+    // effective date in the org timezone. During 00:00–00:14 this returns
+    // yesterday, matching what the DB trigger set_submitted_date_local() stores,
+    // so the existing-rejected-row lookup finds the right row.
+    final dateStr = submittedDate ?? orgEffectiveTodayStr(orgTimezone);
 
     // If there's a rejected submission for the same task/date, UPDATE it in-place
     // instead of inserting a new row. This keeps one row per (user, task, date).
+    // Defensive .order().limit(1): the unique partial index allows multiple
+    // rejected rows in theory, so always pick the most recent one.
     final rejectedQuery = _client
         .from('task_submissions')
         .select('id')
@@ -90,8 +93,10 @@ class TaskService {
         .eq('submitted_date', dateStr)
         .eq('status', 'rejected');
     final existing = challengeId != null
-        ? await rejectedQuery.eq('challenge_id', challengeId).maybeSingle()
-        : await rejectedQuery.maybeSingle();
+        ? await rejectedQuery.eq('challenge_id', challengeId)
+            .order('submitted_at', ascending: false).limit(1).maybeSingle()
+        : await rejectedQuery
+            .order('submitted_at', ascending: false).limit(1).maybeSingle();
 
     if (existing != null) {
       await _client.from('task_submissions').update({
@@ -145,7 +150,7 @@ class TaskService {
     String orgId, {
     String orgTimezone = 'UTC',
   }) async {
-    final todayStr = orgTodayStr(orgTimezone);
+    final todayStr = orgEffectiveTodayStr(orgTimezone);
 
     final data = await _client
         .from('task_submissions')

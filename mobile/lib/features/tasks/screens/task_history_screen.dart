@@ -21,6 +21,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
   List<Map<String, dynamic>> _history = [];
   String? _profileId;
   String? _orgId;
+  String _orgTimezone = 'UTC';
 
   @override
   void initState() {
@@ -52,6 +53,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
         setState(() {
           _profileId = profile['id'] as String;
           _orgId = profile['org_id'] as String;
+          _orgTimezone = orgTz;
           _history = subs;
           _loading = false;
         });
@@ -159,6 +161,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                       submission: _history[i],
                       profileId: _profileId ?? '',
                       orgId: _orgId ?? '',
+                      orgTimezone: _orgTimezone,
                       onDone: _load,
                     ),
                     childCount: _history.length,
@@ -178,12 +181,14 @@ class _HistoryCard extends StatelessWidget {
   final Map<String, dynamic> submission;
   final String profileId;
   final String orgId;
+  final String orgTimezone;
   final VoidCallback onDone;
 
   const _HistoryCard({
     required this.submission,
     required this.profileId,
     required this.orgId,
+    required this.orgTimezone,
     required this.onDone,
   });
 
@@ -366,6 +371,7 @@ class _HistoryCard extends StatelessWidget {
                         'task': taskWithChallenge,
                         'profileId': profileId,
                         'orgId': orgId,
+                        'orgTimezone': orgTimezone,
                         'isResubmit': true,
                         'submittedDate': date, // use original date
                       });

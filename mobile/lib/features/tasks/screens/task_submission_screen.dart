@@ -122,6 +122,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         orgId: _orgId,
         imageFile: _selectedImage!,
         submittedDate: _submittedDate,
+        orgTimezone: _orgTimezone,
         note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
         selectedTierIndex: _selectedTierIndex,
       );
@@ -240,7 +241,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     ),
                     const SizedBox(height: 44),
                     GestureDetector(
-                      onTap: () => context.go('/tasks'),
+                      onTap: () => context.pop(),
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(vertical: 16),

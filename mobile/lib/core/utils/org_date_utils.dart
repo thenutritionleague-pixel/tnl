@@ -14,6 +14,28 @@ String orgTodayStr(String? ianaTimezone) {
   }
 }
 
+/// Grace-aware effective date: during the 15-min grace window (00:00–00:14)
+/// submissions are recorded as the previous day by the DB trigger. This
+/// returns that same effective date so mobile UI stays in sync with the DB.
+String orgEffectiveTodayStr(String? ianaTimezone) {
+  try {
+    final location = tz.getLocation(ianaTimezone ?? 'UTC');
+    final now = tz.TZDateTime.now(location);
+    final effective = (now.hour == 0 && now.minute < 15)
+        ? now.subtract(const Duration(days: 1))
+        : now;
+    return '${effective.year.toString().padLeft(4, '0')}-'
+        '${effective.month.toString().padLeft(2, '0')}-'
+        '${effective.day.toString().padLeft(2, '0')}';
+  } catch (_) {
+    final now = DateTime.now().toLocal();
+    final effective = (now.hour == 0 && now.minute < 15)
+        ? now.subtract(const Duration(days: 1))
+        : now;
+    return effective.toString().split(' ')[0];
+  }
+}
+
 /// Returns how long until midnight in the org's IANA timezone.
 /// Falls back to device local midnight if the timezone is unknown.
 Duration untilOrgMidnight(String? ianaTimezone) {

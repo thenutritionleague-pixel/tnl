@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export PATH=\"$PATH:$HOME/fvm/default/bin:$HOME/.pub-cache/bin:/usr/local/bin\")",
+      "mcp__code-review-graph__semantic_search_nodes_tool",
+      "Bash(~/.fvm/default/bin/flutter analyze *)",
+      "Bash(/Users/abdulquadir/development/flutter/bin/flutter analyze *)",
+      "Bash(export PATH=\"$PATH:$HOME/flutter/bin:$HOME/fvm/default/bin:/usr/local/flutter/bin\")",
+      "Bash(ls ~/.nvm/versions/node/*/bin/node)",
+      "Bash(/Users/abdulquadir/.nvm/versions/node/v22.20.0/bin/node node_modules/.bin/tsc --noEmit)",
+      "Bash(/Users/abdulquadir/flutter/bin/flutter analyze *)",
+      "Bash(claude plugin *)",
+      "Bash(~/.nvm/versions/node/v22.20.0/bin/npx skills *)",
+      "Bash(npx skills *)",
+      "Bash(mkdir -p ~/.config/caveman)",
+      "Bash(echo '{ \"defaultMode\": \"full\" }')",
+      "Bash(xargs cat *)",
+      "Bash(export PATH=\"$PATH:/Users/abdulquadir/development/flutter/bin\")",
+      "Bash(git checkout *)",
+      "Bash(python3)",
+      "Bash(sed -n '360,370p' /Users/abdulquadir/Desktop/Projects/brandhero/yi_nutrition_league/mobile/lib/features/feed/screens/feed_screen.dart)",
+      "Bash(sed -n '630,640p' /Users/abdulquadir/Desktop/Projects/brandhero/yi_nutrition_league/mobile/lib/features/home/screens/home_screen.dart)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "code-review-graph"
+  ],
+  "enableAllProjectMcpServers": true
+}

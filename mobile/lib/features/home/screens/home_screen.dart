@@ -442,6 +442,7 @@ class _HomeScreenState extends State<HomeScreen>
                               profileId: _profile?['id'] as String? ?? '',
                               orgId: _profile?['org_id'] as String? ?? '',
                               orgTimezone: _orgTimezone,
+                              onDone: _load,
                             );
                           }),
                         const SizedBox(height: 6),
@@ -582,6 +583,7 @@ class _ChallengeRow extends StatelessWidget {
   final String profileId;
   final String orgId;
   final String orgTimezone;
+  final VoidCallback onDone;
   const _ChallengeRow({
     required this.task,
     required this.status,
@@ -589,6 +591,7 @@ class _ChallengeRow extends StatelessWidget {
     required this.profileId,
     required this.orgId,
     required this.orgTimezone,
+    required this.onDone,
   });
 
   @override
@@ -653,7 +656,7 @@ class _ChallengeRow extends StatelessWidget {
     return Column(
       children: [
         InkWell(
-          onTap: canSubmit ? () {
+          onTap: canSubmit ? () async {
             if (isInSubmissionLockout(orgTimezone)) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -666,12 +669,13 @@ class _ChallengeRow extends StatelessWidget {
               );
               return;
             }
-            context.push('/tasks/submit', extra: {
+            await context.push('/tasks/submit', extra: {
               ...task,
               'profileId': profileId,
               'orgId': orgId,
               'orgTimezone': orgTimezone,
             });
+            onDone();
           } : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),

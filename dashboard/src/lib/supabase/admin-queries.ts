@@ -650,7 +650,32 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
 
   const rawRows = (subsRes.data ?? []) as unknown as SubmissionRow[]
   const hasMore = rawRows.length > APPROVALS_PAGE_SIZE
-  const rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
+  let rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
+
+  // For the "rejected" tab: hide rejected rows that have been superseded by a newer
+  // pending/approved resubmission so the admin doesn't see a stale rejection after
+  // the member has already resubmitted.
+  if (status === 'rejected' && rows.length > 0) {
+    const userIds = [...new Set(rows.map(r => r.user_id))]
+    const taskIds = [...new Set(rows.map(r => r.task_id))]
+    const { data: newerSubs } = await client
+      .from('task_submissions')
+      .select('user_id, task_id, submitted_at')
+      .eq('org_id', orgId)
+      .neq('status', 'rejected')
+      .in('user_id', userIds)
+      .in('task_id', taskIds)
+    if (newerSubs && newerSubs.length > 0) {
+      const superseded = new Set<string>()
+      for (const n of newerSubs as { user_id: string; task_id: string; submitted_at: string }[]) {
+        const rej = rows.find(r => r.user_id === n.user_id && r.task_id === n.task_id)
+        if (rej && n.submitted_at > (rej.submitted_at as string)) {
+          superseded.add(`${n.user_id}::${n.task_id}`)
+        }
+      }
+      rows = rows.filter(r => !superseded.has(`${r.user_id}::${r.task_id}`))
+    }
+  }
 
   // Group by (user_id, task_id) — rows are already sorted newest-first.
   // First row in each group is the active submission; the rest are history.

@@ -27,18 +27,20 @@ class _TasksScreenState extends State<TasksScreen>
   String _orgTimezone = 'UTC';
   int? _selectedWeek; // null = show all
   Timer? _timer;
+  Timer? _pendingRefreshTimer;
   Duration _untilMidnight = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    waitForSession(then: _load); // Wait for token refresh before loading
+    waitForSession(then: _load);
     _startCountdown();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _pendingRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -49,6 +51,29 @@ class _TasksScreenState extends State<TasksScreen>
 
   void _updateCountdown() {
     if (mounted) setState(() => _untilMidnight = untilOrgMidnight(_orgTimezone));
+  }
+
+  /// Silently re-fetch only submissions (no loading spinner) to pick up
+  /// AI approval/rejection that happened after the initial load.
+  Future<void> _refreshSubmissions() async {
+    final authId = Supabase.instance.client.auth.currentUser?.id;
+    if (authId == null || _profileId == null || _orgId == null) return;
+    try {
+      final subs = await TaskService.getUserSubmissions(_profileId!, _orgId!);
+      if (mounted) setState(() => _submissions = subs);
+      _schedulePendingRefresh();
+    } catch (_) {}
+  }
+
+  /// Keep polling every 30 s while any today-submission is still pending.
+  void _schedulePendingRefresh() {
+    _pendingRefreshTimer?.cancel();
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
+    final hasPending = _submissions.any(
+      (s) => (s['submitted_date'] as String?) == todayStr && s['status'] == 'pending',
+    );
+    if (!hasPending) return;
+    _pendingRefreshTimer = Timer(const Duration(seconds: 30), _refreshSubmissions);
   }
 
   Future<void> _load() async {
@@ -82,8 +107,8 @@ class _TasksScreenState extends State<TasksScreen>
           _loading = false;
           _loadError = false;
         });
-        // Recalculate countdown using the now-correct org timezone
         _updateCountdown();
+        _schedulePendingRefresh();
       }
     } catch (e) {
       debugPrint('TASKS_LOAD_ERROR: $e');
@@ -93,9 +118,10 @@ class _TasksScreenState extends State<TasksScreen>
   }
 
   /// Returns today's submission status for a specific task.
-  /// Compares submitted_date (org timezone from DB) with today in org timezone.
+  /// Uses the grace-aware effective date so a 00:00–00:14 submission
+  /// (stored as yesterday by the DB trigger) is correctly matched.
   String _submissionStatus(String taskId) {
-    final todayStr = orgTodayStr(_orgTimezone);
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();
@@ -108,7 +134,7 @@ class _TasksScreenState extends State<TasksScreen>
 
   /// Returns the rejection reason only if TODAY's submission is rejected.
   String? _rejectionReason(String taskId) {
-    final todayStr = orgTodayStr(_orgTimezone);
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();

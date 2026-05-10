@@ -868,7 +868,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
       .select(`
         id, name, description, status, start_date, end_date, manually_closed,
         challenge_teams(team_id, teams(name)),
-        tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
+        tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, task_teams(teams(name)))
       `)
       .eq('org_id', orgId)
       .order('created_at', { ascending: false }),
@@ -1194,14 +1194,14 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, points_tiers, start_week, category, icon, is_active, task_teams(teams(name)))
+      tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, task_teams(teams(name)))
     `)
     .eq('id', challengeId)
     .single()
   if (!ch) return null
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
@@ -1222,6 +1222,8 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
       icon: t.icon,
       teams: t.task_teams?.map(tt => tt.teams?.name).filter(Boolean) as string[] || [],
       isActive: t.is_active,
+      startDate: t.start_date,
+      endDate: t.end_date,
     })),
     submissions: count ?? 0,
   }
