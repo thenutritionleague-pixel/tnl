@@ -117,6 +117,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     try {
       await TaskService.submitTaskImage(
         taskId: taskId,
+        task: _taskData,
         challengeId: challengeId,
         userId: _profileId,
         orgId: _orgId,
@@ -137,6 +138,22 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
           const SnackBar(
             content: Text('You have already submitted this task today.'),
             backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } on UnsupportedImageFormatException catch (e) {
+      // HEIC / HEIF — drop the selected file so the user must pick another
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _selectedImage = null;
+          _imageBytes = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 6),
           ),
         );
       }

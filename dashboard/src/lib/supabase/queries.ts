@@ -5,6 +5,7 @@
  */
 
 import { createAdminClient } from './server'
+import { getAdminProfile } from '../auth'
 import { todayInTimezone } from '../date-utils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -110,6 +111,16 @@ export interface TeamMemberRowUI {
   weekGroups: WeekGroupUI[]
 }
 
+export interface TeamLegacyEntryUI {
+  id: string
+  amount: number
+  reason: string
+  sourceName: string | null
+  kind: 'legacy_transfer' | 'admin_bonus' | string
+  createdAt: string
+  eventDate: string
+}
+
 export interface TeamDetailUI {
   id: string
   name: string
@@ -120,6 +131,7 @@ export interface TeamDetailUI {
   captain: string
   viceCaptain: string
   members: TeamMemberRowUI[]
+  legacyEntries: TeamLegacyEntryUI[]
 }
 
 export interface TaskTier {
@@ -493,28 +505,202 @@ export async function updateMember(orgId: string, userId: string, data: {
 
 export async function removeMember(orgId: string, userId: string) {
   const supabase = await db()
-  
-  // 1. Get the email and authId before we delete
+
+  // 1. Capture profile (name, email, auth_id, total_points) BEFORE deletion
   const { data: profile } = await supabase
     .from('profiles')
-    .select('email, auth_id')
+    .select('email, auth_id, name, total_points')
     .eq('id', userId)
     .single()
-  
-  if (profile?.email) {
-    // 2. Remove from whitelist so they can't re-signup/login
+  if (!profile) return { success: false, error: 'Profile not found' as const }
+
+  // 2. Look up their team — needed to credit transferred points
+  const { data: tm } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', userId)
+    .eq('org_id', orgId)
+    .maybeSingle()
+
+  // 3. Capture proof_urls BEFORE auth-delete cascades them
+  const { data: subs } = await supabase
+    .from('task_submissions')
+    .select('proof_url')
+    .eq('user_id', userId)
+  const proofPaths = ((subs ?? []) as { proof_url: string | null }[])
+    .map(s => s.proof_url)
+    .filter((p): p is string => !!p)
+
+  // 4. Insert team_transactions row IF the user had a team AND non-zero points.
+  //    Zero-point removals skip this entry to keep the breakdown clean.
+  let insertedTransferId: string | null = null
+  if (tm?.team_id && (profile.total_points ?? 0) > 0) {
+    const { data: ttRow, error: ttErr } = await supabase
+      .from('team_transactions')
+      .insert({
+        team_id: tm.team_id,
+        org_id: orgId,
+        amount: profile.total_points,
+        reason: `Points inherited from ${profile.name} (left team)`,
+        source_user_name: profile.name,
+        source_user_email: profile.email,
+        kind: 'legacy_transfer',
+      })
+      .select('id')
+      .single()
+    if (ttErr) return { success: false, error: `Could not record transfer: ${ttErr.message}` as const }
+    insertedTransferId = ttRow?.id ?? null
+  }
+
+  // 5. Delete proof photos from storage (best-effort; log on failure)
+  if (proofPaths.length > 0) {
+    const { error: storageErr } = await supabase.storage.from('task-proofs').remove(proofPaths)
+    if (storageErr) console.error('[removeMember] proof storage cleanup failed:', storageErr)
+  }
+
+  // 6. Existing flow: clear invite whitelist + delete auth user (cascades the rest)
+  if (profile.email) {
     await supabase.from('invite_whitelist').delete().eq('org_id', orgId).eq('email', profile.email)
   }
 
-  if (profile?.auth_id) {
-    // 3. Delete from Supabase Auth (This triggers the Nuclear Cascade on profiles/teams)
+  if (profile.auth_id) {
     const { error: authErr } = await supabase.auth.admin.deleteUser(profile.auth_id)
-    if (authErr) throw authErr
+    if (authErr) {
+      // Roll back the team transfer so we don't leave phantom points
+      if (insertedTransferId) {
+        await supabase.from('team_transactions').delete().eq('id', insertedTransferId)
+      }
+      throw authErr
+    }
   } else {
-    // Fallback: Delete profile directly if no auth_id found
-    await supabase.from('profiles').delete().eq('id', userId)
+    // No auth_id — delete profile directly
+    const { error: pErr } = await supabase.from('profiles').delete().eq('id', userId)
+    if (pErr) {
+      if (insertedTransferId) {
+        await supabase.from('team_transactions').delete().eq('id', insertedTransferId)
+      }
+      throw pErr
+    }
   }
 
+  return { success: true, transferredPoints: insertedTransferId ? (profile.total_points ?? 0) : 0 }
+}
+
+/**
+ * Manually add or deduct team-level points (e.g. a team bonus, correction, or penalty).
+ * Logs the entry in `team_transactions` with kind = 'admin_bonus'.
+ * Positive amount = bonus, negative amount = deduction.
+ */
+export async function addTeamTransaction(
+  teamId: string,
+  orgId: string,
+  amount: number,
+  reason: string,
+  transactionDate?: string,
+): Promise<{ success: true; id: string } | { success: false; error: string }> {
+  // Permission check — only org/super admins for this org can adjust
+  const profile = await getAdminProfile()
+  if (!profile) return { success: false, error: 'Unauthorized.' }
+  const ALLOWED = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+  const ORG_SCOPED = ['org_admin', 'sub_admin']
+  if (!ALLOWED.includes(profile.role)) return { success: false, error: 'Unauthorized.' }
+  if (ORG_SCOPED.includes(profile.role) && profile.org_id !== orgId) {
+    return { success: false, error: 'Unauthorized.' }
+  }
+
+  // Validation
+  if (!Number.isInteger(amount) || amount === 0) {
+    return { success: false, error: 'Amount must be a non-zero integer.' }
+  }
+  if (!reason.trim()) {
+    return { success: false, error: 'Reason is required.' }
+  }
+
+  const supabase = await db()
+
+  // Verify team belongs to this org (defensive — admin client bypasses RLS)
+  const { data: team } = await supabase
+    .from('teams')
+    .select('id, org_id, name')
+    .eq('id', teamId)
+    .single()
+  if (!team || team.org_id !== orgId) {
+    return { success: false, error: 'Team not found in this org.' }
+  }
+
+  const { data: inserted, error } = await supabase
+    .from('team_transactions')
+    .insert({
+      team_id: teamId,
+      org_id: orgId,
+      amount,
+      reason: reason.trim(),
+      source_user_name: null,
+      kind: 'admin_bonus',
+      created_by: profile.id,
+      transaction_date: transactionDate ?? new Date().toISOString().slice(0, 10),
+    })
+    .select('id')
+    .single()
+
+  if (error || !inserted) {
+    return { success: false, error: error?.message ?? 'Insert failed.' }
+  }
+
+  return { success: true, id: inserted.id }
+}
+
+/**
+ * Revoke a team transaction (delete the row). For correcting mistakes.
+ */
+export async function deleteTeamTransaction(
+  transactionId: string,
+  orgId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const profile = await getAdminProfile()
+  if (!profile) return { success: false, error: 'Unauthorized.' }
+  const ALLOWED = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+  const ORG_SCOPED = ['org_admin', 'sub_admin']
+  if (!ALLOWED.includes(profile.role)) return { success: false, error: 'Unauthorized.' }
+  if (ORG_SCOPED.includes(profile.role) && profile.org_id !== orgId) {
+    return { success: false, error: 'Unauthorized.' }
+  }
+
+  const supabase = await db()
+  const { error } = await supabase
+    .from('team_transactions')
+    .delete()
+    .eq('id', transactionId)
+    .eq('org_id', orgId)
+  if (error) return { success: false, error: error.message }
+  return { success: true }
+}
+
+export async function updateTeamTransaction(
+  transactionId: string,
+  orgId: string,
+  amount: number,
+  reason: string,
+  transactionDate: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const profile = await getAdminProfile()
+  if (!profile) return { success: false, error: 'Unauthorized.' }
+  const ALLOWED = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+  const ORG_SCOPED = ['org_admin', 'sub_admin']
+  if (!ALLOWED.includes(profile.role)) return { success: false, error: 'Unauthorized.' }
+  if (ORG_SCOPED.includes(profile.role) && profile.org_id !== orgId) {
+    return { success: false, error: 'Unauthorized.' }
+  }
+  if (!Number.isInteger(amount) || amount === 0) return { success: false, error: 'Amount must be a non-zero integer.' }
+  if (!reason.trim()) return { success: false, error: 'Reason is required.' }
+
+  const supabase = await db()
+  const { error } = await supabase
+    .from('team_transactions')
+    .update({ amount, reason: reason.trim(), transaction_date: transactionDate })
+    .eq('id', transactionId)
+    .eq('org_id', orgId)
+  if (error) return { success: false, error: error.message }
   return { success: true }
 }
 
@@ -685,6 +871,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     reason: string
     is_manual: boolean
     created_at: string
+    transaction_date: string | null
     task_submissions: { submitted_date: string | null; tasks: { title: string; icon: string; points: number } | null } | null
   }
 
@@ -696,7 +883,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
   if (challenge && memberIds.length > 0) {
     const { data: txnData } = await supabase
       .from('points_transactions')
-      .select('user_id, amount, reason, is_manual, created_at, task_submissions(submitted_date, tasks(title, icon, points))')
+      .select('user_id, amount, reason, is_manual, created_at, transaction_date, task_submissions(submitted_date, tasks(title, icon, points))')
       .in('user_id', memberIds)
       .gte('created_at', challenge.start_date)
       .order('created_at', { ascending: true })
@@ -740,13 +927,15 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         const byMatch = /\[by ([^\]]+)\]$/.exec(rawReason)
         const adminName = byMatch?.[1] ?? ''
         const title = rawReason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim()
-        week = weekFor(createdAt)
+        const txDate = t.transaction_date ?? ''
+        const eventDate = txDate || createdAt
+        week = weekFor(eventDate)
         entry = {
           status: 'adjustment',
           icon: '✏️',
           title: title || (amount >= 0 ? 'Bonus Points' : 'Point Deduction'),
           subtitle: adminName ? `Added by ${adminName}` : 'Added by Admin',
-          date: shortDate(createdAt),
+          date: shortDate(eventDate),
           points: amount,
         }
       } else if (amount === 0) {
@@ -801,25 +990,38 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     })
   }
 
-  // Team rank: compare total_points across teams in the same challenge
+  // Fetch team_transactions (legacy transfers + manual bonuses) for this team
+  const { data: ttData } = await supabase
+    .from('team_transactions')
+    .select('id, amount, reason, source_user_name, kind, created_at, transaction_date')
+    .eq('team_id', teamId)
+    .order('created_at', { ascending: false })
+
+  const legacyEntries: TeamLegacyEntryUI[] = ((ttData ?? []) as {
+    id: string; amount: number; reason: string; source_user_name: string | null; kind: string; created_at: string; transaction_date: string | null
+  }[]).map(t => ({
+    id: t.id,
+    amount: t.amount,
+    reason: t.reason,
+    sourceName: t.source_user_name,
+    kind: t.kind,
+    createdAt: t.created_at,
+    eventDate: t.transaction_date ?? t.created_at.slice(0, 10),
+  }))
+  const legacyTotal = legacyEntries.reduce((s, e) => s + e.amount, 0)
+
+  // Team rank: use team_points_view so it matches mobile leaderboard + includes legacy transfers
   let rank = 1
   if (challenge) {
-    const [subsRes, tmRes] = await Promise.all([
-      supabase.from('task_submissions').select('user_id, points_awarded, tasks(points)').eq('challenge_id', challenge.id).eq('status', 'approved'),
-      supabase.from('team_members').select('user_id, team_id'),
-    ])
-    const userToTeam: Record<string, string> = {}
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const tm of (tmRes.data ?? []) as any[]) userToTeam[tm.user_id] = tm.team_id
-    const teamPts: Record<string, number> = {}
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const s of (subsRes.data ?? []) as any[]) {
-      const tid = userToTeam[s.user_id]
-      if (tid) teamPts[tid] = (teamPts[tid] ?? 0) + (s.points_awarded ?? s.tasks?.points ?? 0)
-    }
-    const sorted = Object.entries(teamPts).sort((a, b) => b[1] - a[1])
-    const myPts = teamPts[teamId] ?? 0
-    rank = sorted.findIndex(([, pts]) => pts <= myPts) + 1 || 1
+    const { data: viewRows } = await supabase
+      .from('team_points_view')
+      .select('team_id, total_points')
+      .eq('challenge_id', challenge.id)
+    const allTeams = (viewRows ?? []) as { team_id: string; total_points: number }[]
+    const sorted = [...allTeams].sort((a, b) => b.total_points - a.total_points)
+    const me = allTeams.find(t => t.team_id === teamId)
+    const myPts = me?.total_points ?? 0
+    rank = sorted.findIndex(t => t.total_points <= myPts) + 1 || 1
   }
 
   return {
@@ -827,11 +1029,12 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     name: teamRaw.name,
     emoji: teamRaw.emoji,
     color: teamRaw.color,
-    totalPoints: memberRows.reduce((s, m) => s + m.total, 0),
+    totalPoints: memberRows.reduce((s, m) => s + m.total, 0) + legacyTotal,
     rank,
     captain,
     viceCaptain,
     members: memberRows,
+    legacyEntries,
   }
 }
 

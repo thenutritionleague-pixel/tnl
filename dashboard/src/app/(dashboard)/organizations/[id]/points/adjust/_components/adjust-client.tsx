@@ -23,6 +23,7 @@ export function AdjustClient({ orgId, members }: Props) {
   const [userId, setUserId]   = useState('')
   const [amount, setAmount]   = useState('')
   const [reason, setReason]   = useState('')
+  const [date, setDate]       = useState(() => new Date().toISOString().slice(0, 10))
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -31,9 +32,10 @@ export function AdjustClient({ orgId, members }: Props) {
     const pts = parseInt(amount)
     if (!Number.isFinite(pts) || pts === 0) { toast.error('Enter a non-zero integer amount.'); return }
     if (!reason.trim()) { toast.error('Reason is required.'); return }
+    if (!date) { toast.error('Event date is required.'); return }
 
     setSubmitting(true)
-    const result = await addManualAdjustment(orgId, userId, pts, reason)
+    const result = await addManualAdjustment(orgId, userId, pts, reason, date)
     setSubmitting(false)
 
     if (result.error) {
@@ -43,6 +45,7 @@ export function AdjustClient({ orgId, members }: Props) {
       setUserId('')
       setAmount('')
       setReason('')
+      setDate(new Date().toISOString().slice(0, 10))
       router.push(`/organizations/${orgId}/points`)
     }
   }
@@ -104,6 +107,20 @@ export function AdjustClient({ orgId, members }: Props) {
             onChange={e => setReason(e.target.value)}
             required
             className={cn(inputCls, 'resize-none')}
+          />
+        </div>
+
+        {/* Event date */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Event Date <span className="font-normal normal-case text-muted-foreground">(determines which week it counts toward)</span>
+          </label>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            required
+            className={inputCls}
           />
         </div>
 

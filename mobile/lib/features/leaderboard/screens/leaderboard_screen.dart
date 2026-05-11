@@ -39,6 +39,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── Expansion state ───────────────────────────────────────────────────────
   String? _expandedMemberInTeam; // which member under a team is open (My Team tab)
   String? _expandedIndividualId; // which individual row is open
+  String? _expandedTeamId;       // which team row is open (Teams tab)
+
+  // ── Team weekly points cache (Teams tab) ─────────────────────────────────
+  final Map<String, Map<int, int>> _teamWeeklyCache = {};
 
   // ── Pre-loaded team member previews (avatars in rows) ────────────────────
   Map<String, List<Map<String, dynamic>>> _teamMemberPreviews = {};
@@ -75,6 +79,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     if (mounted) setState(() { _loading = true; _loadError = false; });
     _teamMembersCache.clear();
     _breakdownCache.clear();
+    _teamWeeklyCache.clear();
     final authId = Supabase.instance.client.auth.currentUser?.id;
     if (authId == null) {
       if (mounted) setState(() => _loading = false);
@@ -178,6 +183,25 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
   }
 
+  // ── Lazy load: team weekly points ─────────────────────────────────────────
+  Future<void> _loadTeamWeeklyPoints(String teamId) async {
+    if (_teamWeeklyCache.containsKey(teamId) || _loadingIds.contains(teamId)) return;
+    setState(() => _loadingIds.add(teamId));
+    try {
+      final orgId = (await ProfileService.getProfile(
+              Supabase.instance.client.auth.currentUser!.id))?['org_id'] as String? ?? '';
+      final weekly = await LeaderboardService.getTeamWeeklyPoints(teamId, orgId, _challengeId);
+      if (mounted) {
+        setState(() {
+          _teamWeeklyCache[teamId] = weekly;
+          _loadingIds.remove(teamId);
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingIds.remove(teamId));
+    }
+  }
+
   // ── Scaffold ──────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -196,6 +220,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                   onRefresh: () async {
                     _expandedMemberInTeam = null;
                     _expandedIndividualId = null;
+                    _expandedTeamId = null;
                     await _load();
                   },
                   color: AppColors.primary,
@@ -381,25 +406,39 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return const Color(0xFF9CA3AF);
   }
 
-  Widget _buildAllTeamsList() => Container(
-        color: Theme.of(context).colorScheme.surface,
-        child: Column(
-          children: () {
-            final ranks = _tiedRanks(_teams, 'total_points');
-            return _teams.asMap().entries.map((e) {
-            final rank = ranks[e.key];
-            final team = e.value;
-            final teamId = team['team_id'] as String;
-            final isMyTeam = teamId == _myTeamId;
-            final pts = team['total_points'] as int? ?? 0;
-            final isLast = e.key == _teams.length - 1;
+  Widget _buildAllTeamsList() {
+    final ranks = _tiedRanks(_teams, 'total_points');
+    return Container(
+      color: Theme.of(context).colorScheme.surface,
+      child: Column(
+        children: _teams.asMap().entries.map((e) {
+          final rank = ranks[e.key];
+          final team = e.value;
+          final teamId = team['team_id'] as String;
+          final isMyTeam = teamId == _myTeamId;
+          final pts = team['total_points'] as int? ?? 0;
+          final isLast = e.key == _teams.length - 1;
+          final isExpanded = _expandedTeamId == teamId;
 
-            return Column(
-              children: [
-                // ── Team row ────────────────────────────────────────────
-                Container(
+          return Column(
+            children: [
+              // ── Team row (tappable) ──────────────────────────────────
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    if (isExpanded) {
+                      _expandedTeamId = null;
+                    } else {
+                      _expandedTeamId = teamId;
+                      _loadTeamWeeklyPoints(teamId);
+                    }
+                  });
+                },
+                child: Container(
                   color: isMyTeam
-                      ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF134E2A) : AppColors.primarySurface)
+                      ? (Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF134E2A)
+                          : AppColors.primarySurface)
                       : Colors.transparent,
                   padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
                   child: Row(
@@ -445,21 +484,96 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                       ),
                       const SizedBox(width: 8),
                       _PointsPill(pts: pts),
+                      const SizedBox(width: 6),
+                      AnimatedRotation(
+                        turns: isExpanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 220),
+                        child: Icon(Icons.keyboard_arrow_down_rounded,
+                            size: 16, color: context.textHint),
+                      ),
                     ],
                   ),
                 ),
+              ),
 
-                if (!isLast)
-                  Divider(
-                      height: 1,
-                      color: Theme.of(context).colorScheme.outline,
-                      indent: 18),
-              ],
-            );
-          }).toList();
-          }(),
-        ),
+              // ── Weekly breakdown panel ───────────────────────────────
+              AnimatedSize(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeInOut,
+                child: isExpanded
+                    ? _buildTeamWeeklyPanel(teamId)
+                    : const SizedBox.shrink(),
+              ),
+
+              if (!isLast)
+                Divider(
+                    height: 1,
+                    color: Theme.of(context).colorScheme.outline,
+                    indent: 18),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildTeamWeeklyPanel(String teamId) {
+    if (_loadingIds.contains(teamId)) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2)),
       );
+    }
+    final weekly = _teamWeeklyCache[teamId];
+    if (weekly == null || weekly.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
+        child: Text('No points yet.',
+            style: TextStyle(color: context.textHint, fontSize: 12)),
+      );
+    }
+    final sortedWeeks = weekly.keys.toList()..sort();
+    return Container(
+      color: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF0F2416)
+          : const Color(0xFFF0FDF4),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: sortedWeeks.asMap().entries.map((e) {
+          final isLastWeek = e.key == sortedWeeks.length - 1;
+          final week = e.value;
+          final pts = weekly[week] ?? 0;
+          return Padding(
+            padding: EdgeInsets.only(bottom: isLastWeek ? 0 : 8),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Text('Week $week',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 10),
+                Text('🥦 $pts',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: context.isDarkMode
+                            ? Colors.white.withValues(alpha: 0.9)
+                            : context.pointsText)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
 
   Widget _buildTeamMembersPanel(String teamId) {
     if (_loadingIds.contains(teamId)) {

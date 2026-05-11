@@ -2,9 +2,17 @@
 
 import { use, useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Crown, Shield, ChevronDown, ChevronRight, CheckCircle2, XCircle } from 'lucide-react'
+import { ArrowLeft, Crown, Shield, ChevronDown, ChevronRight, CheckCircle2, XCircle, UserMinus, Gift, Plus, Trash2, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getTeamDetail, type TeamDetailUI } from '@/lib/supabase/queries'
+import { Button, buttonVariants } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { getTeamDetail, addTeamTransaction, deleteTeamTransaction, updateTeamTransaction, type TeamDetailUI, type TeamLegacyEntryUI } from '@/lib/supabase/queries'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -23,9 +31,95 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [isLoading, setIsLoading] = useState(true)
   const [expandedMember, setExpandedMember] = useState<string | null>(null)
 
+  // Team bonus dialog state
+  const [bonusOpen, setBonusOpen] = useState(false)
+  const [bonusAmount, setBonusAmount] = useState('')
+  const [bonusReason, setBonusReason] = useState('')
+  const [bonusDate, setBonusDate]     = useState(() => new Date().toISOString().slice(0, 10))
+  const [bonusSubmitting, setBonusSubmitting] = useState(false)
+  const [bonusError, setBonusError] = useState<string | null>(null)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+
+  // Edit team transaction state
+  const [editTarget, setEditTarget] = useState<TeamLegacyEntryUI | null>(null)
+  const [editAmount, setEditAmount] = useState('')
+  const [editReason, setEditReason] = useState('')
+  const [editDate, setEditDate]     = useState('')
+  const [editSubmitting, setEditSubmitting] = useState(false)
+  const [editError, setEditError]   = useState<string | null>(null)
+
+  async function reload() {
+    const fresh = await getTeamDetail(tid, orgId)
+    if (fresh) setTeam(fresh)
+  }
+
   useEffect(() => {
     getTeamDetail(tid, orgId).then(setTeam).finally(() => setIsLoading(false))
   }, [tid, orgId])
+
+  function openBonus() {
+    setBonusAmount('')
+    setBonusReason('')
+    setBonusDate(new Date().toISOString().slice(0, 10))
+    setBonusError(null)
+    setBonusOpen(true)
+  }
+
+  function openEdit(entry: TeamLegacyEntryUI) {
+    setEditTarget(entry)
+    setEditAmount(String(entry.amount))
+    setEditReason(entry.reason)
+    setEditDate(entry.eventDate)
+    setEditError(null)
+  }
+
+  async function submitEdit() {
+    if (!editTarget) return
+    setEditError(null)
+    const amt = parseInt(editAmount, 10)
+    if (!Number.isFinite(amt) || amt === 0) { setEditError('Enter a non-zero whole number.'); return }
+    if (!editReason.trim()) { setEditError('Reason is required.'); return }
+    if (!editDate) { setEditError('Event date is required.'); return }
+    setEditSubmitting(true)
+    const result = await updateTeamTransaction(editTarget.id, orgId, amt, editReason.trim(), editDate)
+    setEditSubmitting(false)
+    if (!result.success) { setEditError(result.error); return }
+    setEditTarget(null)
+    await reload()
+  }
+
+  async function submitBonus() {
+    setBonusError(null)
+    const amt = parseInt(bonusAmount, 10)
+    if (!Number.isFinite(amt) || amt === 0) {
+      setBonusError('Enter a non-zero whole number (negative to deduct).')
+      return
+    }
+    if (!bonusReason.trim()) {
+      setBonusError('Reason is required.')
+      return
+    }
+    if (!bonusDate) {
+      setBonusError('Event date is required.')
+      return
+    }
+    setBonusSubmitting(true)
+    const result = await addTeamTransaction(tid, orgId, amt, bonusReason.trim(), bonusDate)
+    setBonusSubmitting(false)
+    if (!result.success) {
+      setBonusError(result.error)
+      return
+    }
+    setBonusOpen(false)
+    await reload()
+  }
+
+  async function confirmDelete() {
+    if (!deleteTargetId) return
+    const result = await deleteTeamTransaction(deleteTargetId, orgId)
+    setDeleteTargetId(null)
+    if (result.success) await reload()
+  }
 
   if (isLoading) return <TeamDetailSkeleton />
   if (!team) return <p className="text-sm text-muted-foreground">Team not found.</p>
@@ -250,6 +344,234 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           })}
         </div>
       </div>
+
+      {/* Team Adjustments — both manual bonuses and legacy transfers from removed members */}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-border flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-base text-foreground flex items-center gap-2">
+              <Gift className="w-4 h-4 text-muted-foreground" />
+              Team Adjustments
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Manual team bonuses and points inherited from members who left
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={openBonus}
+            className={cn(buttonVariants({ size: 'sm' }), 'gap-1.5 shrink-0')}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add Adjustment
+          </button>
+        </div>
+        {team.legacyEntries.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground">
+            No team adjustments yet. Click <strong>Add Adjustment</strong> to award a team bonus or correction.
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {team.legacyEntries.map(entry => {
+              const dateStr = (() => {
+                try {
+                  const d = new Date(entry.eventDate + 'T12:00:00')
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
+                } catch { return entry.eventDate }
+              })()
+              const isLegacy = entry.kind === 'legacy_transfer'
+              const isPositive = entry.amount >= 0
+              return (
+                <div key={entry.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20">
+                  <div className={cn(
+                    'w-8 h-8 rounded-full flex items-center justify-center shrink-0',
+                    isLegacy ? 'bg-muted/60 text-muted-foreground' : 'bg-emerald-100 text-emerald-700',
+                  )}>
+                    {isLegacy ? <UserMinus className="w-4 h-4" /> : <Gift className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={cn(
+                      'text-sm truncate',
+                      isLegacy ? 'italic text-muted-foreground' : 'text-foreground',
+                    )}>
+                      {entry.reason}
+                    </p>
+                    <p className="text-xs text-muted-foreground/70 mt-0.5">{dateStr}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className={cn(
+                      'text-sm font-semibold',
+                      isPositive ? 'text-emerald-600' : 'text-red-500',
+                    )}>
+                      {isPositive ? '+' : ''}{entry.amount} 🥦
+                    </p>
+                  </div>
+                  {entry.kind !== 'legacy_transfer' && (
+                    <button
+                      type="button"
+                      onClick={() => openEdit(entry)}
+                      title="Edit this adjustment"
+                      className="shrink-0 text-muted-foreground/60 hover:text-foreground p-1 rounded transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTargetId(entry.id)}
+                    title="Remove this adjustment"
+                    className="shrink-0 text-muted-foreground/60 hover:text-destructive p-1 rounded transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Add bonus dialog */}
+      <Dialog open={bonusOpen} onOpenChange={v => { if (!v && !bonusSubmitting) setBonusOpen(false) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Team Adjustment</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Awards or deducts points at the <strong>team level</strong>. Doesn&apos;t affect any individual member&apos;s personal points.
+            </p>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label htmlFor="bonusAmount" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Amount <span className="font-normal normal-case">(negative to deduct)</span>
+              </label>
+              <input
+                id="bonusAmount"
+                type="number"
+                placeholder="e.g. 100 or -50"
+                value={bonusAmount}
+                onChange={e => setBonusAmount(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="bonusReason" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Reason
+              </label>
+              <input
+                id="bonusReason"
+                type="text"
+                placeholder="e.g. Team won the wellness quiz"
+                value={bonusReason}
+                onChange={e => setBonusReason(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="bonusDate" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Event Date <span className="font-normal normal-case">(determines which week this counts toward)</span>
+              </label>
+              <input
+                id="bonusDate"
+                type="date"
+                value={bonusDate}
+                onChange={e => setBonusDate(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            {bonusError && (
+              <p className="text-xs text-destructive">{bonusError}</p>
+            )}
+          </div>
+          <DialogFooter className="flex-row justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setBonusOpen(false)}
+              disabled={bonusSubmitting}
+              className={cn(buttonVariants({ variant: 'outline' }))}
+            >
+              Cancel
+            </button>
+            <Button onClick={submitBonus} disabled={bonusSubmitting}>
+              {bonusSubmitting ? 'Saving…' : 'Add Adjustment'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit team transaction dialog */}
+      <Dialog open={!!editTarget} onOpenChange={v => { if (!v && !editSubmitting) setEditTarget(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Team Adjustment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Amount <span className="font-normal normal-case">(negative to deduct)</span>
+              </label>
+              <input
+                type="number"
+                value={editAmount}
+                onChange={e => setEditAmount(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
+              <input
+                type="text"
+                value={editReason}
+                onChange={e => setEditReason(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Event Date <span className="font-normal normal-case">(determines which week)</span>
+              </label>
+              <input
+                type="date"
+                value={editDate}
+                onChange={e => setEditDate(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+              />
+            </div>
+            {editError && <p className="text-xs text-destructive">{editError}</p>}
+          </div>
+          <DialogFooter className="flex-row justify-end gap-2">
+            <button type="button" onClick={() => setEditTarget(null)} disabled={editSubmitting} className={cn(buttonVariants({ variant: 'outline' }))}>Cancel</button>
+            <Button onClick={submitEdit} disabled={editSubmitting}>{editSubmitting ? 'Saving…' : 'Save Changes'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <Dialog open={!!deleteTargetId} onOpenChange={v => { if (!v) setDeleteTargetId(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove this adjustment?</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              The team total will recalculate immediately. This cannot be undone.
+            </p>
+          </DialogHeader>
+          <DialogFooter className="flex-row justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteTargetId(null)}
+              className={cn(buttonVariants({ variant: 'outline' }))}
+            >
+              Cancel
+            </button>
+            <Button
+              onClick={confirmDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

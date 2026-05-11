@@ -194,18 +194,29 @@ class _HistoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final task   = submission['tasks'] as Map<String, dynamic>? ?? {};
+    // Prefer the snapshot frozen at submission time; fall back to the live task join
+    final liveTask = submission['tasks'] as Map<String, dynamic>? ?? const {};
+    final snap = submission['task_snapshot'] as Map<String, dynamic>?;
+    final task = snap ?? liveTask;
+
     final status = submission['status']         as String? ?? '';
     final date   = submission['submitted_date'] as String? ?? '';
     final reason = submission['rejection_reason'] as String?;
-    final title  = task['title']       as String? ?? '—';
-    final desc   = task['description'] as String? ?? '';
-    final icon   = task['icon']        as String? ?? '📋';
-    final tiersRaw = task['points_tiers'];
-    final tiersList = tiersRaw != null ? List<Map<String, dynamic>>.from(tiersRaw as List) : null;
-    final pointsLabel = (tiersList != null && tiersList.isNotEmpty)
-        ? '${tiersList.first['points']}–${tiersList.last['points']}'
-        : '${task['points'] as int? ?? 0}';
+    final title  = (task['title']       as String?) ?? (liveTask['title']       as String?) ?? '—';
+    final desc   = (task['description'] as String?) ?? (liveTask['description'] as String?) ?? '';
+    final icon   = (task['icon']        as String?) ?? (liveTask['icon']        as String?) ?? '📋';
+
+    // Prefer the snapshotted claimed tier; fall back to tier-range from current task
+    final selectedTier = task['selected_tier'] as Map<String, dynamic>?;
+    final tiersRaw = task['points_tiers'] ?? liveTask['points_tiers'];
+    final tiersList = (tiersRaw is List && tiersRaw.isNotEmpty)
+        ? List<Map<String, dynamic>>.from(tiersRaw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)))
+        : null;
+    final String pointsLabel = selectedTier != null
+        ? '${selectedTier['points']}'
+        : (tiersList != null && tiersList.isNotEmpty)
+            ? '${tiersList.first['points']}–${tiersList.last['points']}'
+            : '${(task['points'] as int?) ?? (liveTask['points'] as int?) ?? 0}';
 
     // Only show the rejection reason when the admin gave one.
     // Expired is an internal status — we never surface that word to the member.

@@ -261,9 +261,12 @@ export interface WeekPoints {
 }
 
 export interface ManualAdjustment {
+  id: string
   amount: number
   reason: string
   createdAt: string
+  eventDate: string
+  eventDateRaw: string
 }
 
 export interface MemberStatAdmin {
@@ -280,6 +283,16 @@ export interface MemberStatAdmin {
   manualAdjustments: ManualAdjustment[]
 }
 
+export interface TeamLegacyEntry {
+  id: string
+  amount: number
+  reason: string
+  sourceName: string | null
+  kind: 'legacy_transfer' | 'admin_bonus' | string
+  createdAt: string
+  eventDate: string
+}
+
 export interface TeamStatAdmin {
   id: string
   name: string
@@ -287,12 +300,13 @@ export interface TeamStatAdmin {
   emoji: string
   members: MemberStatAdmin[]
   total: number
+  legacyEntries: TeamLegacyEntry[]
 }
 
 export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[]; currentWeek: number }> {
   const client = await createAdminClient()
 
-  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes, orgRes] = await Promise.all([
+  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes, orgRes, teamTransfersRes] = await Promise.all([
     client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
@@ -305,7 +319,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
       .like('reason', 'Task missed:%'),
     // Fetch manual point adjustments
     client.from('points_transactions')
-      .select('user_id, amount, reason, created_at')
+      .select('id, user_id, amount, reason, created_at, transaction_date')
       .eq('org_id', orgId)
       .eq('is_manual', true)
       .order('created_at', { ascending: false }),
@@ -315,6 +329,11 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
       .eq('org_id', orgId)
       .eq('status', 'rejected'),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
+    // Fetch team-level inheritance/transfer transactions
+    client.from('team_transactions')
+      .select('id, team_id, amount, reason, source_user_name, kind, created_at, transaction_date')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false }),
   ])
 
   const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
@@ -420,11 +439,17 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   }
 
   // ── Manual adjustments ──────────────────────────────────────────────────────
-  type ManualRaw = { user_id: string; amount: number; reason: string; created_at: string }
+  type ManualRaw = { id: string; user_id: string; amount: number; reason: string; created_at: string; transaction_date: string | null }
   for (const row of (manualRes.data ?? []) as unknown as ManualRaw[]) {
-    const { user_id, amount, reason, created_at } = row
+    const { id, user_id, amount, reason, created_at, transaction_date } = row
     if (!memberMap[user_id]) continue
-    memberMap[user_id].manualAdjustments.push({ amount, reason, createdAt: fmtDate(created_at) })
+    // Use the explicit event date if set; fall back to created_at date
+    const eventDateStr = transaction_date ?? created_at.slice(0, 10)
+    const week = calcWeek(eventDateStr)
+    ensureWeek(user_id, week)
+    // Add to weekDataMap so the weekly column total includes manual pts
+    weekDataMap[user_id][week].points += amount
+    memberMap[user_id].manualAdjustments.push({ id, amount, reason, createdAt: fmtDate(created_at), eventDate: fmtDate(eventDateStr), eventDateRaw: eventDateStr })
     memberMap[user_id].manualTotal += amount
     memberMap[user_id].total += amount
   }
@@ -455,11 +480,29 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   for (const m of members) {
     if (!m.teamId) continue
     if (!teamStatMap[m.teamId]) {
-      teamStatMap[m.teamId] = { id: m.teamId, name: m.teamName, color: m.teamColor, emoji: m.teamEmoji, members: [], total: 0 }
+      teamStatMap[m.teamId] = { id: m.teamId, name: m.teamName, color: m.teamColor, emoji: m.teamEmoji, members: [], total: 0, legacyEntries: [] }
     }
     teamStatMap[m.teamId].members.push(m)
     teamStatMap[m.teamId].total += m.total
   }
+
+  // Attach team_transactions (legacy transfers + manual bonuses) to their teams
+  type TtRaw = { id: string; team_id: string; amount: number; reason: string; source_user_name: string | null; kind: string; created_at: string; transaction_date: string | null }
+  for (const tt of (teamTransfersRes.data ?? []) as unknown as TtRaw[]) {
+    const team = teamStatMap[tt.team_id]
+    if (!team) continue // team might exist but have no members yet; skip silently
+    team.legacyEntries.push({
+      id: tt.id,
+      amount: tt.amount,
+      reason: tt.reason,
+      sourceName: tt.source_user_name,
+      kind: tt.kind,
+      createdAt: tt.created_at,
+      eventDate: tt.transaction_date ?? tt.created_at.slice(0, 10),
+    })
+    team.total += tt.amount
+  }
+
   const teams = Object.values(teamStatMap).sort((a, b) => b.total - a.total)
 
   const orgTz: string = (orgRes as any).data?.timezone ?? 'UTC'
@@ -552,6 +595,18 @@ export async function getInviteWhitelist(orgId: string): Promise<{ invites: Invi
 
 // ── Org Approvals ──────────────────────────────────────────────────────────────
 
+type TierShape = { label: string; description: string; points: number }
+type TaskSnapshotShape = {
+  title?: string
+  description?: string
+  points?: number
+  icon?: string
+  category?: string
+  week_number?: number
+  points_tiers?: TierShape[]
+  selected_tier?: TierShape | null
+}
+
 type SubmissionRow = {
   id: string
   task_id: string
@@ -562,12 +617,13 @@ type SubmissionRow = {
   rejection_reason: string | null
   points_awarded: number | null
   selected_tier_index: number | null
+  task_snapshot: TaskSnapshotShape | null
   note: string | null
   ai_status: string | null
   ai_feedback: string | null
   ai_confidence: number | null
   user_id: string
-  tasks: { title: string; description: string; points: number; points_tiers: { label: string; description: string; points: number }[] | null } | null
+  tasks: { title: string; description: string; points: number; points_tiers: TierShape[] | null } | null
 }
 
 export interface PreviousSubmission {
@@ -586,11 +642,13 @@ export interface OrgApproval {
   userId: string
   taskId: string
   teamName: string
+  // Below fields prefer task_snapshot if present, else fall back to live task
   taskTitle: string
   taskDescription: string
   taskPoints: number
-  taskPointsTiers: { label: string; description: string; points: number }[] | null
+  taskPointsTiers: TierShape[] | null
   selectedTierIndex: number | null
+  selectedTier: TierShape | null  // resolved from snapshot.selected_tier or live tier index
   submittedAt: string
   submittedDate: string
   status: 'pending' | 'approved' | 'rejected'
@@ -613,7 +671,7 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
 
   let subsQuery = client
     .from('task_submissions')
-    .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
+    .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, task_snapshot, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
     .eq('org_id', orgId)
   if (status) subsQuery = subsQuery.eq('status', status)
   subsQuery = subsQuery
@@ -699,17 +757,34 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       rejectionReason: p.rejection_reason ?? null,
       pointsAwarded: p.points_awarded ?? null,
     }))
+
+    // Prefer snapshot (frozen at submission time); fall back to live task data
+    const snap = s.task_snapshot ?? null
+    const taskTitle       = snap?.title       ?? s.tasks?.title       ?? '—'
+    const taskDescription = snap?.description ?? s.tasks?.description ?? ''
+    const taskPoints      = snap?.points      ?? s.tasks?.points      ?? 0
+    const taskPointsTiers = snap?.points_tiers ?? s.tasks?.points_tiers ?? null
+
+    // Resolve claimed tier: prefer snapshot.selected_tier; fallback to live tiers[index]
+    let selectedTier: TierShape | null = null
+    if (snap?.selected_tier) {
+      selectedTier = snap.selected_tier
+    } else if (s.tasks?.points_tiers && s.selected_tier_index != null) {
+      selectedTier = s.tasks.points_tiers[s.selected_tier_index] ?? null
+    }
+
     approvals.push({
       id: s.id,
       member: profileMap[s.user_id] ?? 'Unknown',
       userId: s.user_id,
       taskId: s.task_id,
       teamName: teamMap[s.user_id] ?? 'Unassigned',
-      taskTitle: s.tasks?.title ?? '—',
-      taskDescription: s.tasks?.description ?? '',
-      taskPoints: s.tasks?.points ?? 0,
-      taskPointsTiers: s.tasks?.points_tiers ?? null,
+      taskTitle,
+      taskDescription,
+      taskPoints,
+      taskPointsTiers,
       selectedTierIndex: s.selected_tier_index ?? null,
+      selectedTier,
       submittedAt: timeAgo(s.submitted_at),
       submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
       status: s.status as OrgApproval['status'],
@@ -1003,6 +1078,7 @@ export interface MemberDetailAdmin {
     reason: string
     isManual: boolean
     createdAt: string
+    eventDateRaw: string
   }>
 }
 
@@ -1047,7 +1123,7 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
 
   const { data: pointsTxns } = await client
     .from('points_transactions')
-    .select('id, amount, reason, is_manual, created_at')
+    .select('id, amount, reason, is_manual, created_at, transaction_date')
     .eq('user_id', memberId)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -1104,6 +1180,7 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
       reason: t.reason ?? '',
       isManual: t.is_manual ?? false,
       createdAt: t.created_at,
+      eventDateRaw: (t.transaction_date ?? t.created_at.slice(0, 10)) as string,
     })),
   }
 }

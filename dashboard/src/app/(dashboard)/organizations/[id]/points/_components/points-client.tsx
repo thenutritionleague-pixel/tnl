@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { Users, User, TrendingUp, Trophy, Zap, ChevronDown, ChevronRight, Search, SlidersHorizontal } from 'lucide-react'
+import { useState, useTransition } from 'react'
+import { Users, User, TrendingUp, Trophy, Zap, ChevronDown, ChevronRight, Search, SlidersHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { AdjustPointsModal } from '@/components/adjust-points-modal'
+import { updateManualAdjustment, deleteManualAdjustment } from '@/app/(dashboard)/organizations/[id]/points/adjust/actions'
 import type { MemberStatAdmin, TeamStatAdmin, WeekPoints, ManualAdjustment, OrgMemberForAdjust, SubmissionEntry } from '@/lib/supabase/admin-queries'
 
 const WEEKS = [1, 2, 3, 4]
@@ -35,7 +36,7 @@ function aggregateEntries(entries: SubmissionEntry[]) {
   return byTask
 }
 
-function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWeek }: { weekPoints: WeekPoints[]; color: string; manualAdjustments: ManualAdjustment[]; currentWeek: number }) {
+function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWeek, onEditAdj, onDeleteAdj }: { weekPoints: WeekPoints[]; color: string; manualAdjustments: ManualAdjustment[]; currentWeek: number; onEditAdj: (adj: ManualAdjustment) => void; onDeleteAdj: (adj: ManualAdjustment) => void }) {
   const [expandedPastWeeks, setExpandedPastWeeks] = useState<Set<number>>(new Set())
   function togglePastWeek(w: number) {
     setExpandedPastWeeks(prev => { const next = new Set(prev); next.has(w) ? next.delete(w) : next.add(w); return next })
@@ -152,17 +153,21 @@ function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWee
             </p>
           </div>
           {manualAdjustments.map((adj, i) => (
-            <div key={i} className="flex items-start justify-between px-5 py-2 border-t border-border/40 bg-violet-50/30 dark:bg-violet-950/10">
-              <div className="flex items-start gap-2">
-                <span className="text-sm mt-0.5">✏️</span>
-                <div>
-                  <p className="text-sm text-foreground">{adj.reason}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">{adj.createdAt}</p>
-                </div>
+            <div key={i} className="flex items-start gap-2 px-5 py-2 border-t border-border/40 bg-violet-50/30 dark:bg-violet-950/10">
+              <span className="text-sm mt-0.5 shrink-0">✏️</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-foreground">{adj.reason}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{adj.eventDate}</p>
               </div>
-              <p className={cn('text-xs font-semibold w-14 text-right', adj.amount >= 0 ? 'text-violet-600' : 'text-red-500')}>
+              <p className={cn('text-xs font-semibold shrink-0 w-14 text-right', adj.amount >= 0 ? 'text-violet-600' : 'text-red-500')}>
                 {adj.amount >= 0 ? '+' : ''}{adj.amount} pts
               </p>
+              <button type="button" onClick={() => onEditAdj(adj)} title="Edit" className="shrink-0 text-muted-foreground/60 hover:text-foreground p-1 rounded transition-colors">
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" onClick={() => onDeleteAdj(adj)} title="Delete" className="shrink-0 text-muted-foreground/60 hover:text-destructive p-1 rounded transition-colors">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             </div>
           ))}
         </div>
@@ -173,7 +178,7 @@ function TaskBreakdownSection({ weekPoints, color, manualAdjustments, currentWee
   )
 }
 
-function MemberRow({ member, rank, color, expanded, onToggle, currentWeek }: { member: MemberStatAdmin; rank?: number; color: string; expanded: boolean; onToggle: () => void; currentWeek: number }) {
+function MemberRow({ member, rank, color, expanded, onToggle, currentWeek, onEditAdj, onDeleteAdj }: { member: MemberStatAdmin; rank?: number; color: string; expanded: boolean; onToggle: () => void; currentWeek: number; onEditAdj: (adj: ManualAdjustment) => void; onDeleteAdj: (adj: ManualAdjustment) => void }) {
   return (
     <>
       <button
@@ -214,7 +219,7 @@ function MemberRow({ member, rank, color, expanded, onToggle, currentWeek }: { m
           {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </div>
       </button>
-      {expanded && <TaskBreakdownSection weekPoints={member.weekPoints} color={color} manualAdjustments={member.manualAdjustments} currentWeek={currentWeek} />}
+      {expanded && <TaskBreakdownSection weekPoints={member.weekPoints} color={color} manualAdjustments={member.manualAdjustments} currentWeek={currentWeek} onEditAdj={onEditAdj} onDeleteAdj={onDeleteAdj} />}
     </>
   )
 }
@@ -246,6 +251,47 @@ export function PointsClient({ orgId, members, teams, adjustMembers, currentWeek
   const [teamFilter, setTeamFilter] = useState('')
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [adjustOpen, setAdjustOpen] = useState(false)
+
+  // Edit / delete adjustment state
+  const [editTarget, setEditTarget] = useState<{ adj: ManualAdjustment; userId: string } | null>(null)
+  const [editAmount, setEditAmount] = useState('')
+  const [editReason, setEditReason] = useState('')
+  const [editDate, setEditDate]     = useState('')
+  const [editError, setEditError]   = useState<string | null>(null)
+  const [editPending, startEditTransition] = useTransition()
+
+  const [deleteTarget, setDeleteTarget] = useState<{ adj: ManualAdjustment; userId: string } | null>(null)
+  const [deletePending, startDeleteTransition] = useTransition()
+
+  function openEdit(adj: ManualAdjustment, userId: string) {
+    const rawReason = adj.reason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim()
+    setEditTarget({ adj, userId })
+    setEditAmount(String(adj.amount))
+    setEditReason(rawReason)
+    setEditDate(adj.eventDateRaw)
+    setEditError(null)
+  }
+
+  function submitEdit() {
+    if (!editTarget) return
+    const amt = parseInt(editAmount, 10)
+    if (!Number.isFinite(amt) || amt === 0) { setEditError('Amount must be a non-zero number.'); return }
+    if (!editReason.trim()) { setEditError('Reason is required.'); return }
+    if (!editDate) { setEditError('Date is required.'); return }
+    startEditTransition(async () => {
+      const res = await updateManualAdjustment(orgId, editTarget.userId, editTarget.adj.id, amt, editReason.trim(), editDate)
+      if (res.error) { setEditError(res.error); return }
+      setEditTarget(null)
+    })
+  }
+
+  function submitDelete() {
+    if (!deleteTarget) return
+    startDeleteTransition(async () => {
+      await deleteManualAdjustment(orgId, deleteTarget.userId, deleteTarget.adj.id)
+      setDeleteTarget(null)
+    })
+  }
 
   function toggleRow(id: string) {
     setExpandedRows(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
@@ -343,7 +389,7 @@ export function PointsClient({ orgId, members, teams, adjustMembers, currentWeek
             {filteredMembers.length === 0
               ? <div className="px-5 py-10 text-center text-sm text-muted-foreground">No members found.</div>
               : filteredMembers.map((m, idx) => (
-                <MemberRow key={m.id} member={m} rank={idx + 1} color="#059669" expanded={expandedRows.has(m.id)} onToggle={() => toggleRow(m.id)} currentWeek={currentWeek} />
+                <MemberRow key={m.id} member={m} rank={idx + 1} color="#059669" expanded={expandedRows.has(m.id)} onToggle={() => toggleRow(m.id)} currentWeek={currentWeek} onEditAdj={adj => openEdit(adj, m.id)} onDeleteAdj={adj => setDeleteTarget({ adj, userId: m.id })} />
               ))
             }
           </div>
@@ -374,7 +420,7 @@ export function PointsClient({ orgId, members, teams, adjustMembers, currentWeek
                 <div className="divide-y divide-border">
                   {team.members.slice().sort((a, b) => b.total - a.total).map(member => {
                     const rowKey = `${team.id}-${member.id}`
-                    return <MemberRow key={rowKey} member={member} color={team.color} expanded={expandedRows.has(rowKey)} onToggle={() => toggleRow(rowKey)} currentWeek={currentWeek} />
+                    return <MemberRow key={rowKey} member={member} color={team.color} expanded={expandedRows.has(rowKey)} onToggle={() => toggleRow(rowKey)} currentWeek={currentWeek} onEditAdj={adj => openEdit(adj, member.id)} onDeleteAdj={adj => setDeleteTarget({ adj, userId: member.id })} />
                   })}
                 </div>
               </div>
@@ -383,6 +429,46 @@ export function PointsClient({ orgId, members, teams, adjustMembers, currentWeek
         </div>
       )}
     </div>
+
+    {/* Edit adjustment dialog */}
+    {editTarget && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={e => { if (e.target === e.currentTarget && !editPending) setEditTarget(null) }}>
+        <div className="bg-background border border-border rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
+          <h3 className="font-heading text-base">Edit Adjustment</h3>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Amount</label>
+            <input type="number" value={editAmount} onChange={e => setEditAmount(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
+            <input type="text" value={editReason} onChange={e => setEditReason(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Event Date</label>
+            <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+          </div>
+          {editError && <p className="text-xs text-destructive">{editError}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setEditTarget(null)} disabled={editPending} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>Cancel</button>
+            <button type="button" onClick={submitEdit} disabled={editPending} className={cn(buttonVariants({ size: 'sm' }))}>{editPending ? 'Saving…' : 'Save'}</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Delete adjustment confirm */}
+    {deleteTarget && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={e => { if (e.target === e.currentTarget && !deletePending) setDeleteTarget(null) }}>
+        <div className="bg-background border border-border rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3">
+          <h3 className="font-heading text-base">Delete Adjustment?</h3>
+          <p className="text-sm text-muted-foreground">This will reverse <span className="font-semibold text-foreground">{deleteTarget.adj.amount >= 0 ? '+' : ''}{deleteTarget.adj.amount} pts</span> from the member&apos;s total. Cannot be undone.</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setDeleteTarget(null)} disabled={deletePending} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}>Cancel</button>
+            <button type="button" onClick={submitDelete} disabled={deletePending} className={cn(buttonVariants({ size: 'sm' }), 'bg-destructive text-white hover:bg-destructive/90')}>{deletePending ? 'Deleting…' : 'Delete'}</button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   )
 }

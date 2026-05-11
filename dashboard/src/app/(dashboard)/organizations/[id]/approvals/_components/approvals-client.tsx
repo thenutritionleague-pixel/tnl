@@ -113,23 +113,27 @@ function DatePicker({ value, onChange, placeholder = 'Pick a date' }: { value: s
 
 function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
-  // 'loading' | 'loaded' | 'error' | 'none'
-  const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'none'>('none')
+  // 'loading' | 'loaded' | 'error' | 'unsupported' | 'none'
+  const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'unsupported' | 'none'>('none')
+
+  // Detect HEIC files up-front — browsers can't render them
+  const isHeic = !!proofUrl && /\.heic$|\.heif$/i.test(proofUrl)
 
   useEffect(() => {
     if (!proofUrl) { setState('none'); return }
+    if (isHeic) { setState('unsupported'); return }
     setState('loading')
     setSignedUrl(null)
     getProofSignedUrl(proofUrl).then(url => {
-      if (url) { setSignedUrl(url); setState('loaded') }
+      if (url) setSignedUrl(url) // state stays 'loading' until <img> onLoad fires
       else setState('error')
     })
-  }, [proofUrl])
+  }, [proofUrl, isHeic])
 
   return (
     // Fixed-height container — height never changes, no dialog resize
     <div className="relative rounded-lg bg-muted h-56 overflow-hidden flex items-center justify-center">
-      {/* Shimmer while fetching the signed URL */}
+      {/* Shimmer while fetching the signed URL or waiting for the image to load */}
       {state === 'loading' && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/10 to-muted animate-pulse" />
@@ -145,16 +149,36 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
         </div>
       )}
 
-      {/* Could not load */}
-      {state === 'error' && (
-        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+      {/* HEIC / HEIF — browsers can't display it; offer a download link */}
+      {state === 'unsupported' && signedUrl == null && proofUrl && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
           <ImageIcon className="w-8 h-8" />
-          <span className="text-xs">Could not load proof image.</span>
+          <span className="text-xs font-semibold">Unsupported format ({proofUrl.split('.').pop()?.toUpperCase()})</span>
+          <span className="text-[11px]">The member uploaded a HEIC photo. Browsers can&apos;t render this format.</span>
+          <button
+            type="button"
+            className="text-xs text-primary hover:underline"
+            onClick={async () => {
+              const url = await getProofSignedUrl(proofUrl)
+              if (url) window.open(url, '_blank')
+            }}
+          >
+            Download to view →
+          </button>
+        </div>
+      )}
+
+      {/* Could not load (URL expired, file missing, or image render failed) */}
+      {state === 'error' && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
+          <ImageIcon className="w-8 h-8" />
+          <span className="text-xs font-semibold">Could not load proof image</span>
+          <span className="text-[11px]">URL may have expired. Close and reopen this review.</span>
         </div>
       )}
 
       {/* Image — crossfades in once the URL resolves */}
-      {signedUrl && (
+      {signedUrl && state !== 'unsupported' && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={signedUrl}
@@ -162,6 +186,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
           className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
           style={{ opacity: state === 'loaded' ? 1 : 0 }}
           onLoad={() => setState('loaded')}
+          onError={() => setState('error')}
         />
       )}
     </div>
@@ -369,7 +394,10 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   function openReview(a: OrgApproval) {
     setReviewTarget(a)
     setAdminNotes('')
-    if (a.taskPointsTiers && a.selectedTierIndex != null && a.taskPointsTiers[a.selectedTierIndex]) {
+    // Prefer the snapshotted tier (frozen at submission time) for the default points override
+    if (a.selectedTier) {
+      setPointsOverride(String(a.selectedTier.points))
+    } else if (a.taskPointsTiers && a.selectedTierIndex != null && a.taskPointsTiers[a.selectedTierIndex]) {
       setPointsOverride(String(a.taskPointsTiers[a.selectedTierIndex].points))
     } else {
       setPointsOverride('')
@@ -723,28 +751,25 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                   <textarea id="adminNotes" rows={2} placeholder="Add a note for your records or to send to the member..." value={adminNotes} onChange={e => setAdminNotes(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary resize-none" />
                 </div>
 
-                {/* Claimed tier badge for tiered tasks */}
-                {reviewTarget.taskPointsTiers && reviewTarget.selectedTierIndex != null &&
-                  reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex] && (() => {
-                    const tier = reviewTarget.taskPointsTiers![reviewTarget.selectedTierIndex!]
-                    return (
-                      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 flex items-center gap-2">
-                        <span className="text-xs font-semibold text-primary">Claimed Tier</span>
-                        <span className="text-xs text-foreground font-medium">{tier.label}</span>
-                        {tier.description && <span className="text-xs text-muted-foreground">— {tier.description}</span>}
-                        <span className="ml-auto text-xs font-bold text-primary">🥦 {tier.points} pts</span>
-                      </div>
-                    )
-                  })()
-                }
+                {/* Claimed tier badge for tiered tasks — prefer snapshotted tier */}
+                {reviewTarget.selectedTier && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-primary">Claimed Tier</span>
+                    <span className="text-xs text-foreground font-medium">{reviewTarget.selectedTier.label}</span>
+                    {reviewTarget.selectedTier.description && (
+                      <span className="text-xs text-muted-foreground">— {reviewTarget.selectedTier.description}</span>
+                    )}
+                    <span className="ml-auto text-xs font-bold text-primary">🥦 {reviewTarget.selectedTier.points} pts</span>
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <Label htmlFor="pointsOverride" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                     Points Override <span className="font-normal normal-case">(optional)</span>
                   </Label>
                   <input id="pointsOverride" type="number" min={0} placeholder={
-                    reviewTarget.taskPointsTiers && reviewTarget.selectedTierIndex != null && reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex]
-                      ? `Default: ${reviewTarget.taskPointsTiers[reviewTarget.selectedTierIndex].points} pts (claimed tier)`
+                    reviewTarget.selectedTier
+                      ? `Default: ${reviewTarget.selectedTier.points} pts (claimed tier)`
                       : `Default: ${reviewTarget.taskPoints} pts`
                   } value={pointsOverride} onChange={e => setPointsOverride(e.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary" />
                 </div>

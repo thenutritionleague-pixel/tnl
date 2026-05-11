@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useTransition } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Crown, Shield, CheckCircle2, XCircle, Clock,
   SlidersHorizontal, Eye, Loader2, ImageIcon, ChevronDown, ChevronUp,
-  ListOrdered, History,
+  ListOrdered, History, Pencil, Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -14,11 +14,13 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { AdjustPointsModal } from '@/components/adjust-points-modal'
 import { approveMemberSubmission, rejectMemberSubmission, getProofSignedUrl } from '../actions'
+import { updateManualAdjustment, deleteManualAdjustment } from '../../../points/adjust/actions'
 import type { MemberDetailAdmin, OrgMemberForAdjust } from '@/lib/supabase/admin-queries'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -331,13 +333,66 @@ interface Props {
 
 type Tab = 'submissions' | 'history'
 
+type PointsTx = MemberDetailAdmin['pointsHistory'][number]
+
 export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
   const [submissions, setSubmissions] = useState(member.submissions)
+  const [pointsHistory, setPointsHistory] = useState(member.pointsHistory)
   const [reviewSub, setReviewSub] = useState<Submission | null>(null)
   const [viewSub, setViewSub] = useState<Submission | null>(null)
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('submissions')
+
+  // Edit manual adjustment
+  const [editTx, setEditTx] = useState<PointsTx | null>(null)
+  const [editAmount, setEditAmount] = useState('')
+  const [editReason, setEditReason] = useState('')
+  const [editDate, setEditDate]     = useState('')
+  const [editError, setEditError]   = useState<string | null>(null)
+  const [editPending, startEditTransition] = useTransition()
+
+  // Delete manual adjustment
+  const [deleteTx, setDeleteTx] = useState<PointsTx | null>(null)
+  const [deletePending, startDeleteTransition] = useTransition()
+
+  function openEdit(tx: PointsTx) {
+    const rawReason = tx.reason.replace(/\s*\[by [^\]]+\]\s*$/, '').trim()
+    setEditTx(tx)
+    setEditAmount(String(tx.amount))
+    setEditReason(rawReason)
+    setEditDate(tx.eventDateRaw)
+    setEditError(null)
+  }
+
+  function submitEdit() {
+    if (!editTx) return
+    const amt = parseInt(editAmount, 10)
+    if (!Number.isFinite(amt) || amt === 0) { setEditError('Amount must be a non-zero number.'); return }
+    if (!editReason.trim()) { setEditError('Reason is required.'); return }
+    if (!editDate) { setEditError('Date is required.'); return }
+    startEditTransition(async () => {
+      const res = await updateManualAdjustment(orgId, member.id, editTx.id, amt, editReason.trim(), editDate)
+      if (res.error) { setEditError(res.error); return }
+      setPointsHistory(prev => prev.map(t => t.id === editTx.id
+        ? { ...t, amount: amt, reason: `${editReason.trim()} [by ${t.reason.match(/\[by ([^\]]+)\]/)?.[1] ?? 'admin'}]`, eventDateRaw: editDate }
+        : t,
+      ))
+      toast.success('Adjustment updated.')
+      setEditTx(null)
+    })
+  }
+
+  function submitDelete() {
+    if (!deleteTx) return
+    startDeleteTransition(async () => {
+      const res = await deleteManualAdjustment(orgId, member.id, deleteTx.id)
+      if (res.error) { toast.error(res.error); return }
+      setPointsHistory(prev => prev.filter(t => t.id !== deleteTx.id))
+      toast.success('Adjustment deleted.')
+      setDeleteTx(null)
+    })
+  }
 
   function toggleExpand(id: string) {
     setExpandedRows(prev => {
@@ -576,25 +631,21 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
 
           {/* Points History tab */}
           {activeTab === 'history' && (
-            member.pointsHistory.length === 0 ? (
+            pointsHistory.length === 0 ? (
               <div className="px-5 py-10 text-center text-sm text-muted-foreground">No points transactions yet.</div>
             ) : (
               <div className="divide-y divide-border">
-                {member.pointsHistory.map(tx => {
+                {pointsHistory.map(tx => {
                   const isMissed = tx.amount === 0 && !tx.isManual
                   const isManual = tx.isManual
                   const isEarned = tx.amount > 0 && !tx.isManual
-
-                  // Strip admin attribution suffix for display
                   const displayReason = tx.reason.replace(/\s*\[by [^\]]+\]$/, '')
-
                   const date = new Date(tx.createdAt).toLocaleDateString('en-IN', {
                     day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
                   })
 
                   return (
-                    <div key={tx.id} className="flex items-center gap-4 px-5 py-3 hover:bg-muted/20 transition-colors">
-                      {/* Icon dot */}
+                    <div key={tx.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20 transition-colors">
                       <div className={cn(
                         'w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm',
                         isEarned && 'bg-emerald-100 text-emerald-700',
@@ -604,14 +655,10 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                       )}>
                         {isMissed ? '✗' : isManual ? '✏️' : '🥦'}
                       </div>
-
-                      {/* Description */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{displayReason}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">{date}</p>
                       </div>
-
-                      {/* Amount */}
                       <div className={cn(
                         'text-sm font-bold shrink-0',
                         isEarned && 'text-emerald-600',
@@ -619,10 +666,18 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                         isManual && tx.amount > 0 && 'text-blue-600',
                         isManual && tx.amount < 0 && 'text-red-600',
                       )}>
-                        {isMissed
-                          ? 'Missed'
-                          : tx.amount > 0 ? `+${tx.amount} 🥦` : `${tx.amount} 🥦`}
+                        {isMissed ? 'Missed' : tx.amount > 0 ? `+${tx.amount} 🥦` : `${tx.amount} 🥦`}
                       </div>
+                      {isManual && (
+                        <>
+                          <button type="button" onClick={() => openEdit(tx)} title="Edit" className="shrink-0 text-muted-foreground/60 hover:text-foreground p-1 rounded transition-colors">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={() => setDeleteTx(tx)} title="Delete" className="shrink-0 text-muted-foreground/60 hover:text-destructive p-1 rounded transition-colors">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   )
                 })}
@@ -631,6 +686,59 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
           )}
         </div>
       </div>
+
+      {/* Edit manual adjustment */}
+      <Dialog open={!!editTx} onOpenChange={v => { if (!v && !editPending) setEditTx(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Edit Adjustment</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Amount</label>
+              <input type="number" value={editAmount} onChange={e => setEditAmount(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reason</label>
+              <input type="text" value={editReason} onChange={e => setEditReason(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Event Date <span className="font-normal normal-case">(determines which week)</span>
+              </label>
+              <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+            </div>
+            {editError && <p className="text-xs text-destructive">{editError}</p>}
+          </div>
+          <DialogFooter className="flex-row justify-end gap-2">
+            <button type="button" onClick={() => setEditTx(null)} disabled={editPending}
+              className={cn(buttonVariants({ variant: 'outline' }))}>Cancel</button>
+            <button type="button" onClick={submitEdit} disabled={editPending}
+              className={cn(buttonVariants())}>{editPending ? 'Saving…' : 'Save'}</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete manual adjustment */}
+      <Dialog open={!!deleteTx} onOpenChange={v => { if (!v && !deletePending) setDeleteTx(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Delete Adjustment?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will reverse <span className="font-semibold text-foreground">
+              {deleteTx && (deleteTx.amount >= 0 ? '+' : '')}{deleteTx?.amount} pts
+            </span> from this member&apos;s total. Cannot be undone.
+          </p>
+          <DialogFooter className="flex-row justify-end gap-2 mt-2">
+            <button type="button" onClick={() => setDeleteTx(null)} disabled={deletePending}
+              className={cn(buttonVariants({ variant: 'outline' }))}>Cancel</button>
+            <button type="button" onClick={submitDelete} disabled={deletePending}
+              className={cn(buttonVariants(), 'bg-destructive text-white hover:bg-destructive/90')}>
+              {deletePending ? 'Deleting…' : 'Delete'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

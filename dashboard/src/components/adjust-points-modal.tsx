@@ -40,17 +40,22 @@ export function AdjustPointsModal({
   const [userId, setUserId] = useState(defaultUserId ?? '')
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
+  const [date, setDate]     = useState(() => new Date().toISOString().slice(0, 10))
   const [submitting, setSubmitting] = useState(false)
 
   // Sync userId when defaultUserId changes (e.g. modal re-opened for different member)
   useEffect(() => {
-    if (open) setUserId(defaultUserId ?? '')
+    if (open) {
+      setUserId(defaultUserId ?? '')
+      setDate(new Date().toISOString().slice(0, 10))
+    }
   }, [open, defaultUserId])
 
   function handleOpenChange(isOpen: boolean) {
     if (!isOpen) {
       setAmount('')
       setReason('')
+      setDate(new Date().toISOString().slice(0, 10))
       if (!lockMember) setUserId('')
       onClose()
     }
@@ -62,9 +67,10 @@ export function AdjustPointsModal({
     const pts = parseInt(amount, 10)
     if (!Number.isFinite(pts) || pts === 0) { toast.error('Enter a non-zero integer amount.'); return }
     if (!reason.trim()) { toast.error('Reason is required.'); return }
+    if (!date) { toast.error('Event date is required.'); return }
 
     setSubmitting(true)
-    const result = await addManualAdjustment(orgId, userId, pts, reason)
+    const result = await addManualAdjustment(orgId, userId, pts, reason, date)
     setSubmitting(false)
 
     if (result.error) {
@@ -73,6 +79,7 @@ export function AdjustPointsModal({
       toast.success('Points adjustment saved.')
       setAmount('')
       setReason('')
+      setDate(new Date().toISOString().slice(0, 10))
       if (!lockMember) setUserId('')
       onSuccess?.()
       onClose()
@@ -142,6 +149,21 @@ export function AdjustPointsModal({
               onChange={e => setReason(e.target.value)}
               required
               className={cn(inputCls, 'resize-none')}
+            />
+          </div>
+
+          {/* Event date */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Event Date{' '}
+              <span className="font-normal normal-case text-muted-foreground">(determines which week this counts toward)</span>
+            </label>
+            <input
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              required
+              className={inputCls}
             />
           </div>
 

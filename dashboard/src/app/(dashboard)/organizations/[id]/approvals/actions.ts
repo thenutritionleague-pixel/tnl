@@ -103,7 +103,7 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const client = await createAdminClient()
   const { data } = await client.storage
     .from('task-proofs')
-    .createSignedUrl(path, 300) // 5 min expiry
+    .createSignedUrl(path, 1800) // 30 min expiry — more forgiving if admin leaves dialog open
   return data?.signedUrl ?? null
 }
 

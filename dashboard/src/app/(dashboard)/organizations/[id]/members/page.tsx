@@ -452,12 +452,20 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
 
       {/* Remove confirm */}
       <Dialog open={!!removeTarget} onOpenChange={v => { if (!v) setRemoveTarget(null) }}>
-        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Remove {removeTarget?.name}?</DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              They will be removed from the org and lose access to the app.
-            </p>
+            <div className="text-sm text-muted-foreground mt-2 space-y-2">
+              <p>
+                <strong>{removeTarget?.name}</strong> will be permanently removed from the org. Their account and all their proof photos will be deleted.
+              </p>
+              {removeTarget && removeTarget.points > 0 && removeTarget.teamId ? (
+                <p>
+                  Their <strong>{removeTarget.points} 🥦 points</strong> will be transferred to <strong>{removeTarget.team}</strong> as a team inheritance entry, so the team doesn&apos;t lose them.
+                </p>
+              ) : null}
+              <p className="text-destructive">This cannot be undone.</p>
+            </div>
           </DialogHeader>
           <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
             <button
