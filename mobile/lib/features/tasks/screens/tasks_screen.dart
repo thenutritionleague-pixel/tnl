@@ -489,6 +489,16 @@ class _TaskCard extends StatelessWidget {
     onDone();
   }
 
+  String _fmtDate(String ymd) {
+    try {
+      final d = DateTime.parse(ymd);
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return '${d.day} ${months[d.month - 1]}';
+    } catch (_) {
+      return ymd;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final title  = task['title']       as String? ?? '';
@@ -500,6 +510,7 @@ class _TaskCard extends StatelessWidget {
     final String pointsLabel = (tiersList != null && tiersList.isNotEmpty)
         ? '${tiersList.first['points']}–${tiersList.last['points']}'
         : '${task['points'] as int? ?? 0}';
+    final effectiveDateLabel = _fmtDate(orgEffectiveTodayStr(orgTimezone));
 
     return GestureDetector(
       onTap: canSubmit ? () => _openSubmit(context) : null,
@@ -561,7 +572,7 @@ class _TaskCard extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 6),
-                      // Points inline
+                      // Points + date
                       Row(
                         children: [
                           const Text('🥦', style: TextStyle(fontSize: 11)),
@@ -572,6 +583,19 @@ class _TaskCard extends StatelessWidget {
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
                               color: AppColors.primary,
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.calendar_today_rounded,
+                              size: 10,
+                              color: context.textHint),
+                          const SizedBox(width: 3),
+                          Text(
+                            effectiveDateLabel,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: context.textHint,
                             ),
                           ),
                         ],

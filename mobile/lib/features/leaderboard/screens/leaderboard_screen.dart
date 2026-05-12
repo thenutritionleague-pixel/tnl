@@ -525,7 +525,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       );
     }
     final weekly = _teamWeeklyCache[teamId];
-    if (weekly == null || weekly.isEmpty) {
+    if (weekly == null) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
         child: Text('No points yet.',

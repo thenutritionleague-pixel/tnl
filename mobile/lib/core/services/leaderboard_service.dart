@@ -239,7 +239,9 @@ class LeaderboardService {
   }
 
   /// Get a team's total points grouped by week number.
-  /// Returns {week_number: total_points}. Used in the Teams leaderboard expand.
+  /// Returns {week_number: total_points} for all weeks that have started,
+  /// including weeks with 0 points (week started but no activity yet).
+  /// Uses a SECURITY DEFINER RPC to bypass RLS.
   static Future<Map<int, int>> getTeamWeeklyPoints(
     String teamId,
     String orgId,
@@ -247,90 +249,40 @@ class LeaderboardService {
   ) async {
     if (challengeId.isEmpty) return {};
 
-    final challengeData = await _client
-        .from('challenges')
-        .select('start_date')
-        .eq('id', challengeId)
-        .single();
-
-    final startDateStr = challengeData['start_date'] as String? ?? '';
-    final DateTime? startDate = DateTime.tryParse(startDateStr);
-    if (startDate == null) return {};
-
-    int weekFor(String dateStr) {
-      if (dateStr.isEmpty) return 1;
-      final d = DateTime.tryParse(dateStr);
-      if (d == null) return 1;
-      final diff = d.difference(DateTime(startDate.year, startDate.month, startDate.day)).inDays;
-      return max(1, (diff / 7).floor() + 1);
-    }
-
-    // Fetch team member IDs
-    final membersData = await _client
-        .from('team_members')
-        .select('user_id')
-        .eq('team_id', teamId)
-        .eq('org_id', orgId);
-
-    final memberIds = (membersData as List).map((m) => m['user_id'] as String).toList();
-    if (memberIds.isEmpty) return {};
-
-    // Run all three queries in parallel
-    final results = await Future.wait([
-      // Approved task submissions for team members
-      _client
-          .from('task_submissions')
-          .select('submitted_date, points_awarded')
-          .inFilter('user_id', memberIds)
-          .eq('org_id', orgId)
-          .eq('status', 'approved'),
-      // Team-level transactions (bonuses/transfers)
-      _client
-          .from('team_transactions')
-          .select('amount, transaction_date, created_at')
-          .eq('team_id', teamId)
-          .eq('org_id', orgId),
-      // Manual individual adjustments for team members
-      _client
-          .from('points_transactions')
-          .select('amount, transaction_date, created_at')
-          .inFilter('user_id', memberIds)
-          .eq('org_id', orgId)
-          .eq('is_manual', true)
-          .gte('created_at', startDateStr),
+    final results = await Future.wait<dynamic>([
+      _client.rpc('get_team_weekly_pts', params: {
+        'p_team_id':      teamId,
+        'p_org_id':       orgId,
+        'p_challenge_id': challengeId,
+      }),
+      _client.from('challenges').select('start_date').eq('id', challengeId).single(),
     ]);
 
-    final Map<int, int> weeklyPts = {};
+    final rows = results[0] as List;
+    final startDateStr = (results[1] as Map<String, dynamic>)['start_date'] as String? ?? '';
+    final startDate = DateTime.tryParse(startDateStr);
 
-    // Task submissions
-    for (final sub in results[0] as List) {
-      final dateStr = sub['submitted_date'] as String? ?? '';
-      final pts = (sub['points_awarded'] as int?) ?? 0;
-      if (dateStr.isEmpty) continue;
-      final week = weekFor(dateStr);
-      weeklyPts[week] = (weeklyPts[week] ?? 0) + pts;
+    final Map<int, int> result = {};
+
+    // Fill all weeks that have started with 0 as default
+    if (startDate != null) {
+      final today = DateTime.now();
+      final daysDiff = today
+          .difference(DateTime(startDate.year, startDate.month, startDate.day))
+          .inDays;
+      final currentWeek = max(1, (daysDiff / 7).floor() + 1);
+      for (int w = 1; w <= currentWeek; w++) {
+        result[w] = 0;
+      }
     }
 
-    // Team-level transactions
-    for (final txn in results[1] as List) {
-      final txDate = txn['transaction_date'] as String? ?? '';
-      final createdAt = (txn['created_at'] as String? ?? '').substring(0, 10);
-      final dateStr = txDate.isNotEmpty ? txDate : createdAt;
-      final pts = (txn['amount'] as int?) ?? 0;
-      final week = weekFor(dateStr);
-      weeklyPts[week] = (weeklyPts[week] ?? 0) + pts;
+    // Overwrite with actual points from RPC
+    for (final row in rows) {
+      final week = (row['week_number'] as num?)?.toInt() ?? 1;
+      final pts  = (row['total_points'] as num?)?.toInt() ?? 0;
+      result[week] = pts;
     }
 
-    // Manual individual adjustments
-    for (final txn in results[2] as List) {
-      final txDate = txn['transaction_date'] as String? ?? '';
-      final createdAt = (txn['created_at'] as String? ?? '').substring(0, 10);
-      final dateStr = txDate.isNotEmpty ? txDate : createdAt;
-      final pts = (txn['amount'] as int?) ?? 0;
-      final week = weekFor(dateStr);
-      weeklyPts[week] = (weeklyPts[week] ?? 0) + pts;
-    }
-
-    return weeklyPts;
+    return result;
   }
 }
