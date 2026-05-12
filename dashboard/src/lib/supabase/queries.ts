@@ -634,10 +634,10 @@ export async function addTeamTransaction(
       team_id: teamId,
       org_id: orgId,
       amount,
-      reason: reason.trim(),
+      reason: `${reason.trim()} [by ${profile.name}]`,
       source_user_name: null,
       kind: 'admin_bonus',
-      created_by: profile.id,
+      created_by: null,
       transaction_date: transactionDate ?? new Date().toISOString().slice(0, 10),
     })
     .select('id')
