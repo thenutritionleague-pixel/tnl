@@ -739,17 +739,12 @@ export async function getOrgTeams(orgId: string): Promise<TeamUI[]> {
   let pointsMap: Record<string, number> = {}
 
   if (challenges) {
-    const [subsRes, tmRes] = await Promise.all([
-      supabase.from('task_submissions').select('user_id, points_awarded, tasks(points)').eq('challenge_id', challenges.id).eq('status', 'approved'),
-      supabase.from('team_members').select('user_id, team_id').eq('org_id', orgId),
-    ])
-    const userToTeam: Record<string, string> = {}
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const tm of (tmRes.data ?? []) as any[]) userToTeam[tm.user_id] = tm.team_id
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const s of (subsRes.data ?? []) as any[]) {
-      const tid = userToTeam[s.user_id]
-      if (tid) pointsMap[tid] = (pointsMap[tid] ?? 0) + (s.points_awarded ?? s.tasks?.points ?? 0)
+    const { data: viewRows } = await supabase
+      .from('team_points_view')
+      .select('team_id, total_points')
+      .eq('challenge_id', challenges.id)
+    for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
+      pointsMap[row.team_id] = row.total_points
     }
   }
 
