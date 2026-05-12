@@ -854,26 +854,23 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
       dates: `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`,
     }))
 
-  // Fetch approved points per team
-  const { data: subPts } = await client
-    .from('task_submissions')
-    .select('user_id, points_awarded, tasks(points)')
+  // Fetch points per team via team_points_view (includes task pts + manual pts + team_transactions)
+  const { data: activeChallenge } = await client
+    .from('challenges')
+    .select('id')
     .eq('org_id', orgId)
-    .eq('status', 'approved')
-
-  const { data: teamMembersMap } = await client
-    .from('team_members')
-    .select('user_id, team_id')
-    .eq('org_id', orgId)
-
-  const userToTeam: Record<string, string> = {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const tm of (teamMembersMap ?? []) as any[]) userToTeam[tm.user_id] = tm.team_id
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle()
   const teamPtsMap: Record<string, number> = {}
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const s of (subPts ?? []) as any[]) {
-    const tid = userToTeam[s.user_id]
-    if (tid) teamPtsMap[tid] = (teamPtsMap[tid] ?? 0) + (s.points_awarded ?? s.tasks?.points ?? 0)
+  if (activeChallenge) {
+    const { data: viewRows } = await client
+      .from('team_points_view')
+      .select('team_id, total_points')
+      .eq('challenge_id', activeChallenge.id)
+    for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
+      teamPtsMap[row.team_id] = row.total_points
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
