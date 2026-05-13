@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/leaderboard_service.dart';
 import '../../../core/services/profile_service.dart';
+import '../../../core/utils/avatar_url.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/widgets/user_avatar.dart';
 import '../../../core/theme/theme_colors.dart';
@@ -244,12 +245,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                                 ],
                               ),
                             )
-                          : SingleChildScrollView(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              child: _selectedTab == 0
-                                  ? _buildTeamTab()
-                                  : _buildMemberTab(),
-                            ),
+                          : _selectedTab == 0
+                              ? _buildTeamTab()
+                              : SingleChildScrollView(
+                                  physics: const AlwaysScrollableScrollPhysics(),
+                                  child: _buildMemberTab(),
+                                ),
                 ),
               ),
             ],
@@ -366,19 +367,38 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── Teams Tab ─────────────────────────────────────────────────────────────
   Widget _buildTeamTab() {
     if (_teams.isEmpty) {
-      return Padding(
-        padding: EdgeInsets.all(40),
-        child: Center(
-            child: Text('No team data yet.',
-                style: TextStyle(color: context.textHint))),
+      // Scrollable so RefreshIndicator still works on empty state
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(40),
+            child: Center(
+                child: Text('No team data yet.',
+                    style: TextStyle(color: context.textHint))),
+          ),
+        ],
       );
     }
-    return Column(
-      children: [
-        if (_teams.length >= 3) _buildAnimatedPodium(_teams, isTeam: true),
-        const SizedBox(height: 8),
-        _buildAllTeamsList(),
-        const SizedBox(height: 24),
+    final ranks = _tiedRanks(_teams, 'total_points');
+    final surfaceColor = Theme.of(context).colorScheme.surface;
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        if (_teams.length >= 3)
+          SliverToBoxAdapter(child: _buildAnimatedPodium(_teams, isTeam: true)),
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
+        // Lazy team rows — only the visible ones get built. Memory stays flat
+        // regardless of how many teams the org grows to.
+        SliverList.builder(
+          itemCount: _teams.length,
+          itemBuilder: (ctx, i) => _buildTeamRow(
+            index: i,
+            rank: ranks[i],
+            surfaceColor: surfaceColor,
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ],
     );
   }
@@ -410,115 +430,116 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return const Color(0xFF9CA3AF);
   }
 
-  Widget _buildAllTeamsList() {
-    final ranks = _tiedRanks(_teams, 'total_points');
-    return Container(
-      color: Theme.of(context).colorScheme.surface,
-      child: Column(
-        children: _teams.asMap().entries.map((e) {
-          final rank = ranks[e.key];
-          final team = e.value;
-          final teamId = team['team_id'] as String;
-          final isMyTeam = teamId == _myTeamId;
-          final pts = team['total_points'] as int? ?? 0;
-          final isLast = e.key == _teams.length - 1;
-          final isExpanded = _expandedTeamId == teamId;
+  /// Single team row — built lazily by SliverList.builder. Each row is
+  /// wrapped in RepaintBoundary so scroll repaints only the visible row,
+  /// not the whole list.
+  Widget _buildTeamRow({
+    required int index,
+    required int rank,
+    required Color surfaceColor,
+  }) {
+    final team = _teams[index];
+    final teamId = team['team_id'] as String;
+    final isMyTeam = teamId == _myTeamId;
+    final pts = team['total_points'] as int? ?? 0;
+    final isLast = index == _teams.length - 1;
+    final isExpanded = _expandedTeamId == teamId;
 
-          // RepaintBoundary isolates each row's canvas layer — prevents
-          // iOS Safari from repainting the whole list on every scroll frame.
-          return RepaintBoundary(child: Column(
-            children: [
-              // ── Team row (tappable) ──────────────────────────────────
-              InkWell(
-                onTap: () {
-                  setState(() {
-                    if (isExpanded) {
-                      _expandedTeamId = null;
-                    } else {
-                      _expandedTeamId = teamId;
-                      _loadTeamWeeklyPoints(teamId);
-                    }
-                  });
-                },
-                child: Container(
-                  color: isMyTeam
-                      ? (Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF134E2A)
-                          : AppColors.primarySurface)
-                      : Colors.transparent,
-                  padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      _RankBadge(rank: rank),
-                      const SizedBox(width: 12),
-                      Text(team['emoji'] as String? ?? '🏃',
-                          style: const TextStyle(fontSize: 26)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    team['name'] as String? ?? 'Team',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                      color: isMyTeam
-                                          ? (context.isDarkMode
-                                              ? Colors.white
-                                              : AppColors.primary)
-                                          : context.textPrimary,
-                                    ),
+    return RepaintBoundary(
+      child: Container(
+        color: surfaceColor,
+        child: Column(
+          children: [
+            // ── Team row (tappable) ──────────────────────────────────
+            InkWell(
+              onTap: () {
+                setState(() {
+                  if (isExpanded) {
+                    _expandedTeamId = null;
+                  } else {
+                    _expandedTeamId = teamId;
+                    _loadTeamWeeklyPoints(teamId);
+                  }
+                });
+              },
+              child: Container(
+                color: isMyTeam
+                    ? (Theme.of(context).brightness == Brightness.dark
+                        ? const Color(0xFF134E2A)
+                        : AppColors.primarySurface)
+                    : Colors.transparent,
+                padding: const EdgeInsets.fromLTRB(18, 9, 18, 9),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _RankBadge(rank: rank),
+                    const SizedBox(width: 12),
+                    Text(team['emoji'] as String? ?? '🏃',
+                        style: const TextStyle(fontSize: 26)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  team['name'] as String? ?? 'Team',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                    color: isMyTeam
+                                        ? (context.isDarkMode
+                                            ? Colors.white
+                                            : AppColors.primary)
+                                        : context.textPrimary,
                                   ),
                                 ),
-                                if (isMyTeam) ...[
-                                  const SizedBox(width: 6),
-                                  _YouBadge(label: 'Your Team'),
-                                ],
+                              ),
+                              if (isMyTeam) ...[
+                                const SizedBox(width: 6),
+                                _YouBadge(label: 'Your Team'),
                               ],
-                            ),
-                            const SizedBox(height: 5),
-                            _TeamAvatarRow(
-                              members: _teamMemberPreviews[teamId] ?? [],
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          _TeamAvatarRow(
+                            members: _teamMemberPreviews[teamId] ?? [],
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      _PointsPill(pts: pts),
-                      const SizedBox(width: 6),
-                      AnimatedRotation(
-                        turns: isExpanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 220),
-                        child: Icon(Icons.keyboard_arrow_down_rounded,
-                            size: 16, color: context.textHint),
-                      ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 8),
+                    _PointsPill(pts: pts),
+                    const SizedBox(width: 6),
+                    AnimatedRotation(
+                      turns: isExpanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 220),
+                      child: Icon(Icons.keyboard_arrow_down_rounded,
+                          size: 16, color: context.textHint),
+                    ),
+                  ],
                 ),
               ),
+            ),
 
-              // ── Weekly breakdown panel ───────────────────────────────
-              AnimatedSize(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeInOut,
-                child: isExpanded
-                    ? _buildTeamWeeklyPanel(teamId)
-                    : const SizedBox.shrink(),
-              ),
+            // ── Weekly breakdown panel ───────────────────────────────
+            AnimatedSize(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeInOut,
+              child: isExpanded
+                  ? _buildTeamWeeklyPanel(teamId)
+                  : const SizedBox.shrink(),
+            ),
 
-              if (!isLast)
-                Divider(
-                    height: 1,
-                    color: Theme.of(context).colorScheme.outline,
-                    indent: 18),
-            ],
-          ));
-        }).toList(),
+            if (!isLast)
+              Divider(
+                  height: 1,
+                  color: Theme.of(context).colorScheme.outline,
+                  indent: 18),
+          ],
+        ),
       ),
     );
   }
@@ -1528,15 +1549,15 @@ class _TeamAvatarRow extends StatelessWidget {
                   child: () {
                     final url = member['avatar_url'] as String?;
                     if (url != null && url.isNotEmpty) {
-                      // Limit decoded image size to avoid iOS Safari OOM on scroll
-                      final cachePx = (_radius * 2 * 2).round();
+                      // Server-side thumbnail + client cache cap — tiny payload, tiny memory
+                      final px = (_radius * 2 * 2).round();
                       return CircleAvatar(
                         radius: _radius,
                         backgroundColor: bg,
                         backgroundImage: ResizeImage(
-                          NetworkImage(url),
-                          width: cachePx,
-                          height: cachePx,
+                          NetworkImage(avatarThumbnailUrl(url, size: px)),
+                          width: px,
+                          height: px,
                         ),
                       );
                     }

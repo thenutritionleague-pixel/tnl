@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
 import '../theme/theme_colors.dart';
+import '../utils/avatar_url.dart';
 
 /// Avatar widget — shows a real photo if [avatarUrl] is set,
 /// otherwise falls back to a colored circle with initials.
@@ -53,16 +54,17 @@ class UserAvatar extends StatelessWidget {
         : bgColor;
 
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
-      // Decode at 2x radius so it stays sharp on retina but doesn't eat memory.
-      // Full-resolution decoded avatars cause iOS Safari OOM during list scroll.
-      final cachePx = (radius * 2 * 2).round();
+      // Server-side resize via Supabase Storage transforms — payload shrinks
+      // from MB to KB. Client decodes only this tiny thumbnail.
+      final px = (radius * 2 * 2).round();
+      final thumbUrl = avatarThumbnailUrl(avatarUrl, size: px);
       return CircleAvatar(
         radius: radius,
         backgroundColor: bgColor.withValues(alpha: bgAlpha),
         backgroundImage: ResizeImage(
-          NetworkImage(avatarUrl!),
-          width: cachePx,
-          height: cachePx,
+          NetworkImage(thumbUrl),
+          width: px,
+          height: px,
         ),
         onBackgroundImageError: (_, __) {},
         child: null,
