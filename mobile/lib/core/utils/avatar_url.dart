@@ -1,15 +1,12 @@
-/// Convert a Supabase Storage public URL into a server-side-resized
-/// thumbnail. Drops payload size from MB to KB and keeps client memory low.
+/// Returns an avatar URL suitable for display.
 ///
-/// Non-Supabase URLs (Google profile photos, etc.) are returned unchanged.
+/// NOTE: Supabase Storage image transforms (`/render/image/...?width=...`)
+/// require the Pro plan. Until that's enabled, this is a no-op. Memory is
+/// still bounded client-side via `ResizeImage` at the call sites.
+///
+/// When ready to enable transforms, switch this to:
+///   url.replaceFirst('/object/public/', '/render/image/public/')
+///   + '?width=$size&height=$size&quality=$quality&resize=cover'
 String avatarThumbnailUrl(String? url, {int size = 96, int quality = 70}) {
-  if (url == null || url.isEmpty) return url ?? '';
-  // Only Supabase Storage public URLs can be transformed via /render/image/
-  if (!url.contains('/storage/v1/object/public/')) return url;
-  final transformed = url.replaceFirst(
-    '/storage/v1/object/public/',
-    '/storage/v1/render/image/public/',
-  );
-  final sep = transformed.contains('?') ? '&' : '?';
-  return '$transformed${sep}width=$size&height=$size&quality=$quality&resize=cover';
+  return url ?? '';
 }
