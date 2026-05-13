@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:confetti/confetti.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -130,7 +131,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           _loading = false;
         });
         _podiumCtrl.forward(from: 0).whenComplete(() {
-          if (mounted) _confettiCtrl.play();
+          // Skip confetti on Flutter web — canvas particle rendering causes
+          // iOS Safari WebKit OOM crashes ("A problem repeatedly occurred").
+          if (mounted && !kIsWeb) _confettiCtrl.play();
         });
         // Pre-load my team's members for the "My Team" tab
         if (myTeamId != null && myTeamId.isNotEmpty) {
@@ -251,34 +254,35 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
               ),
             ],
           ),
-          // ── Confetti overlay ──────────────────────────────────────────────
-          Align(
-            alignment: Alignment.topCenter,
-            child: ConfettiWidget(
-              confettiController: _confettiCtrl,
-              blastDirectionality: BlastDirectionality.explosive,
-              numberOfParticles: 22,
-              gravity: 0.28,
-              emissionFrequency: 0.05,
-              maxBlastForce: 18,
-              minBlastForce: 6,
-              colors: const [
-                Color(0xFF059669), Color(0xFF34D399), Color(0xFFF59E0B),
-                Color(0xFFFBBF24), Color(0xFF6EE7B7), Color(0xFF10B981),
-              ],
-              createParticlePath: (size) {
-                final path = Path();
-                if (Random().nextBool()) {
-                  path.addOval(Rect.fromCircle(
-                      center: Offset(size.width / 2, size.height / 2),
-                      radius: size.width / 2));
-                } else {
-                  path.addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-                }
-                return path;
-              },
+          // ── Confetti overlay (skip on Flutter web — causes OOM on iOS Safari) ─
+          if (!kIsWeb)
+            Align(
+              alignment: Alignment.topCenter,
+              child: ConfettiWidget(
+                confettiController: _confettiCtrl,
+                blastDirectionality: BlastDirectionality.explosive,
+                numberOfParticles: 22,
+                gravity: 0.28,
+                emissionFrequency: 0.05,
+                maxBlastForce: 18,
+                minBlastForce: 6,
+                colors: const [
+                  Color(0xFF059669), Color(0xFF34D399), Color(0xFFF59E0B),
+                  Color(0xFFFBBF24), Color(0xFF6EE7B7), Color(0xFF10B981),
+                ],
+                createParticlePath: (size) {
+                  final path = Path();
+                  if (Random().nextBool()) {
+                    path.addOval(Rect.fromCircle(
+                        center: Offset(size.width / 2, size.height / 2),
+                        radius: size.width / 2));
+                  } else {
+                    path.addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+                  }
+                  return path;
+                },
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -420,7 +424,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           final isLast = e.key == _teams.length - 1;
           final isExpanded = _expandedTeamId == teamId;
 
-          return Column(
+          // RepaintBoundary isolates each row's canvas layer — prevents
+          // iOS Safari from repainting the whole list on every scroll frame.
+          return RepaintBoundary(child: Column(
             children: [
               // ── Team row (tappable) ──────────────────────────────────
               InkWell(
@@ -511,7 +517,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     color: Theme.of(context).colorScheme.outline,
                     indent: 18),
             ],
-          );
+          ));
         }).toList(),
       ),
     );
@@ -1522,10 +1528,16 @@ class _TeamAvatarRow extends StatelessWidget {
                   child: () {
                     final url = member['avatar_url'] as String?;
                     if (url != null && url.isNotEmpty) {
+                      // Limit decoded image size to avoid iOS Safari OOM on scroll
+                      final cachePx = (_radius * 2 * 2).round();
                       return CircleAvatar(
                         radius: _radius,
                         backgroundColor: bg,
-                        backgroundImage: NetworkImage(url),
+                        backgroundImage: ResizeImage(
+                          NetworkImage(url),
+                          width: cachePx,
+                          height: cachePx,
+                        ),
                       );
                     }
                     return CircleAvatar(

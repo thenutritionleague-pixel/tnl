@@ -53,10 +53,17 @@ class UserAvatar extends StatelessWidget {
         : bgColor;
 
     if (avatarUrl != null && avatarUrl!.isNotEmpty) {
+      // Decode at 2x radius so it stays sharp on retina but doesn't eat memory.
+      // Full-resolution decoded avatars cause iOS Safari OOM during list scroll.
+      final cachePx = (radius * 2 * 2).round();
       return CircleAvatar(
         radius: radius,
         backgroundColor: bgColor.withValues(alpha: bgAlpha),
-        backgroundImage: NetworkImage(avatarUrl!),
+        backgroundImage: ResizeImage(
+          NetworkImage(avatarUrl!),
+          width: cachePx,
+          height: cachePx,
+        ),
         onBackgroundImageError: (_, __) {},
         child: null,
       );
