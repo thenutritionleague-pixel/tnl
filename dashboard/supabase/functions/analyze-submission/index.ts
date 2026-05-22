@@ -62,6 +62,15 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
     }
 
+    // Video proofs — skip AI for now (model is image-only). Route to manual review.
+    if (/\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(sub.proof_url)) {
+      await supabase
+        .from('task_submissions')
+        .update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' })
+        .eq('id', submissionId)
+      return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'video' }), { status: 200 })
+    }
+
     const sd = sub as any
     const taskTitle: string = sd.tasks?.title ?? 'wellness task'
     const taskDesc: string  = sd.tasks?.description ?? ''

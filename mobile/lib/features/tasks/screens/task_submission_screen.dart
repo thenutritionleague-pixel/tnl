@@ -4,6 +4,7 @@ import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
@@ -20,8 +21,10 @@ class TaskSubmissionScreen extends StatefulWidget {
 }
 
 class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
-  XFile? _selectedImage;
+  XFile? _selectedImage;     // also reused for picked video file
   Uint8List? _imageBytes;
+  bool _isVideoPicked = false;
+  double? _compressProgress; // 0–100 during video compression
   bool _submitting = false;
   bool _done = false;
   int? _selectedTierIndex;
@@ -47,6 +50,11 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   String? get _submittedDate => widget.task['submittedDate'] as String?;
 
   bool get _isLocked => isInSubmissionLockout(_orgTimezone);
+
+  /// 'image' | 'video' — from the task config (defaults to image).
+  String get _proofType => (_taskData['proof_type'] as String?) ?? 'image';
+  bool get _isVideoTask => _proofType == 'video';
+  int get _maxVideoSeconds => (_taskData['max_video_seconds'] as int?) ?? 90;
 
   Future<void> _pickImage(ImageSource source) async {
     // Cap proof photo at 1280×1280 + JPEG quality 82. Plenty for admin review
@@ -89,8 +97,37 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         );
         return;
       }
-      setState(() { _selectedImage = picked; _imageBytes = bytes; });
+      setState(() { _selectedImage = picked; _imageBytes = bytes; _isVideoPicked = false; });
     }
+  }
+
+  Future<void> _pickVideo(ImageSource source) async {
+    // Picker enforces maxDuration only when source is the camera. For gallery
+    // we validate duration after pick in task_service.dart.
+    final picked = await ImagePicker().pickVideo(
+      source: source,
+      maxDuration: Duration(seconds: _maxVideoSeconds),
+    );
+    if (picked == null || !mounted) return;
+
+    // Defensive extension allow-list — picker should return a video format.
+    final lowerName = picked.name.toLowerCase();
+    const allowed = ['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.3gp'];
+    if (!allowed.any(lowerName.endsWith)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Only videos are accepted. Got "${lowerName.split('.').last}".'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _selectedImage = picked;
+      _imageBytes = null;
+      _isVideoPicked = true;
+    });
   }
 
   List<Map<String, dynamic>> get _tiers {
@@ -119,8 +156,10 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     }
     if (_selectedImage == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select or take a photo first.'),
+        SnackBar(
+          content: Text(_isVideoTask
+              ? 'Please record or select a video first.'
+              : 'Please select or take a photo first.'),
           backgroundColor: AppColors.error,
         ),
       );
@@ -143,25 +182,58 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     setState(() => _submitting = true);
 
     try {
-      await TaskService.submitTaskImage(
-        taskId: taskId,
-        task: _taskData,
-        challengeId: challengeId,
-        userId: _profileId,
-        orgId: _orgId,
-        imageFile: _selectedImage!,
-        submittedDate: _submittedDate,
-        orgTimezone: _orgTimezone,
-        note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
-        selectedTierIndex: _selectedTierIndex,
-      );
+      if (_isVideoTask) {
+        await TaskService.submitTaskVideo(
+          taskId: taskId,
+          task: _taskData,
+          challengeId: challengeId,
+          userId: _profileId,
+          orgId: _orgId,
+          videoFile: _selectedImage!,
+          maxDurationSeconds: _maxVideoSeconds,
+          submittedDate: _submittedDate,
+          orgTimezone: _orgTimezone,
+          note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+          selectedTierIndex: _selectedTierIndex,
+          onCompressProgress: (p) {
+            if (mounted) setState(() => _compressProgress = p);
+          },
+        );
+      } else {
+        await TaskService.submitTaskImage(
+          taskId: taskId,
+          task: _taskData,
+          challengeId: challengeId,
+          userId: _profileId,
+          orgId: _orgId,
+          imageFile: _selectedImage!,
+          submittedDate: _submittedDate,
+          orgTimezone: _orgTimezone,
+          note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+          selectedTierIndex: _selectedTierIndex,
+        );
+      }
       if (mounted) {
-        setState(() { _submitting = false; _done = true; });
+        setState(() { _submitting = false; _compressProgress = null; _done = true; });
         _confettiCtrl.play();
+      }
+    } on VideoTooLongException catch (e) {
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; _selectedImage = null; _imageBytes = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 6)),
+        );
+      }
+    } on VideoCompressionFailedException catch (e) {
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error),
+        );
       }
     } on AlreadySubmittedTodayException {
       if (mounted) {
-        setState(() => _submitting = false);
+        setState(() { _submitting = false; _compressProgress = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('You have already submitted this task today.'),
@@ -170,10 +242,11 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         );
       }
     } on UnsupportedImageFormatException catch (e) {
-      // HEIC / HEIF — drop the selected file so the user must pick another
+      // HEIC / HEIF (image task) or unsupported video format — drop selection
       if (mounted) {
         setState(() {
           _submitting = false;
+          _compressProgress = null;
           _selectedImage = null;
           _imageBytes = null;
         });
@@ -188,13 +261,13 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     } on AuthException {
       // Session expired — sign out (fire & forget) and navigate to login
       if (mounted) {
-        setState(() => _submitting = false);
+        setState(() { _submitting = false; _compressProgress = null; });
         Supabase.instance.client.auth.signOut();
         context.go('/login');
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _submitting = false);
+        setState(() { _submitting = false; _compressProgress = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Upload failed: $e'),
@@ -487,21 +560,25 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
               const SizedBox(height: 14),
             ],
 
-            // ── Photo upload area ──────────────────────────────────────────
+            // ── Proof upload area — branches on task.proof_type ───────────
             Text(
-              'Upload Your Proof Photo',
+              _isVideoTask ? 'Upload Your Proof Video' : 'Upload Your Proof Photo',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.textPrimary),
             ),
             const SizedBox(height: 4),
             Text(
-              'Take a photo or pick from your gallery as evidence.',
+              _isVideoTask
+                  ? 'Record or pick a video (max ${_maxVideoSeconds}s) as evidence.'
+                  : 'Take a photo or pick from your gallery as evidence.',
               style: TextStyle(fontSize: 12, color: context.textSecondary),
             ),
             const SizedBox(height: 12),
 
-            // Photo preview / upload area
+            // Picker tile
             GestureDetector(
-              onTap: () => _pickImage(ImageSource.gallery),
+              onTap: () => _isVideoTask
+                  ? _pickVideo(ImageSource.gallery)
+                  : _pickImage(ImageSource.gallery),
               child: Container(
                 height: 220,
                 width: double.infinity,
@@ -521,11 +598,35 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     ? Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.memory(_imageBytes!, fit: BoxFit.cover),
+                          if (_isVideoPicked)
+                            // Video preview placeholder (avoid pulling video_player on every screen)
+                            Container(
+                              color: Colors.black,
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.play_circle_outline, color: Colors.white, size: 56),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    p.basename(_selectedImage!.name),
+                                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            Image.memory(_imageBytes!, fit: BoxFit.cover),
                           Positioned(
                             top: 10, right: 10,
                             child: GestureDetector(
-                              onTap: () => setState(() { _selectedImage = null; _imageBytes = null; }),
+                              onTap: () => setState(() {
+                                _selectedImage = null;
+                                _imageBytes = null;
+                                _isVideoPicked = false;
+                              }),
                               child: Container(
                                 padding: const EdgeInsets.all(6),
                                 decoration: BoxDecoration(
@@ -558,12 +659,28 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                               color: context.primarySurface,
                               borderRadius: BorderRadius.circular(18),
                             ),
-                            child: const Icon(Icons.add_photo_alternate_outlined, size: 30, color: AppColors.primary),
+                            child: Icon(
+                              _isVideoTask
+                                  ? Icons.video_library_outlined
+                                  : Icons.add_photo_alternate_outlined,
+                              size: 30,
+                              color: AppColors.primary,
+                            ),
                           ),
                           const SizedBox(height: 12),
-                          Text('Tap to upload from gallery', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: context.textPrimary)),
+                          Text(
+                            _isVideoTask
+                                ? 'Tap to pick a video from gallery'
+                                : 'Tap to upload from gallery',
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: context.textPrimary),
+                          ),
                           const SizedBox(height: 4),
-                          Text('or use the camera button below', style: TextStyle(fontSize: 12, color: context.textSecondary)),
+                          Text(
+                            _isVideoTask
+                                ? 'or record one with the button below'
+                                : 'or use the camera button below',
+                            style: TextStyle(fontSize: 12, color: context.textSecondary),
+                          ),
                         ],
                       ),
               ),
@@ -571,10 +688,12 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
 
             const SizedBox(height: 12),
 
-            // Camera button alternative
+            // Camera/record button alternative
             if (_selectedImage == null)
               GestureDetector(
-                onTap: () => _pickImage(ImageSource.camera),
+                onTap: () => _isVideoTask
+                    ? _pickVideo(ImageSource.camera)
+                    : _pickImage(ImageSource.camera),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
@@ -582,16 +701,48 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: Theme.of(context).colorScheme.outline),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.camera_alt_outlined, color: AppColors.primary, size: 20),
-                      SizedBox(width: 8),
-                      Text('Take a Photo', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 14)),
+                      Icon(
+                        _isVideoTask ? Icons.videocam_outlined : Icons.camera_alt_outlined,
+                        color: AppColors.primary,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _isVideoTask ? 'Record a Video' : 'Take a Photo',
+                        style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
                     ],
                   ),
                 ),
               ),
+
+            // Compression progress (video tasks only)
+            if (_compressProgress != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: (_compressProgress! / 100).clamp(0.0, 1.0),
+                        minHeight: 6,
+                        backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                        valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Compressing ${_compressProgress!.toStringAsFixed(0)}%',
+                    style: TextStyle(fontSize: 11, color: context.textSecondary),
+                  ),
+                ],
+              ),
+            ],
 
             const SizedBox(height: 24),
 

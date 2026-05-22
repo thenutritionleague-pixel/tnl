@@ -153,6 +153,8 @@ export interface TaskUI {
   isActive: boolean
   startDate?: string
   endDate?: string
+  proofType?: 'image' | 'video'
+  maxVideoSeconds?: number | null
 }
 
 export interface ChallengeUI {
@@ -1066,7 +1068,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
       .select(`
         id, name, description, status, start_date, end_date, manually_closed,
         challenge_teams(team_id, teams(name)),
-        tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, task_teams(teams(name)))
+        tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, task_teams(teams(name)))
       `)
       .eq('org_id', orgId)
       .order('created_at', { ascending: false }),
@@ -1077,7 +1079,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   if (!challenges) return []
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string; proof_type?: 'image' | 'video'; max_video_seconds?: number | null }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const results: ChallengeUI[] = []
@@ -1124,6 +1126,8 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
         isActive: t.is_active,
         startDate: t.start_date,
         endDate: t.end_date,
+        proofType: t.proof_type ?? 'image',
+        maxVideoSeconds: t.max_video_seconds ?? null,
       })),
       submissions: countMap[ch.id] ?? 0,
     })
@@ -1168,7 +1172,7 @@ export async function deleteChallenge(id: string) {
 }
 
 export async function addTask(challengeId: string, data: {
-  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
   const supabase = await db()
   const { data: newTask, error } = await supabase.from('tasks').insert({
@@ -1183,6 +1187,8 @@ export async function addTask(challengeId: string, data: {
     icon: data.icon,
     start_date: data.startDate || null,
     end_date: data.endDate || null,
+    proof_type: data.proofType ?? 'image',
+    max_video_seconds: data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null,
   }).select().single()
 
   if (newTask && data.teams.length > 0) {
@@ -1198,7 +1204,7 @@ export async function addTask(challengeId: string, data: {
 }
 
 export async function updateTask(id: string, data: {
-  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
   const supabase = await db()
   await supabase.from('tasks').update({
@@ -1212,6 +1218,8 @@ export async function updateTask(id: string, data: {
     icon: data.icon,
     start_date: data.startDate || null,
     end_date: data.endDate || null,
+    proof_type: data.proofType ?? 'image',
+    max_video_seconds: data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null,
   }).eq('id', id)
 
   const { data: taskData } = await supabase.from('tasks').select('challenge_id').eq('id', id).single()

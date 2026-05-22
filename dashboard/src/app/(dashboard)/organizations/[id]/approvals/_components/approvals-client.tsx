@@ -116,7 +116,8 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   // 'loading' | 'loaded' | 'error' | 'unsupported' | 'none'
   const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'unsupported' | 'none'>('none')
 
-  // Detect HEIC files up-front — browsers can't render them
+  // Detect proof type up-front from the storage path
+  const isVideo = !!proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
   const isHeic = !!proofUrl && /\.heic$|\.heif$/i.test(proofUrl)
 
   useEffect(() => {
@@ -125,7 +126,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
     setState('loading')
     setSignedUrl(null)
     getProofSignedUrl(proofUrl).then(url => {
-      if (url) setSignedUrl(url) // state stays 'loading' until <img> onLoad fires
+      if (url) setSignedUrl(url) // state stays 'loading' until <img>/<video> fires onLoad
       else setState('error')
     })
   }, [proofUrl, isHeic])
@@ -133,7 +134,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   return (
     // Fixed-height container — height never changes, no dialog resize
     <div className="relative rounded-lg bg-muted h-56 overflow-hidden flex items-center justify-center">
-      {/* Shimmer while fetching the signed URL or waiting for the image to load */}
+      {/* Shimmer while fetching the signed URL or waiting for media to load */}
       {state === 'loading' && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="absolute inset-0 bg-gradient-to-r from-muted via-muted-foreground/10 to-muted animate-pulse" />
@@ -145,7 +146,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
       {state === 'none' && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <ImageIcon className="w-8 h-8" />
-          <span className="text-xs">No proof image uploaded.</span>
+          <span className="text-xs">No proof uploaded.</span>
         </div>
       )}
 
@@ -168,17 +169,31 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
         </div>
       )}
 
-      {/* Could not load (URL expired, file missing, or image render failed) */}
+      {/* Could not load (URL expired, file missing, or render failed) */}
       {state === 'error' && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
           <ImageIcon className="w-8 h-8" />
-          <span className="text-xs font-semibold">Could not load proof image</span>
+          <span className="text-xs font-semibold">Could not load proof</span>
           <span className="text-[11px]">URL may have expired. Close and reopen this review.</span>
         </div>
       )}
 
+      {/* Video — preload metadata so only first ~100KB fetches until admin plays */}
+      {signedUrl && isVideo && state !== 'unsupported' && (
+        <video
+          src={signedUrl}
+          controls
+          preload="metadata"
+          playsInline
+          className="absolute inset-0 w-full h-full object-contain bg-black transition-opacity duration-300"
+          style={{ opacity: state === 'loaded' ? 1 : 0 }}
+          onLoadedMetadata={() => setState('loaded')}
+          onError={() => setState('error')}
+        />
+      )}
+
       {/* Image — crossfades in once the URL resolves */}
-      {signedUrl && state !== 'unsupported' && (
+      {signedUrl && !isVideo && state !== 'unsupported' && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={signedUrl}

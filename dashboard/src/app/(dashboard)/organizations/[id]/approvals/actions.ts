@@ -101,14 +101,14 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
   const client = await createAdminClient()
-  // Server-side resize via Supabase Pro image transforms — proof viewer shows
-  // at ~600px wide on retina, so 1024px source is plenty. Cuts egress 5-10×
-  // vs serving the original ~1MB proof on every dialog open.
-  const { data } = await client.storage
-    .from('task-proofs')
-    .createSignedUrl(path, 1800, {
-      transform: { width: 1024, quality: 80, resize: 'contain' },
-    })
+  // Image transforms don't work on videos — only apply width/quality when the
+  // proof is an image. Videos stream via Range requests from the original.
+  const isVideo = /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(path)
+  const { data } = isVideo
+    ? await client.storage.from('task-proofs').createSignedUrl(path, 1800)
+    : await client.storage.from('task-proofs').createSignedUrl(path, 1800, {
+        transform: { width: 1024, quality: 80, resize: 'contain' },
+      })
   return data?.signedUrl ?? null
 }
 

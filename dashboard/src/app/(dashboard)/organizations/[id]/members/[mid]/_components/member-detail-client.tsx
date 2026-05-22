@@ -64,6 +64,8 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [imgState, setImgState] = useState<'none' | 'loading' | 'loaded' | 'error'>('none')
 
+  const isVideo = !!proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
+
   async function load() {
     if (!proofUrl) return
     setImgState('loading')
@@ -78,7 +80,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
       {!proofUrl && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <ImageIcon className="w-8 h-8" />
-          <p className="text-xs">No proof image</p>
+          <p className="text-xs">No proof uploaded</p>
         </div>
       )}
 
@@ -89,7 +91,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
           onClick={load}
           className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5')}
         >
-          <Eye className="w-3.5 h-3.5" /> View Proof
+          <Eye className="w-3.5 h-3.5" /> {isVideo ? 'View Video' : 'View Proof'}
         </button>
       )}
 
@@ -104,12 +106,28 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
       {imgState === 'error' && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <ImageIcon className="w-8 h-8 opacity-40" />
-          <p className="text-xs">Failed to load image</p>
+          <p className="text-xs">Failed to load {isVideo ? 'video' : 'image'}</p>
         </div>
       )}
 
+      {/* Video — preload metadata so only first ~100KB fetches until play */}
+      {signedUrl && isVideo && (
+        <video
+          src={signedUrl}
+          controls
+          preload="metadata"
+          playsInline
+          className={cn(
+            'absolute inset-0 w-full h-full object-contain bg-black transition-opacity duration-300',
+            imgState === 'loaded' ? 'opacity-100' : 'opacity-0',
+          )}
+          onLoadedMetadata={() => setImgState('loaded')}
+          onError={() => setImgState('error')}
+        />
+      )}
+
       {/* Image */}
-      {signedUrl && (
+      {signedUrl && !isVideo && (
         <img
           src={signedUrl}
           alt="Proof"
@@ -269,7 +287,9 @@ function ProofDialog({ submission, onClose }: ProofDialogProps) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
 
-  // Auto-load the image whenever the dialog opens with a new submission
+  const isVideo = !!submission?.proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(submission.proofUrl)
+
+  // Auto-load the proof whenever the dialog opens with a new submission
   useEffect(() => {
     if (!submission?.proofUrl) return
     setSignedUrl(null)
@@ -299,10 +319,21 @@ function ProofDialog({ submission, onClose }: ProofDialogProps) {
               {imgState === 'error' && (
                 <div className="flex flex-col items-center gap-2 text-muted-foreground">
                   <ImageIcon className="w-8 h-8 opacity-40" />
-                  <p className="text-xs">Failed to load image</p>
+                  <p className="text-xs">Failed to load {isVideo ? 'video' : 'image'}</p>
                 </div>
               )}
-              {signedUrl && (
+              {signedUrl && isVideo && (
+                <video
+                  src={signedUrl}
+                  controls
+                  preload="metadata"
+                  playsInline
+                  className={cn('max-w-full max-h-[60vh] bg-black transition-opacity duration-300', imgState === 'loaded' ? 'opacity-100' : 'opacity-0')}
+                  onLoadedMetadata={() => setImgState('loaded')}
+                  onError={() => setImgState('error')}
+                />
+              )}
+              {signedUrl && !isVideo && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={signedUrl}

@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
+import 'package:video_compress/video_compress.dart';
 import '../utils/org_date_utils.dart';
 
 class AlreadySubmittedTodayException implements Exception {
@@ -18,6 +20,25 @@ class UnsupportedImageFormatException implements Exception {
   String toString() =>
       'This photo is in $format format, which can\'t be reviewed. '
       'Please take a new photo with the camera or pick a JPG/PNG image.';
+}
+
+/// Thrown when a video exceeds the task's max duration.
+class VideoTooLongException implements Exception {
+  final int durationSeconds;
+  final int maxSeconds;
+  const VideoTooLongException(this.durationSeconds, this.maxSeconds);
+  @override
+  String toString() =>
+      'Video is ${durationSeconds}s but max allowed is ${maxSeconds}s. '
+      'Please trim or record a shorter video.';
+}
+
+/// Thrown when video compression fails.
+class VideoCompressionFailedException implements Exception {
+  const VideoCompressionFailedException();
+  @override
+  String toString() =>
+      'Could not compress the video. Please try a different video or contact support.';
 }
 
 class TaskService {
@@ -120,6 +141,151 @@ class TaskService {
     // instead of inserting a new row. This keeps one row per (user, task, date).
     // Defensive .order().limit(1): the unique partial index allows multiple
     // rejected rows in theory, so always pick the most recent one.
+    final rejectedQuery = _client
+        .from('task_submissions')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('user_id', userId)
+        .eq('org_id', orgId)
+        .eq('submitted_date', dateStr)
+        .eq('status', 'rejected');
+    final existing = challengeId != null
+        ? await rejectedQuery.eq('challenge_id', challengeId)
+            .order('submitted_at', ascending: false).limit(1).maybeSingle()
+        : await rejectedQuery
+            .order('submitted_at', ascending: false).limit(1).maybeSingle();
+
+    if (existing != null) {
+      await _client.from('task_submissions').update({
+        'submitted_at': DateTime.now().toUtc().toIso8601String(),
+        'status': 'pending',
+        'proof_url': fileName,
+        'rejection_reason': null,
+        'ai_status': null,
+        'ai_feedback': null,
+        'ai_confidence': null,
+        'task_snapshot': taskSnapshot,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
+      }).eq('id', existing['id']);
+      return;
+    }
+
+    try {
+      await _client.from('task_submissions').insert({
+        'task_id': taskId,
+        if (challengeId != null) 'challenge_id': challengeId,
+        'user_id': userId,
+        'org_id': orgId,
+        'submitted_at': DateTime.now().toUtc().toIso8601String(),
+        'submitted_date': dateStr,
+        'status': 'pending',
+        'proof_url': fileName,
+        'task_snapshot': taskSnapshot,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
+      });
+    } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        throw AlreadySubmittedTodayException();
+      }
+      rethrow;
+    }
+  }
+
+  /// Submit a video proof. Picks any input format (mp4/mov/webm/mkv/3gp),
+  /// validates duration against the task's max, compresses to 480p H.264 .mp4,
+  /// uploads, and writes/updates the submission row.
+  ///
+  /// AI analysis is NOT triggered for video submissions yet — they go straight
+  /// to manual review (ai_status stays null).
+  static Future<void> submitTaskVideo({
+    required String taskId,
+    required Map<String, dynamic> task,
+    String? challengeId,
+    required String userId,
+    required String orgId,
+    required XFile videoFile,
+    required int maxDurationSeconds,
+    String? submittedDate,
+    String? orgTimezone,
+    String? note,
+    int? selectedTierIndex,
+    void Function(double progress)? onCompressProgress,
+  }) async {
+    final session = _client.auth.currentSession;
+    if (session == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
+
+    // Validate extension before doing any work
+    final rawExt = p.extension(videoFile.name).toLowerCase();
+    const allowedVideoExts = {'.mp4', '.mov', '.m4v', '.webm', '.mkv', '.3gp'};
+    if (!allowedVideoExts.contains(rawExt)) {
+      throw UnsupportedImageFormatException(
+        rawExt.isEmpty ? 'unknown' : rawExt.replaceFirst('.', '').toUpperCase(),
+      );
+    }
+
+    // Probe duration first — fail fast if the source is already too long.
+    final info = await VideoCompress.getMediaInfo(videoFile.path);
+    final srcDurationSec = ((info.duration ?? 0) / 1000).round();
+    if (srcDurationSec > maxDurationSeconds + 1) {
+      throw VideoTooLongException(srcDurationSec, maxDurationSeconds);
+    }
+
+    // Compress to 480p H.264 mp4. Output is always .mp4 regardless of input.
+    // includeAudio: true keeps the soundtrack for admin review.
+    final progressSub = onCompressProgress == null
+        ? null
+        : VideoCompress.compressProgress$.subscribe((p) => onCompressProgress(p));
+    MediaInfo? compressed;
+    try {
+      compressed = await VideoCompress.compressVideo(
+        videoFile.path,
+        quality: VideoQuality.MediumQuality, // ~480p, good admin-review quality
+        includeAudio: true,
+        deleteOrigin: false,
+      );
+    } finally {
+      progressSub?.unsubscribe();
+    }
+
+    final outPath = compressed?.path;
+    if (outPath == null) {
+      throw const VideoCompressionFailedException();
+    }
+
+    final compressedFile = File(outPath);
+    final bytes = await compressedFile.readAsBytes();
+
+    // Final safety net — compressed 90s video should be well under 30MB.
+    if (bytes.lengthInBytes > 30 * 1024 * 1024) {
+      throw Exception(
+        'Compressed video is still too large (>30 MB). Please record a shorter or simpler video.',
+      );
+    }
+
+    final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+    await _client.storage.from('task-proofs').uploadBinary(
+      fileName,
+      bytes,
+      // 1 year — proof URLs include timestamp so they're immutable.
+      fileOptions: const FileOptions(
+        upsert: false,
+        contentType: 'video/mp4',
+        cacheControl: '31536000',
+      ),
+    );
+
+    // Best-effort cleanup of the compressed temp file
+    try { await compressedFile.delete(); } catch (_) {}
+
+    final dateStr = submittedDate ?? orgEffectiveTodayStr(orgTimezone);
+    final taskSnapshot = _buildTaskSnapshot(task, selectedTierIndex);
+
+    // Find existing rejected row for same task/date → update it in-place.
     final rejectedQuery = _client
         .from('task_submissions')
         .select('id')

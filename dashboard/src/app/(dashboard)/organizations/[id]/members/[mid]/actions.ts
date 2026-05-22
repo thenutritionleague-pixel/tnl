@@ -11,13 +11,13 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
   const client = await createAdminClient()
-  // Server-side resize — proof viewer is at most ~600px wide on retina;
-  // 1024px source is plenty for review. Cuts egress 5-10× per proof view.
-  const { data } = await client.storage
-    .from('task-proofs')
-    .createSignedUrl(path, 300, {
-      transform: { width: 1024, quality: 80, resize: 'contain' },
-    })
+  // Image transforms don't work on videos — only apply for images.
+  const isVideo = /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(path)
+  const { data } = isVideo
+    ? await client.storage.from('task-proofs').createSignedUrl(path, 300)
+    : await client.storage.from('task-proofs').createSignedUrl(path, 300, {
+        transform: { width: 1024, quality: 80, resize: 'contain' },
+      })
   return data?.signedUrl ?? null
 }
 

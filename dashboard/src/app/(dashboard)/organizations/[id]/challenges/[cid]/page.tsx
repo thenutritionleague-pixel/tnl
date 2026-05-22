@@ -284,6 +284,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
   const [teams, setTeams]       = useState<string[]>([])
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate]     = useState('')
+  const [proofType, setProofType] = useState<'image' | 'video'>('image')
+  const [maxVideoSeconds, setMaxVideoSeconds] = useState(90)
   const [saving, setSaving]     = useState(false)
 
   const icon = CATEGORIES.find(c => c.label === category)?.icon ?? '✅'
@@ -295,6 +297,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setPoints(editTarget.points); setWeek(editTarget.weekNumber)
       setCategory(editTarget.category); setTeams(editTarget.teams)
       setStartDate(editTarget.startDate || ''); setEndDate(editTarget.endDate || '')
+      setProofType(editTarget.proofType ?? 'image')
+      setMaxVideoSeconds(editTarget.maxVideoSeconds ?? 90)
       if (editTarget.pointsTiers && editTarget.pointsTiers.length > 0) {
         setTiered(true); setTiers(editTarget.pointsTiers)
       } else {
@@ -306,6 +310,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setWeek(existingWeeks.length > 0 ? Math.max(...existingWeeks) + 1 : 1)
       setCategory(CATEGORIES[0].label); setTeams([])
       setStartDate(''); setEndDate('')
+      setProofType('image')
+      setMaxVideoSeconds(90)
     }
   }, [open, editTarget])
 
@@ -333,6 +339,8 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       title, description: desc, points,
       pointsTiers: tiered ? tiers : undefined,
       weekNumber: week, category, icon, teams, startDate, endDate,
+      proofType,
+      maxVideoSeconds: proofType === 'video' ? maxVideoSeconds : null,
     })
     setSaving(false)
   }
@@ -452,6 +460,39 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
             <textarea rows={2} placeholder="e.g. Upload a screenshot of your step tracker."
               value={desc} onChange={e => setDesc(e.target.value)}
               className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+          </div>
+
+          {/* Proof type — Photo or Video */}
+          <div className="space-y-2">
+            <Label>Proof type</Label>
+            <div className="flex rounded-lg border border-border overflow-hidden text-xs">
+              <button type="button" onClick={() => setProofType('image')}
+                className={cn('flex-1 px-3 py-2 transition-colors', proofType === 'image' ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                📷  Photo
+              </button>
+              <button type="button" onClick={() => setProofType('video')}
+                className={cn('flex-1 px-3 py-2 transition-colors', proofType === 'video' ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                🎬  Video
+              </button>
+            </div>
+            {proofType === 'video' && (
+              <div className="grid grid-cols-[1fr_120px] gap-3 items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="t-vid-secs" className="text-xs">Max duration (seconds)</Label>
+                  <Input
+                    id="t-vid-secs"
+                    type="number"
+                    min={5}
+                    max={180}
+                    value={maxVideoSeconds}
+                    onChange={e => setMaxVideoSeconds(Math.max(5, Math.min(180, Number(e.target.value))))}
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground pb-2">
+                  Videos are compressed to 480p before upload.
+                </p>
+              </div>
+            )}
           </div>
 
           {teamOptions.length > 0 && (
