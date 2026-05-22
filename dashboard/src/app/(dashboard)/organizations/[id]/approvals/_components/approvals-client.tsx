@@ -443,25 +443,17 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   async function handleReject() {
     if (!reviewTarget) return
     setSubmitting(true)
-    const result = await rejectSubmission(reviewTarget.id, orgId, adminNotes)
+    // When rejecting a previously-approved submission, pass a clearer audit
+    // reason so the points_transactions revocation row is informative.
+    const fallback = reviewTarget.status === 'approved' ? 'Approval rolled back by admin.' : ''
+    const reason = adminNotes || fallback
+    const result = await rejectSubmission(reviewTarget.id, orgId, reason)
     if (result.error) {
       toast.error(result.error)
     } else {
-      toast.success('Submission rejected.')
-      setApprovals(prev => prev.filter(a => a.id !== reviewTarget.id))
-      closeReview()
-    }
-    setSubmitting(false)
-  }
-
-  async function handleRevoke() {
-    if (!reviewTarget) return
-    setSubmitting(true)
-    const result = await rejectSubmission(reviewTarget.id, orgId, adminNotes || 'Approval revoked.')
-    if (result.error) {
-      toast.error(result.error)
-    } else {
-      toast.success('Approval revoked.')
+      toast.success(
+        reviewTarget.status === 'approved' ? 'Submission rejected. Points refunded.' : 'Submission rejected.',
+      )
       setApprovals(prev => prev.filter(a => a.id !== reviewTarget.id))
       closeReview()
     }
@@ -791,7 +783,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
               </div>
 
               <div className="px-5 py-4 border-t border-border">
-                {reviewTarget.status === 'pending' ? (
+                {reviewTarget.status === 'pending' && (
                   <div className="flex gap-2">
                     <button disabled={submitting} onClick={handleReject} className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 border-destructive text-destructive hover:bg-destructive/10')}>
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-4 h-4 mr-1.5" /> Reject</>}
@@ -800,15 +792,23 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><CheckCircle2 className="w-4 h-4 mr-1.5" /> Approve</>}
                     </button>
                   </div>
-                ) : (
+                )}
+
+                {reviewTarget.status === 'approved' && (
                   <div className="flex gap-2">
-                    <button disabled={submitting} onClick={handleApprove} className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 border-emerald-500 text-emerald-600 hover:bg-emerald-50')}>
-                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Re-approve with Override Points'}
+                    <button disabled={submitting} onClick={handleReject} className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 border-destructive text-destructive hover:bg-destructive/10')}>
+                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><XCircle className="w-4 h-4 mr-1.5" /> Reject</>}
                     </button>
-                    <button disabled={submitting} onClick={handleRevoke} className={cn(buttonVariants(), 'flex-1 bg-destructive hover:bg-destructive/90')}>
-                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Revoke Approval'}
+                    <button disabled={submitting} onClick={handleApprove} className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 border-emerald-500 text-emerald-600 hover:bg-emerald-50')}>
+                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Update Points'}
                     </button>
                   </div>
+                )}
+
+                {reviewTarget.status === 'rejected' && (
+                  <button disabled={submitting} onClick={handleApprove} className={cn(buttonVariants(), 'w-full')}>
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><CheckCircle2 className="w-4 h-4 mr-1.5" /> Approve</>}
+                  </button>
                 )}
               </div>
             </>
