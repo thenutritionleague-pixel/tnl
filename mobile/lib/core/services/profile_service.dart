@@ -52,7 +52,14 @@ class ProfileService {
     await _client.storage.from('avatars').uploadBinary(
       path,
       bytes,
-      fileOptions: FileOptions(upsert: false, contentType: mime),
+      // cacheControl: 1 year — avatars never change at the same URL (filename
+      // includes a timestamp), so we let browsers + Supabase CDN cache hard.
+      // Single biggest egress lever on the project.
+      fileOptions: FileOptions(
+        upsert: false,
+        contentType: mime,
+        cacheControl: '31536000',
+      ),
     );
 
     final publicUrl = _client.storage.from('avatars').getPublicUrl(path);

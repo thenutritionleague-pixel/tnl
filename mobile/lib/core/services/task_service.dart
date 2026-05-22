@@ -97,7 +97,13 @@ class TaskService {
     await _client.storage.from('task-proofs').uploadBinary(
       fileName,
       bytes,
-      fileOptions: FileOptions(upsert: false, contentType: _mimeType(safeExt)),
+      // cacheControl: 1 year — proofs never change at the same URL (filename
+      // includes taskId + timestamp). Allows aggressive browser + CDN caching.
+      fileOptions: FileOptions(
+        upsert: false,
+        contentType: _mimeType(safeExt),
+        cacheControl: '31536000',
+      ),
     );
 
     // Use the provided date (history resubmit) or fall back to the grace-aware

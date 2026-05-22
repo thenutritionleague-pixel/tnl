@@ -79,7 +79,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     if (source == null || !mounted) return;
 
-    final picked = await ImagePicker().pickImage(source: source, imageQuality: 80);
+    // Cap avatar source at 512×512 — avatars render at <100px so anything
+    // larger is wasted storage + egress (typical reduction: 10-20×).
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      imageQuality: 80,
+      maxWidth: 512,
+      maxHeight: 512,
+    );
     if (picked == null || !mounted) return;
 
     setState(() => _uploadingAvatar = true);

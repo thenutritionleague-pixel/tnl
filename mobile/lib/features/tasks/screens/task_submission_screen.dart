@@ -49,7 +49,14 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   bool get _isLocked => isInSubmissionLockout(_orgTimezone);
 
   Future<void> _pickImage(ImageSource source) async {
-    final picked = await ImagePicker().pickImage(source: source, imageQuality: 82);
+    // Cap proof photo at 1280×1280 + JPEG quality 82. Plenty for admin review
+    // and AI analysis; brings typical 4MB iPhone photos down to ~200KB.
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      imageQuality: 82,
+      maxWidth: 1280,
+      maxHeight: 1280,
+    );
     if (picked != null && mounted) {
       final bytes = await picked.readAsBytes();
       if (bytes.lengthInBytes > 15 * 1024 * 1024) {
