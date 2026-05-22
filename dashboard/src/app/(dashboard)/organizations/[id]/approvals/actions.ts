@@ -101,9 +101,14 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
   const client = await createAdminClient()
+  // Server-side resize via Supabase Pro image transforms — proof viewer shows
+  // at ~600px wide on retina, so 1024px source is plenty. Cuts egress 5-10×
+  // vs serving the original ~1MB proof on every dialog open.
   const { data } = await client.storage
     .from('task-proofs')
-    .createSignedUrl(path, 1800) // 30 min expiry — more forgiving if admin leaves dialog open
+    .createSignedUrl(path, 1800, {
+      transform: { width: 1024, quality: 80, resize: 'contain' },
+    })
   return data?.signedUrl ?? null
 }
 
@@ -128,6 +133,8 @@ export async function getPreviousApprovedProof(
   if (!data?.proof_url) return null
   const { data: signed } = await client.storage
     .from('task-proofs')
-    .createSignedUrl(data.proof_url, 300)
+    .createSignedUrl(data.proof_url, 300, {
+      transform: { width: 1024, quality: 80, resize: 'contain' },
+    })
   return signed?.signedUrl ?? null
 }
