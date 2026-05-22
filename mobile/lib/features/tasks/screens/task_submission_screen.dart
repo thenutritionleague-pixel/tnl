@@ -58,11 +58,32 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       maxHeight: 1280,
     );
     if (picked != null && mounted) {
-      final bytes = await picked.readAsBytes();
-      if (bytes.lengthInBytes > 15 * 1024 * 1024) {
+      // Reject any non-image file extension (videos, audio, docs). image_picker
+      // shouldn't allow these via pickImage, but be defensive against edge
+      // cases where the picker passes through a non-image MIME.
+      final lowerName = picked.name.toLowerCase();
+      const allowedExts = ['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp'];
+      final hasAllowedExt = allowedExts.any(lowerName.endsWith);
+      if (!hasAllowedExt) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Image too large. Please use a photo under 15 MB.'),
+          SnackBar(
+            content: Text('Only photos are accepted. Got "${lowerName.split('.').last}".'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        return;
+      }
+
+      final bytes = await picked.readAsBytes();
+      // After resize+quality, proofs are typically <500KB. Anything >5MB is
+      // suspicious (HEIC bypass, RAW, etc.) — reject with a clear message.
+      if (bytes.lengthInBytes > 5 * 1024 * 1024) {
+        final sizeMb = (bytes.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Photo is $sizeMb MB which is too big. Please use a smaller photo (under 5 MB).',
+            ),
             backgroundColor: AppColors.error,
           ),
         );

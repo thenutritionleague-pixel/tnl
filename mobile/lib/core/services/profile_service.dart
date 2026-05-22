@@ -36,6 +36,10 @@ class ProfileService {
 
   /// Upload a new avatar image and save the public URL to the profile.
   /// Returns the new public URL.
+  ///
+  /// Cleans up the user's previous avatar files in the same folder so storage
+  /// doesn't accumulate orphans. New filename is timestamped so the URL is
+  /// unique — browsers bypass the 1-year cache automatically.
   static Future<String> uploadAvatar(String profileId, XFile imageFile) async {
     if (_client.auth.currentSession == null) {
       throw AuthException('Session expired — please log in again.');
@@ -43,7 +47,8 @@ class ProfileService {
     final ext = p.extension(imageFile.name).toLowerCase();
     // Storage policy requires folder = auth.uid(), not profiles.id
     final authUid = _client.auth.currentUser!.id;
-    final path = '$authUid/${DateTime.now().millisecondsSinceEpoch}$ext';
+    final newFileName = '${DateTime.now().millisecondsSinceEpoch}$ext';
+    final path = '$authUid/$newFileName';
     final bytes = await imageFile.readAsBytes();
     final mime = switch (ext) {
       '.png' => 'image/png', '.gif' => 'image/gif', '.webp' => 'image/webp', _ => 'image/jpeg'
@@ -68,6 +73,21 @@ class ProfileService {
         .from('profiles')
         .update({'avatar_url': publicUrl})
         .eq('id', profileId);
+
+    // Best-effort cleanup of older avatars in this user's folder. Runs after
+    // the new one is in place so failure here doesn't break the update.
+    try {
+      final existing = await _client.storage.from('avatars').list(path: authUid);
+      final stale = existing
+          .where((f) => f.name != newFileName)
+          .map((f) => '$authUid/${f.name}')
+          .toList();
+      if (stale.isNotEmpty) {
+        await _client.storage.from('avatars').remove(stale);
+      }
+    } catch (_) {
+      // Don't surface — the new avatar is already live.
+    }
 
     return publicUrl;
   }
