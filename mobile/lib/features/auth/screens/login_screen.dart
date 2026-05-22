@@ -62,17 +62,70 @@ class _LoginScreenState extends State<LoginScreen> {
       });
     } catch (e) {
       debugPrint('[LoginScreen] sendOtp error: $e');
-      final msg = e.toString();
-      final secondsMatch = RegExp(r'after (\d+) second').firstMatch(msg);
       setState(() {
-        _error = secondsMatch != null
-            ? 'Too many requests — please wait ${secondsMatch.group(1)} seconds before trying again.'
-            : msg.toLowerCase().contains('rate')
-                ? 'Too many requests — please wait a moment before trying again.'
-                : 'Failed to send code. Please try again.';
+        _error = _humanizeOtpError(e);
         _loading = false;
       });
     }
+  }
+
+  /// Convert raw auth errors into a clear, actionable message.
+  /// Surfaces the actual reason (rate-limit / invalid email / SMTP /
+  /// signups-disabled / network) instead of a generic fallback.
+  String _humanizeOtpError(Object e) {
+    final raw = e.toString();
+    final lower = raw.toLowerCase();
+
+    // Rate limit with a specific wait time
+    final secs = RegExp(r'after (\d+) second').firstMatch(raw);
+    if (secs != null) {
+      return 'Too many requests — please wait ${secs.group(1)} seconds before trying again.';
+    }
+    if (lower.contains('rate limit') || lower.contains('rate-limit')) {
+      return 'Too many requests — please wait a minute and try again.';
+    }
+    if (lower.contains('email rate limit')) {
+      return 'Email send limit reached. Wait a few minutes and try again.';
+    }
+
+    // Invalid email
+    if (lower.contains('invalid email') ||
+        lower.contains('email address') && lower.contains('invalid')) {
+      return 'This email address looks invalid. Please check and retry.';
+    }
+
+    // Email-send / SMTP issues
+    if (lower.contains('smtp') ||
+        lower.contains('error sending') ||
+        lower.contains('email send') ||
+        lower.contains('failed to send email')) {
+      return 'Could not send the email right now. Please try again in a minute. If it keeps failing, contact your admin.';
+    }
+
+    // Signups disabled
+    if (lower.contains('signups not allowed') || lower.contains('signups are disabled')) {
+      return 'New signups are disabled. Contact your admin.';
+    }
+
+    // Network / connectivity
+    if (lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('clientexception') ||
+        lower.contains('connection') ||
+        lower.contains('network')) {
+      return 'No internet connection. Check your network and try again.';
+    }
+
+    // Try to extract the message field from an AuthException-ish error
+    final msgMatch = RegExp(r'message:\s*([^,)]+)').firstMatch(raw);
+    if (msgMatch != null) {
+      final cleaned = msgMatch.group(1)!.trim().replaceAll('"', '');
+      if (cleaned.isNotEmpty && cleaned.length < 200) {
+        return cleaned;
+      }
+    }
+
+    return 'Failed to send code. Please try again. If this keeps happening, contact your admin.';
   }
 
   Future<void> _handleVerifyOtp() async {
