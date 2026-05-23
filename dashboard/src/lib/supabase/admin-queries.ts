@@ -839,13 +839,6 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
     client.from('teams').select('id, name, team_members(user_id, role, profiles(name))').eq('org_id', orgId).order('created_at', { ascending: true }),
   ])
 
-  const { data: ptsData } = await client
-    .from('task_submissions')
-    .select('points_awarded')
-    .eq('org_id', orgId)
-    .eq('status', 'approved')
-  const totalPoints = (ptsData ?? []).reduce((sum: number, s: { points_awarded: number | null }) => sum + (s.points_awarded ?? 0), 0)
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activeChallenges = ((challengesRes.data ?? []) as any[])
     .filter((c: { status: string }) => c.status === 'active')
@@ -854,7 +847,12 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
       dates: `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`,
     }))
 
-  // Fetch points per team via team_points_view (includes task pts + manual pts + team_transactions)
+  // Fetch points per team via team_points_view (includes task pts + manual pts + team_transactions).
+  // Then derive the org total from the same source so the "Total Points" stat
+  // matches the sum of the team leaderboard shown right below it.
+  // (Previously we summed task_submissions.points_awarded directly, but
+  // Supabase caps SELECTs at 1000 rows by default — orgs with more approved
+  // submissions had their total silently truncated.)
   const { data: activeChallenge } = await client
     .from('challenges')
     .select('id')
@@ -863,6 +861,7 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
     .limit(1)
     .maybeSingle()
   const teamPtsMap: Record<string, number> = {}
+  let totalPoints = 0
   if (activeChallenge) {
     const { data: viewRows } = await client
       .from('team_points_view')
@@ -870,6 +869,7 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
       .eq('challenge_id', activeChallenge.id)
     for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
       teamPtsMap[row.team_id] = row.total_points
+      totalPoints += row.total_points
     }
   }
 
