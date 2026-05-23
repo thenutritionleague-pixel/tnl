@@ -4,6 +4,7 @@
  */
 
 import { createAdminClient } from './server'
+import { fetchAllRows } from './fetch-all'
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -306,35 +307,54 @@ export interface TeamStatAdmin {
 export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: MemberStatAdmin[]; teams: TeamStatAdmin[]; currentWeek: number }> {
   const client = await createAdminClient()
 
-  const [challengeRes, teamMembersRes, orgMembersRes, subsRes, missedRes, manualRes, rejectedRes, orgRes, teamTransfersRes] = await Promise.all([
+  // Wrap the four growth-prone selects (task_submissions × 2, points_transactions × 2,
+  // team_transactions × 1) in fetchAllRows so they paginate past Supabase's
+  // 1000-row default cap. Without this, the breakdown silently dropped most
+  // rows for any org with more than 1000 approved submissions / missed tasks.
+  const [
+    challengeRes, teamMembersRes, orgMembersRes,
+    subsData, missedData, manualData, rejectedData,
+    orgRes, teamTransfersData,
+  ] = await Promise.all([
     client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
-    client.from('task_submissions').select('user_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)').eq('org_id', orgId).eq('status', 'approved'),
-    // Fetch 0-pt missed-task transactions written by the daily cron
-    client.from('points_transactions')
-      .select('user_id, org_id, reason, created_at')
-      .eq('org_id', orgId)
-      .eq('amount', 0)
-      .like('reason', 'Task missed:%'),
-    // Fetch manual point adjustments
-    client.from('points_transactions')
-      .select('id, user_id, amount, reason, created_at, transaction_date')
-      .eq('org_id', orgId)
-      .eq('is_manual', true)
-      .order('created_at', { ascending: false }),
-    // Fetch rejected submissions
-    client.from('task_submissions')
-      .select('user_id, submitted_date, tasks(title, icon, start_week)')
-      .eq('org_id', orgId)
-      .eq('status', 'rejected'),
+    fetchAllRows<{ user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
+      (from, to) => client.from('task_submissions')
+        .select('user_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)')
+        .eq('org_id', orgId).eq('status', 'approved').range(from, to),
+    ),
+    fetchAllRows<{ user_id: string; org_id: string; reason: string; created_at: string }>(
+      (from, to) => client.from('points_transactions')
+        .select('user_id, org_id, reason, created_at')
+        .eq('org_id', orgId).eq('amount', 0).like('reason', 'Task missed:%').range(from, to),
+    ),
+    fetchAllRows<{ id: string; user_id: string; amount: number; reason: string; created_at: string; transaction_date: string | null }>(
+      (from, to) => client.from('points_transactions')
+        .select('id, user_id, amount, reason, created_at, transaction_date')
+        .eq('org_id', orgId).eq('is_manual', true)
+        .order('created_at', { ascending: false }).range(from, to),
+    ),
+    fetchAllRows<{ user_id: string; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }>(
+      (from, to) => client.from('task_submissions')
+        .select('user_id, submitted_date, tasks(title, icon, start_week)')
+        .eq('org_id', orgId).eq('status', 'rejected').range(from, to),
+    ),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
-    // Fetch team-level inheritance/transfer transactions
-    client.from('team_transactions')
-      .select('id, team_id, amount, reason, source_user_name, kind, created_at, transaction_date')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false }),
+    fetchAllRows<{ id: string; team_id: string; amount: number; reason: string; source_user_name: string | null; kind: string; created_at: string; transaction_date: string | null }>(
+      (from, to) => client.from('team_transactions')
+        .select('id, team_id, amount, reason, source_user_name, kind, created_at, transaction_date')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: false }).range(from, to),
+    ),
   ])
+
+  // Wrap paginated results in the { data } shape the rest of this function expects
+  const subsRes        = { data: subsData }
+  const missedRes      = { data: missedData }
+  const manualRes      = { data: manualData }
+  const rejectedRes    = { data: rejectedData }
+  const teamTransfersRes = { data: teamTransfersData }
 
   const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
 

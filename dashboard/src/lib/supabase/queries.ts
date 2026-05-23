@@ -7,6 +7,7 @@
 import { createAdminClient } from './server'
 import { getAdminProfile } from '../auth'
 import { todayInTimezone } from '../date-utils'
+import { fetchAllRows } from './fetch-all'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -357,10 +358,13 @@ export async function deleteOrg(id: string) {
 export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
   const supabase = await db()
 
-  // 1. Fetch all profiles linked to this Org (Primary Source of Truth)
+  // 1. Fetch all profiles linked to this Org (Primary Source of Truth).
+  //    total_points is maintained by the handle_submission_approved trigger
+  //    on task_submissions — so reading it directly avoids summing thousands
+  //    of submission rows (which would silently truncate at 1000).
   const { data: profiles, error: pErr } = await supabase
     .from('profiles')
-    .select('id, name, email, avatar_color, created_at')
+    .select('id, name, email, avatar_color, total_points, created_at')
     .eq('org_id', orgId)
     .order('created_at', { ascending: true })
 
@@ -378,13 +382,6 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     .select('user_id, role, team_id, teams(id, name)')
     .eq('org_id', orgId)
 
-  // 4. Fetch approved points
-  const { data: submissions } = await supabase
-    .from('task_submissions')
-    .select('user_id, points_awarded, tasks(points)')
-    .eq('org_id', orgId)
-    .eq('status', 'approved')
-
   const roleMap: Record<string, { role: string; joinedAt: string }> = {}
   for (const or of (orgRoles ?? []) as any[]) {
     roleMap[or.user_id] = { role: or.role, joinedAt: or.joined_at }
@@ -399,12 +396,6 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     }
   }
 
-  const pointsMap: Record<string, number> = {}
-  for (const s of (submissions ?? []) as any[]) {
-    if (!pointsMap[s.user_id]) pointsMap[s.user_id] = 0
-    pointsMap[s.user_id] += s.points_awarded ?? s.tasks?.points ?? 0
-  }
-
   return profiles.map(p => {
     const tm = teamLookup[p.id]
     const om = roleMap[p.id]
@@ -416,7 +407,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
       teamId: tm?.teamId ?? null,
       role: (om?.role as OrgMember['role']) ?? 'member', // Default to member if not specifically in org_members
       teamRole: (tm?.role as OrgMember['teamRole']) ?? null,
-      points: pointsMap[p.id] ?? 0,
+      points: (p as { total_points?: number }).total_points ?? 0,
       joinedAt: fmtDate(om?.joinedAt ?? p.created_at),
       avatarColor: p.avatar_color ?? '#059669',
     }
@@ -878,13 +869,18 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
 
   let txnsByUser: Record<string, TxnRaw[]> = {}
   if (challenge && memberIds.length > 0) {
-    const { data: txnData } = await supabase
-      .from('points_transactions')
-      .select('user_id, amount, reason, is_manual, created_at, transaction_date, task_submissions(submitted_date, tasks(title, icon, points))')
-      .in('user_id', memberIds)
-      .gte('created_at', challenge.start_date)
-      .order('created_at', { ascending: true })
-    for (const t of (txnData ?? []) as unknown as TxnRaw[]) {
+    // Paginate — a 9-member team across a 4-week challenge can easily exceed
+    // 1000 transactions once tasks accumulate (approvals + missed + manual).
+    const txnData = await fetchAllRows<TxnRaw>(
+      (from, to) => supabase
+        .from('points_transactions')
+        .select('user_id, amount, reason, is_manual, created_at, transaction_date, task_submissions(submitted_date, tasks(title, icon, points))')
+        .in('user_id', memberIds)
+        .gte('created_at', challenge.start_date)
+        .order('created_at', { ascending: true })
+        .range(from, to),
+    )
+    for (const t of txnData) {
       if (!txnsByUser[t.user_id]) txnsByUser[t.user_id] = []
       txnsByUser[t.user_id].push(t)
     }
@@ -988,15 +984,20 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
   }
 
   // Fetch team_transactions (legacy transfers + manual bonuses) for this team
-  const { data: ttData } = await supabase
-    .from('team_transactions')
-    .select('id, amount, reason, source_user_name, kind, created_at, transaction_date')
-    .eq('team_id', teamId)
-    .order('created_at', { ascending: false })
-
-  const legacyEntries: TeamLegacyEntryUI[] = ((ttData ?? []) as {
+  // Paginated so the legacyTotal sum below is always accurate even if a team
+  // accumulates 1000+ admin bonuses / inheritance transfers.
+  const ttData = await fetchAllRows<{
     id: string; amount: number; reason: string; source_user_name: string | null; kind: string; created_at: string; transaction_date: string | null
-  }[]).map(t => ({
+  }>(
+    (from, to) => supabase
+      .from('team_transactions')
+      .select('id, amount, reason, source_user_name, kind, created_at, transaction_date')
+      .eq('team_id', teamId)
+      .order('created_at', { ascending: false })
+      .range(from, to),
+  )
+
+  const legacyEntries: TeamLegacyEntryUI[] = ttData.map(t => ({
     id: t.id,
     amount: t.amount,
     reason: t.reason,
@@ -1251,6 +1252,10 @@ export async function deleteTask(id: string) {
 export async function getFeedPosts(orgId: string): Promise<FeedPost[]> {
   const supabase = await db()
 
+  // Explicit limit so we don't rely on Supabase's implicit 1000-row cap.
+  // Feed is read-only and ~500 recent posts cover well over a month of
+  // typical activity; older items can be backfilled later via proper
+  // server-driven pagination if/when needed.
   const { data: posts } = await supabase
     .from('feed_items')
     .select(`
@@ -1262,6 +1267,7 @@ export async function getFeedPosts(orgId: string): Promise<FeedPost[]> {
     .eq('org_id', orgId)
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
+    .limit(500)
 
   if (!posts) return []
 
