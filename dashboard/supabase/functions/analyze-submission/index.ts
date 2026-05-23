@@ -10,7 +10,8 @@ const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') })
 // Set this in Supabase: Settings → Edge Functions → Secrets → GEMINI_API_KEY.
 // Empty/missing key → video submissions fall back to needs_review.
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
-const GEMINI_MODEL   = 'gemini-2.0-flash'
+// 'flash-latest' auto-upgrades when Google releases newer Flash versions.
+const GEMINI_MODEL   = 'gemini-flash-latest'
 const GEMINI_BASE    = 'https://generativelanguage.googleapis.com'
 
 type Tier = { label: string; description: string; points: number }
@@ -126,10 +127,11 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
 
   // 2. Start a resumable upload
   const initRes = await fetch(
-    `${GEMINI_BASE}/upload/v1beta/files?key=${GEMINI_API_KEY}`,
+    `${GEMINI_BASE}/upload/v1beta/files`,
     {
       method: 'POST',
       headers: {
+        'X-goog-api-key': GEMINI_API_KEY,
         'X-Goog-Upload-Protocol': 'resumable',
         'X-Goog-Upload-Command': 'start',
         'X-Goog-Upload-Header-Content-Length': videoBytes.byteLength.toString(),
@@ -161,15 +163,19 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
 
   // Best-effort cleanup helper
   const deleteFile = () => {
-    fetch(`${GEMINI_BASE}/v1beta/${fileName}?key=${GEMINI_API_KEY}`, { method: 'DELETE' })
-      .catch(() => {})
+    fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
+      method: 'DELETE',
+      headers: { 'X-goog-api-key': GEMINI_API_KEY },
+    }).catch(() => {})
   }
 
   // 4. Poll until processed (max ~60s)
   const start = Date.now()
   while (state === 'PROCESSING' && Date.now() - start < 60_000) {
     await new Promise(r => setTimeout(r, 2000))
-    const stateRes = await fetch(`${GEMINI_BASE}/v1beta/${fileName}?key=${GEMINI_API_KEY}`)
+    const stateRes = await fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
+      headers: { 'X-goog-api-key': GEMINI_API_KEY },
+    })
     if (!stateRes.ok) break
     const stateData = await stateRes.json() as { state: string }
     state = stateData.state
@@ -181,10 +187,13 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
 
   // 5. Generate content — request JSON response
   const genRes = await fetch(
-    `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-goog-api-key': GEMINI_API_KEY,
+      },
       body: JSON.stringify({
         contents: [{
           role: 'user',
