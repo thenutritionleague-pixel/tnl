@@ -47,7 +47,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   String? _expandedTeamId;       // which team row is open (Teams tab)
 
   // ── Team weekly points cache (Teams tab) ─────────────────────────────────
-  final Map<String, Map<int, int>> _teamWeeklyCache = {};
+  // Per team, an ordered list of { challengeId, challengeName, weeks } —
+  // one entry per challenge the team participates in. Rendered as
+  // grouped sections in the expanded panel.
+  final Map<String, List<_ChallengeWeekly>> _teamWeeklyCache = {};
 
   // ── Pre-loaded team member previews (avatars in rows) ────────────────────
   Map<String, List<Map<String, dynamic>>> _teamMemberPreviews = {};
@@ -216,17 +219,27 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
   }
 
-  // ── Lazy load: team weekly points ─────────────────────────────────────────
+  // ── Lazy load: team weekly points (one section per active challenge) ─────
   Future<void> _loadTeamWeeklyPoints(String teamId) async {
     if (_teamWeeklyCache.containsKey(teamId) || _loadingIds.contains(teamId)) return;
+    if (_orgId == null || _challenges.isEmpty) return;
     setState(() => _loadingIds.add(teamId));
     try {
-      final orgId = (await ProfileService.getProfile(
-              Supabase.instance.client.auth.currentUser!.id))?['org_id'] as String? ?? '';
-      final weekly = await LeaderboardService.getTeamWeeklyPoints(teamId, orgId, _challengeId);
+      // Fetch the weekly breakdown for EACH challenge in parallel so the
+      // expanded panel can show a section per challenge.
+      final futures = _challenges.map((c) async {
+        final cid = c['id'] as String;
+        final weeks = await LeaderboardService.getTeamWeeklyPoints(teamId, _orgId!, cid);
+        return _ChallengeWeekly(
+          challengeId: cid,
+          challengeName: c['name'] as String? ?? 'Challenge',
+          weeks: weeks,
+        );
+      });
+      final sections = await Future.wait(futures);
       if (mounted) {
         setState(() {
-          _teamWeeklyCache[teamId] = weekly;
+          _teamWeeklyCache[teamId] = sections;
           _loadingIds.remove(teamId);
         });
       }
@@ -580,15 +593,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
         child: Center(child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2)),
       );
     }
-    final weekly = _teamWeeklyCache[teamId];
-    if (weekly == null) {
+    final sections = _teamWeeklyCache[teamId];
+    if (sections == null || sections.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
         child: Text('No points yet.',
             style: TextStyle(color: context.textHint, fontSize: 12)),
       );
     }
-    final sortedWeeks = weekly.keys.toList()..sort();
+    // For each challenge the team is in, render a small section: challenge
+    // name as header, then week pills. When only 1 active challenge, the
+    // header still shows so members know which challenge they're seeing.
     return Container(
       color: Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF0F2416)
@@ -596,33 +611,74 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: sortedWeeks.asMap().entries.map((e) {
-          final isLastWeek = e.key == sortedWeeks.length - 1;
-          final week = e.value;
-          final pts = weekly[week] ?? 0;
+        children: sections.asMap().entries.map((sec) {
+          final isLastSection = sec.key == sections.length - 1;
+          final section = sec.value;
+          final sortedWeeks = section.weeks.keys.toList()..sort();
           return Padding(
-            padding: EdgeInsets.only(bottom: isLastWeek ? 0 : 8),
-            child: Row(
+            padding: EdgeInsets.only(bottom: isLastSection ? 0 : 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Text('Week $week',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700)),
+                // Challenge name header
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.emoji_events_outlined, size: 12, color: AppColors.primary),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          section.challengeName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: context.textPrimary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 10),
-                Text('🥦 $pts',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: context.isDarkMode
-                            ? Colors.white.withValues(alpha: 0.9)
-                            : context.pointsText)),
+                if (sortedWeeks.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 18),
+                    child: Text('No points yet.',
+                        style: TextStyle(color: context.textHint, fontSize: 11)),
+                  )
+                else
+                  ...sortedWeeks.asMap().entries.map((e) {
+                    final isLastWeek = e.key == sortedWeeks.length - 1;
+                    final week = e.value;
+                    final pts = section.weeks[week] ?? 0;
+                    return Padding(
+                      padding: EdgeInsets.only(left: 18, bottom: isLastWeek ? 0 : 6),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Text('Week $week',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                          const SizedBox(width: 10),
+                          Text('🥦 $pts',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: context.isDarkMode
+                                      ? Colors.white.withValues(alpha: 0.9)
+                                      : context.pointsText)),
+                        ],
+                      ),
+                    );
+                  }),
               ],
             ),
           );
@@ -1222,6 +1278,18 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       ),
     );
   }
+}
+
+// ── Per-challenge weekly breakdown for a team ────────────────────────────────
+class _ChallengeWeekly {
+  final String challengeId;
+  final String challengeName;
+  final Map<int, int> weeks; // week_number → points
+  const _ChallengeWeekly({
+    required this.challengeId,
+    required this.challengeName,
+    required this.weeks,
+  });
 }
 
 // ── Podium Card ──────────────────────────────────────────────────────────────
