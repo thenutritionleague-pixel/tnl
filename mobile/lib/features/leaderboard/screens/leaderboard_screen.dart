@@ -95,11 +95,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       }
       final orgId = profile['org_id'] as String;
 
+      // Defensive: an org can briefly have >1 active challenge (e.g. while
+      // setting up a new league before closing the old one). Pick the most
+      // recently created — matches the `get_active_challenge` RPC the home
+      // screen uses (which does `order by created_at desc limit 1`).
       final challengeData = await Supabase.instance.client
           .from('challenges')
           .select('id, name')
           .eq('org_id', orgId)
           .eq('status', 'active')
+          .order('created_at', ascending: false)
+          .limit(1)
           .maybeSingle();
       final challengeId = challengeData?['id'] as String? ?? '';
 

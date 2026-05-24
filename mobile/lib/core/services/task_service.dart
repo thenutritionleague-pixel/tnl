@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
@@ -227,60 +229,94 @@ class TaskService {
       );
     }
 
-    // Probe duration first — fail fast if the source is already too long.
-    final info = await VideoCompress.getMediaInfo(videoFile.path);
-    final srcDurationSec = ((info.duration ?? 0) / 1000).round();
-    if (srcDurationSec > maxDurationSeconds + 1) {
-      throw VideoTooLongException(srcDurationSec, maxDurationSeconds);
+    Uint8List bytes;
+    String uploadExt;
+    String uploadMime;
+
+    if (kIsWeb) {
+      // Flutter web: video_compress has no web implementation. Skip compression
+      // — upload the picked file as-is. Cap at 28 MB (bucket file_size_limit is
+      // 30 MB; the small headroom covers multipart-upload protocol overhead).
+      //
+      // Most phone-recorded 30-90 second clips at 1080p are 4-12 MB raw, so
+      // this cap is comfortable for typical proof videos. Users who hit it
+      // usually had 4K recording enabled — re-record at 1080p resolves it.
+      //
+      // Duration check is also skipped on web. The picker enforces maxDuration
+      // for camera capture; gallery picks fall through to admin review.
+      final raw = await videoFile.readAsBytes();
+      if (raw.lengthInBytes > 28 * 1024 * 1024) {
+        final mb = (raw.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
+        throw Exception(
+          'Video is $mb MB — too large to upload (max 28 MB). Try recording at 1080p instead of 4K, or use a shorter clip.',
+        );
+      }
+      bytes = raw;
+      uploadExt = rawExt;
+      uploadMime = switch (rawExt) {
+        '.mov' || '.m4v' => 'video/quicktime',
+        '.webm' => 'video/webm',
+        '.mkv' => 'video/x-matroska',
+        '.3gp' => 'video/3gpp',
+        _ => 'video/mp4',
+      };
+    } else {
+      // Native (iOS / Android): probe duration then compress to 480p .mp4.
+      final info = await VideoCompress.getMediaInfo(videoFile.path);
+      final srcDurationSec = ((info.duration ?? 0) / 1000).round();
+      if (srcDurationSec > maxDurationSeconds + 1) {
+        throw VideoTooLongException(srcDurationSec, maxDurationSeconds);
+      }
+
+      final progressSub = onCompressProgress == null
+          ? null
+          : VideoCompress.compressProgress$.subscribe((p) => onCompressProgress(p));
+      MediaInfo? compressed;
+      try {
+        compressed = await VideoCompress.compressVideo(
+          videoFile.path,
+          quality: VideoQuality.MediumQuality, // ~480p, good admin-review quality
+          includeAudio: true,
+          deleteOrigin: false,
+        );
+      } finally {
+        progressSub?.unsubscribe();
+      }
+
+      final outPath = compressed?.path;
+      if (outPath == null) {
+        throw const VideoCompressionFailedException();
+      }
+
+      final compressedFile = File(outPath);
+      bytes = await compressedFile.readAsBytes();
+
+      // Final safety net — compressed 90s video should be well under 30MB.
+      if (bytes.lengthInBytes > 30 * 1024 * 1024) {
+        throw Exception(
+          'Compressed video is still too large (>30 MB). Please record a shorter or simpler video.',
+        );
+      }
+
+      // Best-effort cleanup of the compressed temp file
+      try { await compressedFile.delete(); } catch (_) {}
+
+      uploadExt = '.mp4';
+      uploadMime = 'video/mp4';
     }
 
-    // Compress to 480p H.264 mp4. Output is always .mp4 regardless of input.
-    // includeAudio: true keeps the soundtrack for admin review.
-    final progressSub = onCompressProgress == null
-        ? null
-        : VideoCompress.compressProgress$.subscribe((p) => onCompressProgress(p));
-    MediaInfo? compressed;
-    try {
-      compressed = await VideoCompress.compressVideo(
-        videoFile.path,
-        quality: VideoQuality.MediumQuality, // ~480p, good admin-review quality
-        includeAudio: true,
-        deleteOrigin: false,
-      );
-    } finally {
-      progressSub?.unsubscribe();
-    }
-
-    final outPath = compressed?.path;
-    if (outPath == null) {
-      throw const VideoCompressionFailedException();
-    }
-
-    final compressedFile = File(outPath);
-    final bytes = await compressedFile.readAsBytes();
-
-    // Final safety net — compressed 90s video should be well under 30MB.
-    if (bytes.lengthInBytes > 30 * 1024 * 1024) {
-      throw Exception(
-        'Compressed video is still too large (>30 MB). Please record a shorter or simpler video.',
-      );
-    }
-
-    final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$uploadExt';
 
     await _client.storage.from('task-proofs').uploadBinary(
       fileName,
       bytes,
       // 1 year — proof URLs include timestamp so they're immutable.
-      fileOptions: const FileOptions(
+      fileOptions: FileOptions(
         upsert: false,
-        contentType: 'video/mp4',
+        contentType: uploadMime,
         cacheControl: '31536000',
       ),
     );
-
-    // Best-effort cleanup of the compressed temp file
-    try { await compressedFile.delete(); } catch (_) {}
 
     final dateStr = submittedDate ?? orgEffectiveTodayStr(orgTimezone);
     final taskSnapshot = _buildTaskSnapshot(task, selectedTierIndex);

@@ -726,6 +726,7 @@ export async function getOrgTeams(orgId: string): Promise<TeamUI[]> {
     .select('id')
     .eq('org_id', orgId)
     .eq('status', 'active')
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
 

@@ -347,12 +347,12 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+      <DialogContent className="sm:max-w-md max-h-[90vh] flex flex-col" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>{editTarget ? 'Edit Task' : 'Add Task'}</DialogTitle>
         </DialogHeader>
 
-        <form id="task-form" onSubmit={handleSubmit} className="space-y-4 py-2">
+        <form id="task-form" onSubmit={handleSubmit} className="space-y-4 py-2 flex-1 overflow-y-auto pr-1">
           <div className="space-y-1.5">
             <Label>Category</Label>
             <div className="flex gap-2 items-center">

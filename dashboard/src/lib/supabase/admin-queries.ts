@@ -316,7 +316,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     subsData, missedData, manualData, rejectedData,
     orgRes, teamTransfersData,
   ] = await Promise.all([
-    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').limit(1).maybeSingle(),
+    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle(),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
     fetchAllRows<{ user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
@@ -878,6 +878,7 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
     .select('id')
     .eq('org_id', orgId)
     .eq('status', 'active')
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   const teamPtsMap: Record<string, number> = {}
