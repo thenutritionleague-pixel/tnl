@@ -867,29 +867,26 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
       dates: `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`,
     }))
 
-  // Fetch points per team via team_points_view (includes task pts + manual pts + team_transactions).
-  // Then derive the org total from the same source so the "Total Points" stat
-  // matches the sum of the team leaderboard shown right below it.
-  // (Previously we summed task_submissions.points_awarded directly, but
-  // Supabase caps SELECTs at 1000 rows by default — orgs with more approved
-  // submissions had their total silently truncated.)
-  const { data: activeChallenge } = await client
+  // Fetch points per team via team_points_view, SUMMED across every active
+  // challenge in the org. Teams in multiple concurrent challenges see their
+  // points merged into one ranking — matches the mobile leaderboard behavior.
+  // team_points_view already scopes per challenge, so we just .in(...) over
+  // the active-challenge IDs and add up the rows.
+  const { data: activeChallengeRows } = await client
     .from('challenges')
     .select('id')
     .eq('org_id', orgId)
     .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const activeChallengeIds = (activeChallengeRows ?? []).map((c: { id: string }) => c.id)
   const teamPtsMap: Record<string, number> = {}
   let totalPoints = 0
-  if (activeChallenge) {
+  if (activeChallengeIds.length > 0) {
     const { data: viewRows } = await client
       .from('team_points_view')
       .select('team_id, total_points')
-      .eq('challenge_id', activeChallenge.id)
+      .in('challenge_id', activeChallengeIds)
     for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
-      teamPtsMap[row.team_id] = row.total_points
+      teamPtsMap[row.team_id] = (teamPtsMap[row.team_id] ?? 0) + row.total_points
       totalPoints += row.total_points
     }
   }

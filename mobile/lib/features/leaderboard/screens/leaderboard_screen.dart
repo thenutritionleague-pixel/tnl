@@ -35,7 +35,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   List<Map<String, dynamic>> _teams = [];
   String? _myProfileId;
   String? _myTeamId;
+  String? _orgId;
 
+  /// All active challenges this user's team is part of. Drives the selector.
+  List<Map<String, dynamic>> _challenges = [];
   String _challengeId = '';
 
   // ── Expansion state ───────────────────────────────────────────────────────
@@ -95,20 +98,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       }
       final orgId = profile['org_id'] as String;
 
-      // Defensive: an org can briefly have >1 active challenge (e.g. while
-      // setting up a new league before closing the old one). Pick the most
-      // recently created — matches the `get_active_challenge` RPC the home
-      // screen uses (which does `order by created_at desc limit 1`).
-      final challengeData = await Supabase.instance.client
-          .from('challenges')
-          .select('id, name')
-          .eq('org_id', orgId)
-          .eq('status', 'active')
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-      final challengeId = challengeData?['id'] as String? ?? '';
-
+      // Resolve the user's team first — we need it to filter challenges.
       final teamMembership = await ProfileService.getTeamMembership(profile['id']);
       dynamic firstIfList(dynamic val) {
         if (val == null) return null;
@@ -116,9 +106,40 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
         return val;
       }
       final team = firstIfList(teamMembership?['teams']);
+      final myTeamId = team?['id'] as String?;
 
-      final teamsFuture = challengeId.isNotEmpty
-          ? LeaderboardService.getTeamLeaderboard(orgId, challengeId)
+      // Fetch every active challenge in the org along with its challenge_teams.
+      // We filter in-Dart to those the user's team participates in:
+      //   - challenge has no challenge_teams entries (open to all teams), OR
+      //   - team_id is explicitly listed in challenge_teams.
+      // Matches the same membership pattern team_points_view + get_mobile_tasks use.
+      final allChallengesRaw = await Supabase.instance.client
+          .from('challenges')
+          .select('id, name, created_at, challenge_teams(team_id)')
+          .eq('org_id', orgId)
+          .eq('status', 'active')
+          .order('created_at', ascending: false);
+
+      final visibleChallenges = (allChallengesRaw as List)
+          .map((c) => Map<String, dynamic>.from(c as Map))
+          .where((c) {
+            final cts = (c['challenge_teams'] as List?) ?? const [];
+            if (cts.isEmpty) return true; // open challenge
+            return cts.any((ct) => (ct as Map)['team_id'] == myTeamId);
+          })
+          .toList();
+
+      // List of every challenge the user's team can see — leaderboard points
+      // are SUMMED across all of them so multi-challenge orgs see a unified
+      // ranking. _challengeId is kept as the "primary" challenge for the
+      // weekly-breakdown panels (which are still per-challenge).
+      final allVisibleIds = visibleChallenges.map((c) => c['id'] as String).toList();
+      final challengeId = visibleChallenges.isNotEmpty
+          ? visibleChallenges.first['id'] as String
+          : '';
+
+      final teamsFuture = allVisibleIds.isNotEmpty
+          ? LeaderboardService.getTeamLeaderboard(orgId, allVisibleIds)
           : Future.value(<Map<String, dynamic>>[]);
       final previewsFuture = LeaderboardService.getTeamMemberPreviews(orgId);
 
@@ -126,12 +147,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final teams   = loaded[0] as List<Map<String, dynamic>>;
       final previews = loaded[1] as Map<String, List<Map<String, dynamic>>>;
 
-      final myTeamId = team?['id'] as String?;
-
       if (mounted) {
         setState(() {
           _myProfileId = profile['id'];
           _myTeamId = myTeamId;
+          _orgId = orgId;
+          _challenges = visibleChallenges;
           _challengeId = challengeId;
           _teams = teams;
           _teamMemberPreviews = previews;
@@ -154,6 +175,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
   }
 
+  /// Switch the leaderboard to a different active challenge. Clears the
+  /// per-challenge caches (teams, weekly points, expanded breakdowns) and
   // ── Lazy load: team members ───────────────────────────────────────────────
   Future<void> _loadTeamMembers(String teamId) async {
     if (_teamMembersCache.containsKey(teamId) || _loadingIds.contains(teamId)) return;

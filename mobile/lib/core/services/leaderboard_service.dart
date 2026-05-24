@@ -5,9 +5,12 @@ class LeaderboardService {
   static final _client = Supabase.instance.client;
 
   /// Get team leaderboard — all teams sorted by points descending.
+  /// When [challengeIds] contains multiple IDs the points are SUMMED across
+  /// all of them (multi-challenge view). Pass a single-element list for the
+  /// legacy single-challenge behavior. Empty list → all zeros.
   static Future<List<Map<String, dynamic>>> getTeamLeaderboard(
     String orgId,
-    String challengeId,
+    List<String> challengeIds,
   ) async {
     final teams = await _client
         .from('teams')
@@ -18,13 +21,15 @@ class LeaderboardService {
     if ((teams as List).isEmpty) return [];
 
     final Map<String, int> pointsMap = {};
-    if (challengeId.isNotEmpty) {
+    if (challengeIds.isNotEmpty) {
       final points = await _client
           .from('team_points_view')
           .select('team_id, total_points')
-          .eq('challenge_id', challengeId);
+          .inFilter('challenge_id', challengeIds);
+      // Sum across challenges — a team in N challenges contributes N rows here.
       for (final row in points as List) {
-        pointsMap[row['team_id'] as String] = (row['total_points'] as int?) ?? 0;
+        final tid = row['team_id'] as String;
+        pointsMap[tid] = (pointsMap[tid] ?? 0) + ((row['total_points'] as int?) ?? 0);
       }
     }
 

@@ -720,25 +720,26 @@ export async function getOrgTeams(orgId: string): Promise<TeamUI[]> {
 
   if (!teams) return []
 
-  // Get points per team (latest active challenge)
-  const { data: challenges } = await supabase
+  // Sum points across every active challenge in the org so a team in multiple
+  // concurrent challenges sees their points merged here. team_points_view
+  // already scopes per (team, challenge), so we just .in() over the active
+  // challenge IDs and add up the rows.
+  const { data: activeChallenges } = await supabase
     .from('challenges')
     .select('id')
     .eq('org_id', orgId)
     .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const activeChallengeIds = (activeChallenges ?? []).map((c: { id: string }) => c.id)
 
   let pointsMap: Record<string, number> = {}
 
-  if (challenges) {
+  if (activeChallengeIds.length > 0) {
     const { data: viewRows } = await supabase
       .from('team_points_view')
       .select('team_id, total_points')
-      .eq('challenge_id', challenges.id)
+      .in('challenge_id', activeChallengeIds)
     for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
-      pointsMap[row.team_id] = row.total_points
+      pointsMap[row.team_id] = (pointsMap[row.team_id] ?? 0) + row.total_points
     }
   }
 
@@ -831,14 +832,28 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
 
   if (!team) return null
 
-  // Active challenge for this org
+  // Primary active challenge — used for the weekly breakdown which is
+  // inherently per-challenge (different challenges have different start dates,
+  // so "Week 1" means different things; merging week numbers across challenges
+  // doesn't make sense). Picks the most-recently-created.
   const { data: challenge } = await supabase
     .from('challenges')
     .select('id, start_date, end_date')
     .eq('org_id', orgId)
     .eq('status', 'active')
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+
+  // List of ALL active challenges for this org — used to sum the team's
+  // total points and compute rank across the merged leaderboard. Matches
+  // mobile + dashboard org overview behavior.
+  const { data: allActiveChallenges } = await supabase
+    .from('challenges')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('status', 'active')
+  const allActiveChallengeIds = (allActiveChallenges ?? []).map((c: { id: string }) => c.id)
 
   type TmRaw = { user_id: string; role: string; profiles: { id: string; name: string; avatar_color: string } | null }
   const teamRaw = team as unknown as { id: string; name: string; emoji: string; color: string; team_members: TmRaw[] }
@@ -1009,18 +1024,21 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
   }))
   const legacyTotal = legacyEntries.reduce((s, e) => s + e.amount, 0)
 
-  // Team rank: use team_points_view so it matches mobile leaderboard + includes legacy transfers
+  // Team rank — sum each team's points across ALL active challenges so the
+  // ranking matches the mobile leaderboard + dashboard org-overview widget.
   let rank = 1
-  if (challenge) {
+  if (allActiveChallengeIds.length > 0) {
     const { data: viewRows } = await supabase
       .from('team_points_view')
       .select('team_id, total_points')
-      .eq('challenge_id', challenge.id)
-    const allTeams = (viewRows ?? []) as { team_id: string; total_points: number }[]
-    const sorted = [...allTeams].sort((a, b) => b.total_points - a.total_points)
-    const me = allTeams.find(t => t.team_id === teamId)
-    const myPts = me?.total_points ?? 0
-    rank = sorted.findIndex(t => t.total_points <= myPts) + 1 || 1
+      .in('challenge_id', allActiveChallengeIds)
+    const summed: Record<string, number> = {}
+    for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
+      summed[row.team_id] = (summed[row.team_id] ?? 0) + row.total_points
+    }
+    const sorted = Object.entries(summed).sort(([, a], [, b]) => b - a)
+    const myPts = summed[teamId] ?? 0
+    rank = sorted.findIndex(([, pts]) => pts <= myPts) + 1 || 1
   }
 
   return {
