@@ -101,14 +101,14 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
   const client = await createAdminClient()
-  // Image transforms don't work on videos — only apply width/quality when the
-  // proof is an image. Videos stream via Range requests from the original.
-  const isVideo = /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(path)
-  const { data } = isVideo
-    ? await client.storage.from('task-proofs').createSignedUrl(path, 1800)
-    : await client.storage.from('task-proofs').createSignedUrl(path, 1800, {
-        transform: { width: 1024, quality: 80, resize: 'contain' },
-      })
+  // No `transform: {...}` — Supabase counts each unique source image transformed
+  // against the Pro plan's 100/month "Storage Image Transformations" quota, and
+  // active admin review sessions blow through that in a day. Proofs are already
+  // capped at 1280×1280 / quality 82 on mobile upload (~150-300 KB each), so
+  // serving the original costs negligible egress (<1% of the 250 GB Pro budget).
+  const { data } = await client.storage
+    .from('task-proofs')
+    .createSignedUrl(path, 1800)
   return data?.signedUrl ?? null
 }
 
@@ -131,10 +131,10 @@ export async function getPreviousApprovedProof(
     .limit(1)
     .maybeSingle()
   if (!data?.proof_url) return null
+  // No transform — see getProofSignedUrl above for the rationale (transformation
+  // quota is the bottleneck, not egress).
   const { data: signed } = await client.storage
     .from('task-proofs')
-    .createSignedUrl(data.proof_url, 300, {
-      transform: { width: 1024, quality: 80, resize: 'contain' },
-    })
+    .createSignedUrl(data.proof_url, 300)
   return signed?.signedUrl ?? null
 }
