@@ -87,9 +87,14 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
   }
 }
 
-// org_id is always fetched from DB — never trusted from the caller
+// org_id is always fetched from DB — never trusted from the caller.
+// `force=true` is for the admin "Re-analyze" button: bypasses the status-must-be-pending
+// idempotency check and the ai_status-must-be-null atomic claim. Downstream
+// auto-approve/auto-reject still respects the .eq('status', 'pending') guard so
+// an admin's manual decision is never overwritten by a re-analysis.
 export async function runAiAnalysis(
   submissionId: string,
+  force: boolean = false,
 ): Promise<{ aiStatus: string; aiFeedback: string; aiConfidence: number } | null> {
   const client = await createAdminClient()
 
@@ -104,21 +109,25 @@ export async function runAiAnalysis(
 
   const sub = subRaw as unknown as SubmissionWithTask
 
-  // Idempotency: skip if already processed
-  if (sub.status !== 'pending') return null
+  // Idempotency: when triggered by webhook (force=false), skip if already processed.
+  // When invoked from the admin "Re-analyze" button (force=true), proceed regardless.
+  if (!force && sub.status !== 'pending') return null
 
   const orgId = sub.org_id
 
-  // Atomic claim: only proceed if we can flip ai_status from null → 'analyzing'
-  const { data: claimed } = await client
+  // Atomic claim. For webhook flow: only proceed if ai_status is null (prevents
+  // concurrent trigger-fires racing). For force=true: reclaim regardless of
+  // current ai_status and also clear ai_feedback / ai_confidence so the UI
+  // reflects a fresh analysis from the start.
+  const claimQuery = client
     .from('task_submissions')
-    .update({ ai_status: 'analyzing' })
+    .update({ ai_status: 'analyzing', ai_feedback: null, ai_confidence: null })
     .eq('id', submissionId)
-    .is('ai_status', null)
-    .select('id')
+  const { data: claimed } = force
+    ? await claimQuery.select('id')
+    : await claimQuery.is('ai_status', null).select('id')
 
   if (!claimed || claimed.length === 0) {
-    // Another worker already claimed this submission
     return null
   }
 

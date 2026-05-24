@@ -370,12 +370,17 @@ Deno.serve(async (req: Request) => {
           max_tokens: 400,
         })
         aiResult = JSON.parse(response.choices[0].message.content ?? '{}')
-      } catch {
+      } catch (e) {
+        // Log the actual OpenAI error so it shows in Supabase function logs.
+        // Common causes: OPENAI_API_KEY invalid/expired, billing/quota exhausted,
+        // rate limit, OpenAI partial outage, or model deprecation.
+        const errMsg = e instanceof Error ? e.message : String(e)
+        console.error('[analyze-submission/openai-image]', errMsg)
         await supabase
           .from('task_submissions')
           .update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' })
           .eq('id', submissionId)
-        return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
+        return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
       }
     }
 

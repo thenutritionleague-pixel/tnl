@@ -311,6 +311,10 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   const [search, setSearch]         = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
+  // When true, only show submissions that were approved by an admin (not by AI).
+  // Useful for quickly auditing manual-approval overrides (e.g. when AI was down
+  // and admin had to decide everything by hand).
+  const [manualOnly, setManualOnly]   = useState(false)
 
   const teams = useMemo(
     () => Array.from(new Set(approvals.map(a => a.teamName))).sort(),
@@ -378,11 +382,21 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
   }
 
   async function handleReanalyze(a: OrgApproval) {
+    // Snapshot prior AI state in case the server returns null (e.g. submission
+    // gone, OpenAI down) — we need to revert the optimistic "analyzing" patch
+    // so the UI doesn't get stuck on the spinner.
+    const priorAi = { aiStatus: a.aiStatus, aiFeedback: a.aiFeedback, aiConfidence: a.aiConfidence }
     const patch = { aiStatus: 'analyzing', aiFeedback: null as string | null, aiConfidence: null as number | null }
     setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...patch } : x))
-    setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...patch } : prev)
-    const res = await runAiAnalysis(a.id)
-    if (!res) return
+    setReviewTarget(t => t?.id === a.id ? { ...t, ...patch } : t)
+    const res = await runAiAnalysis(a.id, true) // force=true → bypass idempotency checks
+    if (!res) {
+      // Revert to prior AI state so UI doesn't stay stuck on "AI Analyzing…"
+      setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...priorAi } : x))
+      setReviewTarget(t => t?.id === a.id ? { ...t, ...priorAi } : t)
+      toast.error('Could not re-analyze — see edge function logs for details.')
+      return
+    }
     const update = { aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence }
     setApprovals(prev => prev.map(x => {
       if (x.id !== a.id) return x
@@ -393,17 +407,22 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
         ...(res.aiStatus === 'rejected' ? { status: 'rejected' as const, rejectionReason: res.aiFeedback || 'Rejected by AI review.' } : {}),
       }
     }))
-    setReviewTarget(prev => prev?.id === a.id ? { ...prev, ...update } : prev)
+    setReviewTarget(t => t?.id === a.id ? { ...t, ...update } : t)
   }
 
   const filtered = useMemo(() => approvals.filter(a => {
     if (search && !a.member.toLowerCase().includes(search.toLowerCase())) return false
     if (teamFilter !== 'all' && a.teamName !== teamFilter) return false
     if (dateFilter && a.submittedDate !== dateFilter) return false
+    // Manually-approved = status flipped to approved by an admin, not by AI.
+    // AI auto-approve sets BOTH status='approved' AND ai_status='approved'.
+    // Anything else (ai_status null, needs_review, rejected, analyzing) on an
+    // approved row means an admin made the call.
+    if (manualOnly && !(a.status === 'approved' && a.aiStatus !== 'approved')) return false
     return true
-  }), [approvals, search, teamFilter, dateFilter])
+  }), [approvals, search, teamFilter, dateFilter, manualOnly])
 
-  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter)
+  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter || manualOnly)
   const pendingCount = statusFilter === 'pending' ? approvals.length : 0
 
   function openReview(a: OrgApproval) {
@@ -513,8 +532,25 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
             {teams.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <DatePicker value={dateFilter} onChange={setDateFilter} placeholder="Filter by date" />
+          {/* Manual-only filter — only useful within Approved/All tabs; hidden on Pending. */}
+          {statusFilter !== 'pending' && (
+            <button
+              type="button"
+              onClick={() => setManualOnly(v => !v)}
+              className={cn(
+                'shrink-0 inline-flex items-center gap-1.5 px-3 h-9 rounded-md border text-xs font-medium transition-colors',
+                manualOnly
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-input bg-background text-muted-foreground hover:text-foreground',
+              )}
+              title="Show only submissions an admin approved manually (AI didn't auto-approve)"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+              Manual only
+            </button>
+          )}
           {hasActiveFilter && (
-            <button onClick={() => { setSearch(''); setTeamFilter('all'); setDateFilter('') }} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'shrink-0 text-muted-foreground px-2')}>
+            <button onClick={() => { setSearch(''); setTeamFilter('all'); setDateFilter(''); setManualOnly(false) }} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'shrink-0 text-muted-foreground px-2')}>
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -585,8 +621,26 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore }: Pro
                   <p className="text-xs text-muted-foreground">{a.submittedAt}</p>
                 </div>
 
-                {/* Status */}
-                <div><StatusBadge status={a.status} /></div>
+                {/* Status — plus a tiny "Manual" pill on approved-by-admin rows */}
+                <div className="flex flex-col gap-1 items-start">
+                  <StatusBadge status={a.status} />
+                  {a.status === 'approved' && a.aiStatus !== 'approved' && (
+                    <span
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                      title="Admin approved this manually — AI did not auto-approve"
+                    >
+                      Manual
+                    </span>
+                  )}
+                  {a.status === 'rejected' && a.aiStatus !== 'rejected' && a.aiStatus !== null && (
+                    <span
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                      title="Admin rejected this manually — AI did not auto-reject"
+                    >
+                      Manual
+                    </span>
+                  )}
+                </div>
 
                 {/* Action */}
                 <div className="flex justify-end">
