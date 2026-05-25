@@ -82,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen>
         final challengeList = challengeResult as List?;
         if (challengeList != null && challengeList.isNotEmpty) {
           activeChallenge = Map<String, dynamic>.from(challengeList.first);
-          teamLeaderboard = await LeaderboardService.getTeamLeaderboard(orgId, activeChallenge['id']);
+          teamLeaderboard = await LeaderboardService.getTeamLeaderboard(orgId, [activeChallenge['id'] as String]);
         }
       }
 
