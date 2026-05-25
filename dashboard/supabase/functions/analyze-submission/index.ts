@@ -416,8 +416,8 @@ Deno.serve(async (req: Request) => {
     const confidence = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
     const feedback   = aiResult.feedback ?? ''
 
-    const approveAt = 0.78
-    const rejectAt  = 0.40
+    const approveAt = 0.70
+    const rejectAt  = 0.50
 
     let aiStatus: string
     if (aiResult.approved && confidence >= approveAt) {
