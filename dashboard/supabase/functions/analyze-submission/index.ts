@@ -416,9 +416,8 @@ Deno.serve(async (req: Request) => {
     const confidence = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
     const feedback   = aiResult.feedback ?? ''
 
-    // Stricter thresholds for video: faked videos erode trust more than faked photos.
-    const approveAt = medium === 'video' ? 0.85 : 0.78
-    const rejectAt  = medium === 'video' ? 0.35 : 0.40
+    const approveAt = 0.78
+    const rejectAt  = 0.40
 
     let aiStatus: string
     if (aiResult.approved && confidence >= approveAt) {
