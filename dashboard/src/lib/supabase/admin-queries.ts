@@ -316,12 +316,12 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     subsData, missedData, manualData, rejectedData,
     orgRes, teamTransfersData,
   ] = await Promise.all([
-    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').order('created_at', { ascending: false }),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
-    fetchAllRows<{ user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
+    fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
       (from, to) => client.from('task_submissions')
-        .select('user_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)')
+        .select('user_id, challenge_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)')
         .eq('org_id', orgId).eq('status', 'approved').range(from, to),
     ),
     fetchAllRows<{ user_id: string; org_id: string; reason: string; created_at: string }>(
@@ -335,9 +335,9 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
         .eq('org_id', orgId).eq('is_manual', true)
         .order('created_at', { ascending: false }).range(from, to),
     ),
-    fetchAllRows<{ user_id: string; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }>(
+    fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }>(
       (from, to) => client.from('task_submissions')
-        .select('user_id, submitted_date, tasks(title, icon, start_week)')
+        .select('user_id, challenge_id, submitted_date, tasks(title, icon, start_week)')
         .eq('org_id', orgId).eq('status', 'rejected').range(from, to),
     ),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
@@ -356,7 +356,13 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   const rejectedRes    = { data: rejectedData }
   const teamTransfersRes = { data: teamTransfersData }
 
-  const startDate = challengeRes.data ? new Date(challengeRes.data.start_date) : null
+  type ChallengeRow = { id: string; start_date: string }
+  const challengeStartMap: Record<string, Date> = {}
+  let mostRecentStartDate: Date | null = null
+  for (const ch of (challengeRes.data ?? []) as ChallengeRow[]) {
+    challengeStartMap[ch.id] = new Date(ch.start_date)
+    if (!mostRecentStartDate) mostRecentStartDate = challengeStartMap[ch.id] // ordered desc → first is newest
+  }
 
   // Build team lookup
   type TmRaw = { user_id: string; profiles: { id: string; name: string; avatar_color: string } | null; teams: { id: string; name: string; emoji: string; color: string } | null }
@@ -392,20 +398,21 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   }
 
   // ── Approved submissions → completed days ───────────────────────────────────
-  type SubRaw = { user_id: string; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }
+  type SubRaw = { user_id: string; challenge_id: string | null; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }
 
-  function calcWeek(dateStr: string | null, pts?: number): number {
-    if (startDate && dateStr) {
-      const diff = Math.floor((new Date(dateStr + 'T12:00:00').getTime() - startDate.getTime()) / 86400000)
+  function calcWeek(dateStr: string | null, challengeId?: string | null, pts?: number): number {
+    const sd = (challengeId && challengeStartMap[challengeId]) ? challengeStartMap[challengeId] : mostRecentStartDate
+    if (sd && dateStr) {
+      const diff = Math.floor((new Date(dateStr + 'T12:00:00').getTime() - sd.getTime()) / 86400000)
       return Math.max(1, Math.floor(diff / 7) + 1)
     }
     return pts ?? 1
   }
 
   for (const sub of (subsRes.data ?? []) as unknown as SubRaw[]) {
-    const { user_id, submitted_date, points_awarded, tasks } = sub
+    const { user_id, challenge_id, submitted_date, points_awarded, tasks } = sub
     if (!tasks || !memberMap[user_id]) continue
-    const week = calcWeek(submitted_date, tasks.start_week ?? 1)
+    const week = calcWeek(submitted_date, challenge_id, tasks.start_week ?? 1)
     const pts = points_awarded ?? tasks.points
     ensureWeek(user_id, week)
     weekDataMap[user_id][week].points += pts
@@ -422,11 +429,11 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   }
 
   // ── Rejected submissions → entries ──────────────────────────────────────────
-  type RejRaw = { user_id: string; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }
+  type RejRaw = { user_id: string; challenge_id: string | null; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }
   for (const sub of (rejectedRes.data ?? []) as unknown as RejRaw[]) {
-    const { user_id, submitted_date, tasks } = sub
+    const { user_id, challenge_id, submitted_date, tasks } = sub
     if (!tasks || !memberMap[user_id]) continue
-    const week = calcWeek(submitted_date, tasks.start_week ?? 1)
+    const week = calcWeek(submitted_date, challenge_id, tasks.start_week ?? 1)
     ensureWeek(user_id, week)
     weekDataMap[user_id][week].entries.push({
       taskTitle: tasks.title, taskIcon: tasks.icon,
@@ -446,7 +453,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     if (!match) continue
     const taskTitle = match[1]
     const dateStr = match[2] ?? null
-    const week = calcWeek(dateStr ?? created_at.slice(0, 10))
+    const week = calcWeek(dateStr ?? created_at.slice(0, 10), null)
     ensureWeek(user_id, week)
     if (!weekDataMap[user_id][week].tasks[taskTitle])
       weekDataMap[user_id][week].tasks[taskTitle] = { daysCompleted: 0, missedDays: 0, pointsPerDay: 0, icon: '❌' }
@@ -465,7 +472,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     if (!memberMap[user_id]) continue
     // Use the explicit event date if set; fall back to created_at date
     const eventDateStr = transaction_date ?? created_at.slice(0, 10)
-    const week = calcWeek(eventDateStr)
+    const week = calcWeek(eventDateStr, null)
     ensureWeek(user_id, week)
     // Add to weekDataMap so the weekly column total includes manual pts
     weekDataMap[user_id][week].points += amount
@@ -527,7 +534,7 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
 
   const orgTz: string = (orgRes as any).data?.timezone ?? 'UTC'
   const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: orgTz }).format(new Date())
-  const currentWeek = startDate ? calcWeek(todayStr) : 1
+  const currentWeek = mostRecentStartDate ? calcWeek(todayStr, null) : 1
 
   return { members, teams, currentWeek }
 }
