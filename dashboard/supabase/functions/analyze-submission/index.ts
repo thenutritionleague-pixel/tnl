@@ -114,18 +114,56 @@ Respond in JSON only — no markdown:
 {"approved":true|false,"confidence":0.0-1.0,"issues":["short codes"],"feedback":"If not approved: 1–2 actionable sentences telling the member what was wrong and how to resubmit correctly."}`
 }
 
-/// Gemini 2.0 Flash analyzes the video via the File API (handles large files).
-/// Flow: fetch bytes → resumable upload → poll until ACTIVE → generateContent → delete file.
+// Videos ≤ 15 MB go via inline base64 — one round-trip, no upload/poll overhead,
+// fits well inside the 26 s edge-function wall-clock limit.
+// Videos > 15 MB fall back to the File API (resumable upload + poll).
+const INLINE_LIMIT = 15 * 1024 * 1024
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+async function geminiGenerate(
+  parts: unknown[],
+  prompt: string,
+): Promise<AIResult> {
+  const genRes = await fetch(
+    `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
+        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 400 },
+      }),
+    },
+  )
+  if (!genRes.ok) throw new Error(`Gemini generate failed (${genRes.status}): ${await genRes.text()}`)
+  const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
+  const text = genData.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
+  return JSON.parse(text) as AIResult
+}
+
 async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promise<AIResult> {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
 
-  // 1. Pull video bytes from Supabase Storage
   const videoRes = await fetch(signedUrl, { signal: AbortSignal.timeout(30_000) })
   if (!videoRes.ok) throw new Error(`Could not fetch video (${videoRes.status})`)
   const videoBytes = new Uint8Array(await videoRes.arrayBuffer())
   const mimeType = videoRes.headers.get('content-type') ?? 'video/mp4'
 
-  // 2. Start a resumable upload
+  // Fast path: inline base64 — no File API, no polling, ~3-8 s total
+  if (videoBytes.byteLength <= INLINE_LIMIT) {
+    const base64 = bytesToBase64(videoBytes)
+    return geminiGenerate(
+      [{ inline_data: { mime_type: mimeType, data: base64 } }],
+      prompt,
+    )
+  }
+
+  // Slow path: File API for large videos (resumable upload → poll → generate)
   const initRes = await fetch(
     `${GEMINI_BASE}/upload/v1beta/files`,
     {
@@ -142,10 +180,9 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
     },
   )
   if (!initRes.ok) throw new Error(`Upload init failed (${initRes.status}): ${await initRes.text()}`)
-  const uploadUrl = initRes.headers.get('X-Goog-Upload-URL')
+  const uploadUrl = initRes.headers.get('x-goog-upload-url') ?? initRes.headers.get('X-Goog-Upload-URL')
   if (!uploadUrl) throw new Error('No upload URL returned by Gemini File API')
 
-  // 3. Upload the bytes
   const uploadRes = await fetch(uploadUrl, {
     method: 'POST',
     headers: {
@@ -157,11 +194,10 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
   })
   if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status}): ${await uploadRes.text()}`)
   const uploadData = await uploadRes.json() as { file: { name: string; uri: string; state: string } }
-  const fileName = uploadData.file.name // "files/xxxx"
+  const fileName = uploadData.file.name
   const fileUri  = uploadData.file.uri
   let   state    = uploadData.file.state
 
-  // Best-effort cleanup helper
   const deleteFile = () => {
     fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
       method: 'DELETE',
@@ -169,53 +205,29 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
     }).catch(() => {})
   }
 
-  // 4. Poll until processed (max ~60s)
+  // Poll until ACTIVE (max 20 s — leave headroom for the generate call)
   const start = Date.now()
-  while (state === 'PROCESSING' && Date.now() - start < 60_000) {
+  while (state === 'PROCESSING' && Date.now() - start < 20_000) {
     await new Promise(r => setTimeout(r, 2000))
     const stateRes = await fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
       headers: { 'X-goog-api-key': GEMINI_API_KEY },
     })
     if (!stateRes.ok) break
-    const stateData = await stateRes.json() as { state: string }
-    state = stateData.state
+    state = ((await stateRes.json()) as { state: string }).state
   }
   if (state !== 'ACTIVE') {
     deleteFile()
     throw new Error(`Video processing did not complete (final state: ${state})`)
   }
 
-  // 5. Generate content — request JSON response
-  const genRes = await fetch(
-    `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-goog-api-key': GEMINI_API_KEY,
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            { file_data: { mime_type: mimeType, file_uri: fileUri } },
-            { text: prompt },
-          ],
-        }],
-        generationConfig: {
-          response_mime_type: 'application/json',
-          temperature: 0.2,
-          maxOutputTokens: 400,
-        },
-      }),
-    },
-  )
-  deleteFile() // fire-and-forget cleanup regardless of outcome
-
-  if (!genRes.ok) throw new Error(`Gemini generate failed (${genRes.status}): ${await genRes.text()}`)
-  const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  const text = genData.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-  return JSON.parse(text) as AIResult
+  try {
+    return await geminiGenerate(
+      [{ file_data: { mime_type: mimeType, file_uri: fileUri } }],
+      prompt,
+    )
+  } finally {
+    deleteFile()
+  }
 }
 
 Deno.serve(async (req: Request) => {
