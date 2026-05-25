@@ -143,14 +143,22 @@ async function geminiGenerate(
       headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 400 },
+        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 1024 },
       }),
     },
   )
   if (!genRes.ok) throw new Error(`Gemini generate failed (${genRes.status}): ${await genRes.text()}`)
-  const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  const text = genData.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-  return JSON.parse(text) as AIResult
+  const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }
+  const candidate = genData.candidates?.[0]
+  if (!candidate?.content) {
+    throw new Error(`Gemini returned no content (finishReason: ${candidate?.finishReason ?? 'unknown'})`)
+  }
+  const text = candidate.content.parts?.[0]?.text ?? '{}'
+  try {
+    return JSON.parse(text) as AIResult
+  } catch {
+    throw new Error(`Gemini JSON parse failed. Raw text: ${text.slice(0, 300)}`)
+  }
 }
 
 async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promise<AIResult> {
@@ -318,12 +326,13 @@ Deno.serve(async (req: Request) => {
       try {
         aiResult = await analyzeVideoWithGemini(signed.signedUrl, prompt)
       } catch (e) {
-        console.error('[analyze-submission/video]', e)
+        const errMsg = e instanceof Error ? e.message : String(e)
+        console.error('[analyze-submission/video]', errMsg)
         await supabase
           .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'Video analysis failed — please review manually.' })
+          .update({ ai_status: 'needs_review', ai_feedback: `Video analysis failed: ${errMsg}` })
           .eq('id', submissionId)
-        return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
+        return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
       }
     } else {
       // Image path — OpenAI GPT-4o (existing flow, unchanged)
@@ -397,7 +406,7 @@ Deno.serve(async (req: Request) => {
         console.error('[analyze-submission/openai-image]', errMsg)
         await supabase
           .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' })
+          .update({ ai_status: 'needs_review', ai_feedback: `AI analysis failed: ${errMsg}` })
           .eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
       }

@@ -235,20 +235,15 @@ class TaskService {
 
     if (kIsWeb) {
       // Flutter web: video_compress has no web implementation. Skip compression
-      // — upload the picked file as-is. Cap at 28 MB (bucket file_size_limit is
-      // 30 MB; the small headroom covers multipart-upload protocol overhead).
-      //
-      // Most phone-recorded 30-90 second clips at 1080p are 4-12 MB raw, so
-      // this cap is comfortable for typical proof videos. Users who hit it
-      // usually had 4K recording enabled — re-record at 1080p resolves it.
+      // — upload the picked file as-is. Temporary cap at 200 MB.
       //
       // Duration check is also skipped on web. The picker enforces maxDuration
       // for camera capture; gallery picks fall through to admin review.
       final raw = await videoFile.readAsBytes();
-      if (raw.lengthInBytes > 28 * 1024 * 1024) {
+      if (raw.lengthInBytes > 200 * 1024 * 1024) {
         final mb = (raw.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
         throw Exception(
-          'Video is $mb MB — too large to upload (max 28 MB). Try recording at 1080p instead of 4K, or use a shorter clip.',
+          'Video is $mb MB — too large to upload (max 200 MB). Please trim the video or record a shorter clip.',
         );
       }
       bytes = raw;
