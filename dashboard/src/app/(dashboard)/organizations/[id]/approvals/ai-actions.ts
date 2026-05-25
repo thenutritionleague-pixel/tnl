@@ -18,6 +18,11 @@ type SubmissionWithTask = {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? ''
+const GEMINI_BASE    = 'https://generativelanguage.googleapis.com'
+const GEMINI_MODEL   = 'gemini-flash-latest'
+const VIDEO_EXTS     = /\.(mp4|mov|m4v|webm|mkv|3gp)$/i
+
 interface AiResult {
   approved: boolean
   confidence: number
@@ -74,6 +79,67 @@ LENIENCY RULES:
 
 Respond in JSON only — no markdown, no extra text:
 {"approved":true|false,"confidence":0.0-1.0,"issues":["short issue codes if any"],"feedback":"If not approved: 1–2 actionable sentences telling the member exactly what was wrong and how to resubmit correctly."}`
+}
+
+function buildVideoPrompt({ taskTitle, taskDesc, claimedTier, taskPoints }: {
+  taskTitle: string; taskDesc: string; claimedTier: TaskTier | null; taskPoints: number
+}): string {
+  const tierBlock = claimedTier
+    ? `CLAIMED TIER: ${claimedTier.label} (${claimedTier.points} pts)\nTiers are MINIMUM thresholds. Only reject if proof clearly shows they fell BELOW this tier's minimum.`
+    : `POINTS: ${taskPoints}`
+
+  return `You are a strict but fair AI reviewer for a wellness challenge app. Make a confident approve/reject decision on every video submission.
+
+TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
+${tierBlock}
+
+This is a VIDEO submission. Evaluate on motion, duration, form, and audio cues — not just one frame.
+
+APPROVE when ALL true:
+• Video genuinely shows the activity described.
+• If time-based (plank, wall-sit, hold), visible duration meets or exceeds the claimed tier's minimum.
+• Single continuous take — no obvious cuts or splices faking duration.
+• Form is consistent with the activity.
+${claimedTier ? `• Evidence confirms member reached at least the "${claimedTier.label}" threshold.` : ''}
+
+REJECT when ANY true:
+• Video shows a different activity than the task.
+• Duration noticeably less than claimed tier's minimum.
+• Obvious cuts/edits suggest faked duration.
+• Activity is clearly simulated or the video is unrelated stock footage.
+
+LENIENCY: Low-quality/shaky video → approve if activity is still clearly visible. Brief pauses to adjust camera are fine.
+Only set confidence ≥ 0.85 when clearly should approve. Only set confidence < 0.35 when clearly fake/wrong activity.
+
+Respond in JSON only — no markdown:
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short codes"],"feedback":"If not approved: 1–2 actionable sentences telling the member what was wrong and how to resubmit correctly."}`
+}
+
+async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promise<AiResult> {
+  const res = await fetch(signedUrl)
+  if (!res.ok) throw new Error(`Could not fetch video (${res.status})`)
+  const buffer = Buffer.from(await res.arrayBuffer())
+  const base64 = buffer.toString('base64')
+  const mimeType = res.headers.get('content-type') ?? 'video/mp4'
+
+  const genRes = await fetch(
+    `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [
+          { inline_data: { mime_type: mimeType, data: base64 } },
+          { text: prompt },
+        ]}],
+        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 400 },
+      }),
+    },
+  )
+  if (!genRes.ok) throw new Error(`Gemini generate failed (${genRes.status}): ${await genRes.text()}`)
+  const data = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
+  return JSON.parse(text) as AiResult
 }
 
 async function fetchImageAsBase64(url: string): Promise<string | null> {
@@ -159,6 +225,72 @@ export async function runAiAnalysis(
     return { aiStatus: 'needs_review', aiFeedback: 'Could not access proof image.', aiConfidence: 0 }
   }
 
+  // ── Video path — Gemini inline ───────────────────────────────────────────
+  if (VIDEO_EXTS.test(sub.proof_url)) {
+    if (!GEMINI_API_KEY) {
+      await client.from('task_submissions')
+        .update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' })
+        .eq('id', submissionId)
+      return { aiStatus: 'needs_review', aiFeedback: 'Video proof — admin review required.', aiConfidence: 0 }
+    }
+
+    const videoPrompt = buildVideoPrompt({ taskTitle, taskDesc, claimedTier, taskPoints: sub.tasks?.points ?? 0 })
+    let videoResult: AiResult
+    try {
+      videoResult = await analyzeVideoWithGemini(signed.signedUrl, videoPrompt)
+    } catch (e) {
+      console.error('[runAiAnalysis] Gemini/video error:', e)
+      await client.from('task_submissions')
+        .update({ ai_status: 'needs_review', ai_feedback: 'Video analysis failed — please review manually.' })
+        .eq('id', submissionId)
+      return { aiStatus: 'needs_review', aiFeedback: 'Video analysis failed — please review manually.', aiConfidence: 0 }
+    }
+
+    const vConf = Math.min(1, Math.max(0, videoResult.confidence ?? 0))
+    const vFeedback = videoResult.feedback ?? ''
+    let vStatus: string
+    if (videoResult.approved && vConf >= 0.85) vStatus = 'approved'
+    else if (!videoResult.approved || vConf < 0.35) vStatus = 'rejected'
+    else vStatus = 'needs_review'
+
+    await client.from('task_submissions')
+      .update({ ai_status: vStatus, ai_feedback: vFeedback || null, ai_confidence: vConf })
+      .eq('id', submissionId)
+
+    const memberName = await client.from('profiles').select('name').eq('id', sub.user_id).single()
+      .then(r => r.data?.name ?? 'A member')
+    const finalPoints = claimedTier?.points ?? sub.tasks?.points ?? 0
+
+    if (vStatus === 'approved') {
+      const { data: updated } = await client.from('task_submissions')
+        .update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() })
+        .eq('id', submissionId).eq('status', 'pending').select('id')
+      if (updated && updated.length > 0) {
+        await client.from('feed_items').insert({
+          org_id: orgId, type: 'submission_approved',
+          title: `${memberName} completed ${taskTitle}`,
+          content: `+${finalPoints} 🥦 broccoli points earned`,
+          is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null,
+        })
+      }
+    }
+    if (vStatus === 'rejected') {
+      const { data: updated } = await client.from('task_submissions')
+        .update({ status: 'rejected', rejection_reason: vFeedback || 'Rejected by AI review.' })
+        .eq('id', submissionId).eq('status', 'pending').select('id')
+      if (updated && updated.length > 0) {
+        await client.from('feed_items').insert({
+          org_id: orgId, type: 'submission_rejected',
+          title: `Your ${taskTitle} submission was not approved`,
+          content: vFeedback || 'Please resubmit with a clear proof video.',
+          is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null,
+        })
+      }
+    }
+    return { aiStatus: vStatus, aiFeedback: vFeedback, aiConfidence: vConf }
+  }
+
+  // ── Image path — OpenAI GPT-4o ───────────────────────────────────────────
   // Fetch up to 3 previous approved proofs for same task + user (duplicate check)
   const { data: prevSubs } = await client
     .from('task_submissions')
