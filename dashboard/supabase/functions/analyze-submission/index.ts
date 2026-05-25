@@ -22,8 +22,11 @@ async function fetchImageAsBase64(url: string): Promise<string | null> {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
     const bytes = new Uint8Array(await res.arrayBuffer())
+    const CHUNK = 8192
     let binary = ''
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+    }
     return btoa(binary)
   } catch {
     return null
@@ -120,8 +123,12 @@ Respond in JSON only — no markdown:
 const INLINE_LIMIT = 15 * 1024 * 1024
 
 function bytesToBase64(bytes: Uint8Array): string {
+  // Process in 8 KB chunks — spread operator is fast; char-by-char concat is O(n²)
+  const CHUNK = 8192
   let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
   return btoa(binary)
 }
 
