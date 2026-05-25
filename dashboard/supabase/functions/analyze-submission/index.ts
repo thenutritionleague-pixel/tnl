@@ -143,7 +143,7 @@ async function geminiGenerate(
       headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 1024 },
+        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 2048 },
       }),
     },
   )
