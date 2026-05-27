@@ -688,6 +688,9 @@ export function MemberDetailClient({ member, orgId, adjustMember }: Props) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{displayReason}</p>
+                        {tx.taskTitle && (
+                          <p className="text-xs text-foreground/70 truncate">{tx.taskTitle}{tx.challengeName ? ` · ${tx.challengeName}` : ''}</p>
+                        )}
                         <p className="text-xs text-muted-foreground mt-0.5">{date}</p>
                       </div>
                       <div className={cn(

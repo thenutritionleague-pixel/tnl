@@ -56,6 +56,27 @@ ${tierBlock}
 
 This is a VIDEO submission. Evaluate it on motion, duration, form, and audio cues — not just one frame.
 
+═══════════════════════════════════════════════════════════════
+EVALUATION PROCEDURE — follow these steps in order, in your head.
+═══════════════════════════════════════════════════════════════
+
+STEP 1 — DERIVE EXPECTED PROOF (from the task title + description above):
+What kind of video would actually prove the member did this task? Most wellness videos fall into one of:
+  • A person performing the named exercise (plank, squat, push-up, jumping jacks, run, dance, yoga pose, etc.) with visible form and duration
+  • A timer or fitness-app screen recording showing the activity being tracked
+  • A short demonstration of a habit (drinking water, preparing a meal, journalling)
+
+STEP 2 — DESCRIBE THE VIDEO (silently, in your own reasoning):
+What activity is actually being performed in the video? For how long? Is it the right activity for the task?
+
+STEP 3 — APPLY THE HARD GATE:
+Does the video from STEP 2 match the expected activity from STEP 1?
+  • YES → continue to the rules below.
+  • NO  → REJECT immediately with approved=false and confidence ≤ 0.20. Set feedback to explain what the task needs.
+  • UNSURE → continue but cap confidence at 0.60 so an admin reviews it.
+
+═══════════════════════════════════════════════════════════════
+
 APPROVE when ALL of the following are clearly true:
 • The video genuinely shows the activity described in the task.
 • If the task is time-based (e.g. plank, wall-sit, run, hold), the visible duration meets or exceeds the claimed tier's minimum.
@@ -94,23 +115,50 @@ ${tierBlock}
 
 Image 1 is the current submission proof.${prevNote ? `\n${prevNote}` : ''}
 
+═══════════════════════════════════════════════════════════════
+EVALUATION PROCEDURE — follow these steps in order, in your head.
+═══════════════════════════════════════════════════════════════
+
+STEP 1 — DERIVE EXPECTED PROOF (from the task title + description above):
+Based on what the task asks the member to do, what kind of image would actually prove they did it? Possible categories:
+  • A fitness-tracker screenshot showing a number (steps, distance, calories, heart rate, active minutes)
+  • A photograph of food/meal/drink (plate, bowl, glass, bottle)
+  • A photograph or video frame of physical activity (person exercising, pose, gym, outdoors)
+  • A screenshot of an app screen (meditation timer, sleep tracker, journaling, etc.)
+  • A selfie demonstrating something specific to the task (e.g. holding an object, in a setting)
+  • A document/written entry (handwritten journal, list)
+
+Decide silently which one (or two) of these the task requires. If the task description is specific, follow it.
+
+STEP 2 — DESCRIBE THE IMAGE (silently, in your own reasoning):
+What does Image 1 actually show? A meal? An app screenshot with numbers? A person mid-exercise? A selfie holding a glass? A selfie with no obvious context? Scenery?
+
+STEP 3 — APPLY THE HARD GATE:
+Does the image from STEP 2 match the expected proof from STEP 1?
+  • YES → continue to the rules below.
+  • NO  → REJECT immediately with approved=false and confidence ≤ 0.20. Set feedback to explain what the task needs (e.g. "This task requires a step-counter screenshot, but you submitted a photo of a drink. Please open your fitness app and submit a screenshot of today's step count.").
+  • UNSURE (proof is ambiguous, could match) → continue to the rules below but cap confidence at 0.60 so an admin reviews it.
+
+A REAL, well-composed photo of the WRONG subject is still WRONG. Sincerity does not override mismatch.
+
+═══════════════════════════════════════════════════════════════
+
 APPROVE when ALL of the following are clearly true:
-• The photo genuinely shows completion of this specific task.
+• The photo passes the STEP 3 gate (subject matter matches what the task asks for).
 • It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
 ${hasPrev ? '• The key DATA visible in the image (step count, distance, calories, date, time) is different from the previous submission — the app UI looking similar is NORMAL and expected.\n' : ''}${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
 
 REJECT when ANY of the following are clearly true:
-• The photo has no obvious connection to the task.
+• The photo fails the STEP 3 gate (subject unrelated to the task — e.g. a drink photo for a step-count task, a selfie for a hydration task, food for an exercise task).
 • It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
 ${hasPrev ? '• The exact same numbers/metrics AND the same date/time are visible in both the current and a previous submission (meaning it is literally the same screenshot reused).\n' : ''}${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
 
-LENIENCY RULES:
+LENIENCY RULES (apply ONLY after the STEP 3 gate has passed):
 • Blurry, casual, or low-quality real photos → approve if task completion is still evident.
-• Tasks hard to photograph (meditation, hydration, sleep) → approve any sincere real attempt.
 • For fitness metrics (steps, distance, calories, time) numbers must be visible and match the claimed tier.
 • FITNESS TRACKER APPS (StepUp, Google Fit, Apple Health, Samsung Health, Garmin, etc.): many members use the same app. The UI will look visually identical across days — this is NORMAL. Only flag as duplicate if the EXACT same step count or metric value is visible in both images. Different numbers = different day = valid.
 • Only set confidence ≥ 0.78 when clearly sure it should be approved.
-• Only set confidence < 0.40 when clearly fake or literally the same screenshot reused.
+• Only set confidence < 0.40 when clearly fake, literally the same screenshot reused, OR the proof type is wrong for this task.
 • Use 0.40–0.77 sparingly for genuinely uncertain cases.
 
 Respond in JSON only — no markdown:

@@ -676,7 +676,8 @@ export interface OrgApproval {
   taskPointsTiers: TierShape[] | null
   selectedTierIndex: number | null
   selectedTier: TierShape | null  // resolved from snapshot.selected_tier or live tier index
-  submittedAt: string
+  submittedAt: string       // "20m ago" — relative
+  submittedTime: string     // "9:54 PM" — absolute, in org tz
   submittedDate: string
   status: 'pending' | 'approved' | 'rejected'
   rejectionReason: string | null
@@ -691,22 +692,27 @@ export interface OrgApproval {
 
 const APPROVALS_PAGE_SIZE = 50
 
-export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected'): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
+export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
   const client = await createAdminClient()
   const from = page * APPROVALS_PAGE_SIZE
   const to   = from + APPROVALS_PAGE_SIZE - 1
 
   let subsQuery = client
     .from('task_submissions')
-    .select('id, task_id, status, submitted_at, submitted_date, proof_url, rejection_reason, points_awarded, selected_tier_index, task_snapshot, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
+    .select('id, task_id, status, submitted_at, submitted_date, reviewed_at, proof_url, rejection_reason, points_awarded, selected_tier_index, task_snapshot, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
     .eq('org_id', orgId)
   if (status) subsQuery = subsQuery.eq('status', status)
+  if (date) subsQuery = subsQuery.eq('submitted_date', date)
+  if (taskId) subsQuery = subsQuery.eq('task_id', taskId)
+  // For approved/rejected, sort by reviewed_at so recently-actioned items surface first.
+  // For pending/all, sort by submitted_at so oldest-waiting comes first? No — newest first is fine.
+  const sortCol = (status === 'approved' || status === 'rejected') ? 'reviewed_at' : 'submitted_at'
   subsQuery = subsQuery
-    .order('submitted_at', { ascending: false })
+    .order(sortCol, { ascending: false })
     .order('id', { ascending: false })
     .range(from, to + 1)
 
-  const [subsRes, teamMemsRes, profilesRes] = await Promise.all([
+  const [subsRes, teamMemsRes, profilesRes, orgRes] = await Promise.all([
     subsQuery,
     client
       .from('team_members')
@@ -716,11 +722,27 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       .from('profiles')
       .select('id, name')
       .eq('org_id', orgId),
+    client.from('organizations').select('timezone').eq('id', orgId).single(),
   ])
 
   if (subsRes.error)   console.error('getOrgApprovals subs error:', subsRes.error)
   if (teamMemsRes.error) console.error('getOrgApprovals teams error:', teamMemsRes.error)
   if (profilesRes.error) console.error('getOrgApprovals profiles error:', profilesRes.error)
+
+  const orgTz: string = (orgRes.data as { timezone: string | null } | null)?.timezone || 'UTC'
+  // Format an ISO timestamp as "9:54 PM" in the org's timezone.
+  const fmtTime = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleTimeString('en-US', {
+        timeZone: orgTz,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+    } catch {
+      return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    }
+  }
 
   const teamMap: Record<string, string>    = {}
   const profileMap: Record<string, string> = {}
@@ -813,6 +835,7 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       selectedTierIndex: s.selected_tier_index ?? null,
       selectedTier,
       submittedAt: timeAgo(s.submitted_at),
+      submittedTime: fmtTime(s.submitted_at),
       submittedDate: s.submitted_date ?? (s.submitted_at as string)?.slice(0, 10) ?? '',
       status: s.status as OrgApproval['status'],
       rejectionReason: s.rejection_reason ?? null,
@@ -826,6 +849,36 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
     })
   }
   return { approvals, hasMore }
+}
+
+export async function getOrgTaskList(orgId: string): Promise<Array<{ id: string; title: string }>> {
+  const client = await createAdminClient()
+  const { data } = await client
+    .from('task_submissions')
+    .select('task_id, tasks!task_id(title)')
+    .eq('org_id', orgId)
+    .not('task_id', 'is', null)
+  if (!data) return []
+  const seen = new Set<string>()
+  const tasks: Array<{ id: string; title: string }> = []
+  for (const row of data as any[]) {
+    if (!row.task_id || seen.has(row.task_id)) continue
+    seen.add(row.task_id)
+    tasks.push({ id: row.task_id, title: (row.tasks as any)?.title ?? 'Unknown' })
+  }
+  return tasks.sort((a, b) => a.title.localeCompare(b.title))
+}
+
+export async function getOrgApprovalCounts(orgId: string): Promise<{ pending: number; approved: number; rejected: number }> {
+  const client = await createAdminClient()
+  const { data } = await client.rpc('get_approval_counts', { org_id_param: orgId })
+  const counts = { pending: 0, approved: 0, rejected: 0 }
+  for (const row of (data ?? []) as { status: string; cnt: number }[]) {
+    if (row.status === 'pending') counts.pending = row.cnt
+    else if (row.status === 'approved') counts.approved = row.cnt
+    else if (row.status === 'rejected') counts.rejected = row.cnt
+  }
+  return counts
 }
 
 // ── Org Overview ───────────────────────────────────────────────────────────────
@@ -1101,6 +1154,8 @@ export interface MemberDetailAdmin {
     isManual: boolean
     createdAt: string
     eventDateRaw: string
+    taskTitle: string | null
+    challengeName: string | null
   }>
 }
 
@@ -1145,7 +1200,7 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
 
   const { data: pointsTxns } = await client
     .from('points_transactions')
-    .select('id, amount, reason, is_manual, created_at, transaction_date')
+    .select('id, amount, reason, is_manual, created_at, transaction_date, task_submissions!submission_id(task_id, tasks(title), challenges(name))')
     .eq('user_id', memberId)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -1203,6 +1258,8 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
       isManual: t.is_manual ?? false,
       createdAt: t.created_at,
       eventDateRaw: (t.transaction_date ?? t.created_at.slice(0, 10)) as string,
+      taskTitle: (t.task_submissions as any)?.tasks?.title ?? null,
+      challengeName: (t.task_submissions as any)?.challenges?.name ?? null,
     })),
   }
 }

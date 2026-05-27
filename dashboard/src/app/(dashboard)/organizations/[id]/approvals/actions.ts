@@ -90,11 +90,25 @@ export async function rejectSubmission(
   return { success: true }
 }
 
-export async function loadApprovalsPage(orgId: string, page: number, status?: 'pending' | 'approved' | 'rejected') {
+export async function loadApprovalsPage(orgId: string, page: number, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string) {
   const profile = await getAdminProfile()
   if (!profile) return null
   const { getOrgApprovals } = await import('@/lib/supabase/admin-queries')
-  return getOrgApprovals(orgId, page, status)
+  return getOrgApprovals(orgId, page, status, date, taskId)
+}
+
+export async function loadOrgTasks(orgId: string) {
+  const profile = await getAdminProfile()
+  if (!profile) return []
+  const { getOrgTaskList } = await import('@/lib/supabase/admin-queries')
+  return getOrgTaskList(orgId)
+}
+
+export async function loadApprovalCounts(orgId: string) {
+  const profile = await getAdminProfile()
+  if (!profile) return { pending: 0, approved: 0, rejected: 0 }
+  const { getOrgApprovalCounts } = await import('@/lib/supabase/admin-queries')
+  return getOrgApprovalCounts(orgId)
 }
 
 export async function getProofSignedUrl(path: string): Promise<string | null> {
