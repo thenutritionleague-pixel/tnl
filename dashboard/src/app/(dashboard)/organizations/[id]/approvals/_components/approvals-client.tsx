@@ -17,9 +17,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts } from '../actions'
+import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts, loadOrgTaskBreakdown } from '../actions'
 import { runAiAnalysis } from '../ai-actions'
-import type { OrgApproval, PreviousSubmission } from '@/lib/supabase/admin-queries'
+import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
 // ── DatePicker ────────────────────────────────────────────────────────────────
 
@@ -265,10 +265,11 @@ interface Props {
   initialApprovals: OrgApproval[]
   initialHasMore: boolean
   initialTasks: Array<{ id: string; title: string }>
-  initialCounts?: { pending: number; approved: number; rejected: number }
+  initialCounts?: { pending: number; approved: number; rejected: number; rejectedEver: number }
+  initialTaskBreakdown?: OrgTaskBreakdown[]
 }
 
-export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initialTasks, initialCounts }: Props) {
+export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initialTasks, initialCounts, initialTaskBreakdown }: Props) {
   const [approvals, setApprovals]       = useState<OrgApproval[]>(initialApprovals)
   const [hasMore, setHasMore]           = useState(initialHasMore)
   const [loading, setLoading]           = useState(false)
@@ -279,7 +280,8 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   const [pointsOverride, setPointsOverride] = useState('')
   const [submitting, setSubmitting]     = useState(false)
   const [fadingIds, setFadingIds]       = useState<Set<string>>(new Set())
-  const [counts, setCounts]             = useState(initialCounts ?? { pending: 0, approved: 0, rejected: 0 })
+  const [counts, setCounts]             = useState(initialCounts ?? { pending: 0, approved: 0, rejected: 0, rejectedEver: 0 })
+  const [taskBreakdown, setTaskBreakdown] = useState<OrgTaskBreakdown[]>(initialTaskBreakdown ?? [])
 
   const [search, setSearch]         = useState('')
   const [teamFilter, setTeamFilter] = useState('all')
@@ -292,7 +294,9 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
 
   async function loadPage(page: number, status: StatusFilter, date?: string, taskId?: string) {
     setLoading(true)
-    const s = status === 'all' ? undefined : status
+    // Only the four real statuses are valid for the server query — 'history' is
+    // handled by loadHistoryPage and never reaches here.
+    const s = (status === 'pending' || status === 'approved' || status === 'rejected') ? status : undefined
     const res = await loadApprovalsPage(orgId, page, s, date || undefined, taskId || undefined)
     if (res) {
       setApprovals(res.approvals)
@@ -303,8 +307,9 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   }
 
   async function refreshCounts() {
-    const c = await loadApprovalCounts(orgId)
+    const [c, b] = await Promise.all([loadApprovalCounts(orgId), loadOrgTaskBreakdown(orgId)])
     if (c) setCounts(c)
+    if (b) setTaskBreakdown(b)
   }
 
   function handleStatusChange(s: StatusFilter) {
@@ -449,11 +454,15 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     setSubmitting(false)
   }
 
-  // Tab count label
+  // Tab count label — real DB totals; 'all' = sum of current statuses.
   function tabLabel(tab: typeof STATUS_TABS[number]) {
-    const n = tab.value === 'pending' ? counts.pending : tab.value === 'approved' ? counts.approved : tab.value === 'rejected' ? counts.rejected : null
-    if (n == null || tab.value === 'all') return tab.label
-    return `${tab.label} ${n > 0 ? `(${n})` : ''}`
+    let n: number | null = null
+    if (tab.value === 'all')       n = counts.pending + counts.approved + counts.rejected
+    else if (tab.value === 'pending')  n = counts.pending
+    else if (tab.value === 'approved') n = counts.approved
+    else if (tab.value === 'rejected') n = counts.rejected
+    if (n == null || n <= 0) return tab.label
+    return `${tab.label} (${n.toLocaleString()})`
   }
 
   return (
@@ -474,6 +483,54 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
           {aiChecking ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analyzing…</> : <><Sparkles className="w-3.5 h-3.5" /> Run AI Checks</>}
         </button>
       </div>
+
+      {/* Per-task breakdown — click a card to filter to that task.
+          ≤4 tasks → responsive grid that fills the row. >4 tasks → horizontally
+          scrollable strip with snap so the layout never explodes vertically. */}
+      {taskBreakdown.length > 0 && (
+        (() => {
+          const many = taskBreakdown.length > 4
+          return (
+            <div className={cn(
+              'gap-2.5',
+              many
+                ? 'flex overflow-x-auto pb-1 snap-x snap-mandatory -mx-1 px-1'
+                : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4',
+            )}>
+              {taskBreakdown.map(t => {
+                const isSelected = taskFilter === t.taskId
+                return (
+                  <button
+                    key={t.taskId}
+                    type="button"
+                    onClick={() => handleTaskChange(isSelected ? 'all' : t.taskId)}
+                    className={cn(
+                      'text-left rounded-xl border bg-card px-4 py-3 transition-all hover:border-primary/40 hover:shadow-sm',
+                      many && 'snap-start shrink-0 w-[260px]',
+                      isSelected ? 'border-primary shadow-sm ring-2 ring-primary/20' : 'border-border',
+                    )}
+                  >
+                    <p className="text-xs font-semibold text-foreground truncate mb-1.5" title={t.title}>{t.title}</p>
+                    <div className="flex items-baseline gap-1.5 mb-2">
+                      <span className="text-xl font-bold text-foreground">{t.total.toLocaleString()}</span>
+                      <span className="text-[11px] text-muted-foreground">total</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px]">
+                      {t.pending > 0 && (
+                        <span className="text-amber-700"><span className="font-semibold">{t.pending}</span> pending</span>
+                      )}
+                      <span className="text-emerald-700"><span className="font-semibold">{t.approved}</span> approved</span>
+                      {t.rejected > 0 && (
+                        <span className="text-red-600"><span className="font-semibold">{t.rejected}</span> rejected</span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })()
+      )}
 
       {/* Status tabs + filters */}
       <div className="space-y-2.5">

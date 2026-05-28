@@ -3,7 +3,7 @@
 import { use, useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, MoreHorizontal, Search, UserMinus, Eye, ChevronDown, Pencil } from 'lucide-react'
+import { Plus, MoreHorizontal, Search, UserMinus, Eye, ChevronDown, Pencil, ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Button } from '@/components/ui/button'
@@ -68,6 +68,8 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
   const [allTeams, setAllTeams] = useState<TeamUI[]>([])
   const [search, setSearch]       = useState('')
   const [teamFilter, setTeamFilter] = useState('')
+  // Sort by points: 'none' = original order, 'desc' = highest first, 'asc' = lowest first
+  const [pointsSort, setPointsSort] = useState<'none' | 'desc' | 'asc'>('none')
 
   // Edit Member modal
   const [editTarget, setEditTarget] = useState<OrgMember | null>(null)
@@ -99,12 +101,21 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
     [members],
   )
 
-  const filtered = members.filter(m => {
-    const matchSearch = m.name.toLowerCase().includes(search.toLowerCase()) ||
-                        m.email.toLowerCase().includes(search.toLowerCase())
-    const matchTeam   = !teamFilter || m.team === teamFilter
-    return matchSearch && matchTeam
-  })
+  const filtered = useMemo(() => {
+    const matched = members.filter(m => {
+      const matchSearch = m.name.toLowerCase().includes(search.toLowerCase()) ||
+                          m.email.toLowerCase().includes(search.toLowerCase())
+      const matchTeam   = !teamFilter || m.team === teamFilter
+      return matchSearch && matchTeam
+    })
+    if (pointsSort === 'none') return matched
+    const sorted = [...matched].sort((a, b) => (a.points ?? 0) - (b.points ?? 0))
+    return pointsSort === 'desc' ? sorted.reverse() : sorted
+  }, [members, search, teamFilter, pointsSort])
+
+  function togglePointsSort() {
+    setPointsSort(s => s === 'none' ? 'desc' : s === 'desc' ? 'asc' : 'none')
+  }
 
   function openEdit(m: OrgMember) {
     setEditTarget(m)
@@ -236,7 +247,22 @@ export default function OrgMembersPage({ params }: { params: Promise<{ id: strin
               <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Email</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground">Team</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground">Role</th>
-              <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground">Points</th>
+              <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={togglePointsSort}
+                  className={cn(
+                    'inline-flex items-center gap-1 hover:text-foreground transition-colors',
+                    pointsSort !== 'none' && 'text-foreground',
+                  )}
+                  title={pointsSort === 'desc' ? 'Sorted by highest points — click for lowest' : pointsSort === 'asc' ? 'Sorted by lowest points — click to clear' : 'Click to sort by points'}
+                >
+                  Points
+                  {pointsSort === 'desc' && <ArrowDown className="w-3 h-3" />}
+                  {pointsSort === 'asc'  && <ArrowUp   className="w-3 h-3" />}
+                  {pointsSort === 'none' && <ArrowUpDown className="w-3 h-3 opacity-40" />}
+                </button>
+              </th>
               <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Joined</th>
               <th className="px-5 py-3 w-10" />
             </tr>

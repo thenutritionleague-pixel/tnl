@@ -759,30 +759,10 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   const hasMore = rawRows.length > APPROVALS_PAGE_SIZE
   let rows = hasMore ? rawRows.slice(0, APPROVALS_PAGE_SIZE) : rawRows
 
-  // For the "rejected" tab: hide rejected rows that have been superseded by a newer
-  // pending/approved resubmission so the admin doesn't see a stale rejection after
-  // the member has already resubmitted.
-  if (status === 'rejected' && rows.length > 0) {
-    const userIds = [...new Set(rows.map(r => r.user_id))]
-    const taskIds = [...new Set(rows.map(r => r.task_id))]
-    const { data: newerSubs } = await client
-      .from('task_submissions')
-      .select('user_id, task_id, submitted_at')
-      .eq('org_id', orgId)
-      .neq('status', 'rejected')
-      .in('user_id', userIds)
-      .in('task_id', taskIds)
-    if (newerSubs && newerSubs.length > 0) {
-      const superseded = new Set<string>()
-      for (const n of newerSubs as { user_id: string; task_id: string; submitted_at: string }[]) {
-        const rej = rows.find(r => r.user_id === n.user_id && r.task_id === n.task_id)
-        if (rej && n.submitted_at > (rej.submitted_at as string)) {
-          superseded.add(`${n.user_id}::${n.task_id}`)
-        }
-      }
-      rows = rows.filter(r => !superseded.has(`${r.user_id}::${r.task_id}`))
-    }
-  }
+  // Note: previous "superseded" hack lived here. Removed — the new Rejection
+  // History tab (driven by rejection_reason IS NOT NULL) is the right place to
+  // see "this was rejected, then approved later". Each rejected row on the
+  // Rejected tab is now a real, currently-rejected event.
 
   // Group by (user_id, task_id) — rows are already sorted newest-first.
   // First row in each group is the active submission; the rest are history.
@@ -869,14 +849,136 @@ export async function getOrgTaskList(orgId: string): Promise<Array<{ id: string;
   return tasks.sort((a, b) => a.title.localeCompare(b.title))
 }
 
-export async function getOrgApprovalCounts(orgId: string): Promise<{ pending: number; approved: number; rejected: number }> {
+export interface OrgTaskBreakdown {
+  taskId: string
+  title: string
+  approved: number
+  rejected: number       // current status = rejected
+  rejectedEver: number   // rejection_reason IS NOT NULL — ever rejected (incl. those later approved)
+  pending: number
+  total: number
+}
+
+// Per-task submission counts. Used on the Approvals page to show admins how
+// many submissions each running task has received, broken down by status.
+export async function getOrgTaskBreakdown(orgId: string): Promise<OrgTaskBreakdown[]> {
+  const client = await createAdminClient()
+  const { data } = await client.rpc('get_org_task_breakdown', { org_id_param: orgId })
+  return ((data ?? []) as Array<{ task_id: string; title: string; approved: number; rejected: number; rejected_ever: number; pending: number; total: number }>)
+    .map(r => ({
+      taskId: r.task_id,
+      title: r.title,
+      approved: Number(r.approved),
+      rejected: Number(r.rejected),
+      rejectedEver: Number(r.rejected_ever),
+      pending: Number(r.pending),
+      total: Number(r.total),
+    }))
+}
+
+export interface OrgRejectionEvent {
+  id: string
+  userId: string
+  taskId: string
+  taskTitle: string
+  memberName: string
+  rejectionReason: string
+  rejectedAt: string          // reviewed_at (best-effort: last status transition)
+  rejectedDate: string        // submitted_date
+  submittedTime: string       // "9:54 PM" in org tz
+  proofUrl: string | null
+  aiStatus: string | null
+  aiFeedback: string | null
+  aiConfidence: number | null
+  pointsAwarded: number | null
+  currentStatus: 'pending' | 'approved' | 'rejected'
+}
+
+const REJECTION_HISTORY_PAGE_SIZE = 50
+
+export async function getOrgRejectionHistory(
+  orgId: string,
+  page = 0,
+  taskId?: string,
+): Promise<{ rows: OrgRejectionEvent[]; hasMore: boolean }> {
+  const client = await createAdminClient()
+  const offset = page * REJECTION_HISTORY_PAGE_SIZE
+  const [rpcRes, orgRes] = await Promise.all([
+    client.rpc('get_org_rejection_history', {
+      org_id_param: orgId,
+      limit_param: REJECTION_HISTORY_PAGE_SIZE + 1,
+      offset_param: offset,
+      task_filter: taskId ?? null,
+    }),
+    client.from('organizations').select('timezone').eq('id', orgId).single(),
+  ])
+
+  const orgTz = (orgRes.data as { timezone: string | null } | null)?.timezone || 'UTC'
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return ''
+    try {
+      return new Date(iso).toLocaleTimeString('en-US', {
+        timeZone: orgTz,
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+    } catch {
+      return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    }
+  }
+
+  const raw = (rpcRes.data ?? []) as Array<{
+    id: string
+    user_id: string
+    task_id: string
+    submitted_at: string
+    submitted_date: string
+    reviewed_at: string | null
+    proof_url: string | null
+    rejection_reason: string
+    ai_status: string | null
+    ai_feedback: string | null
+    ai_confidence: number | null
+    points_awarded: number | null
+    current_status: string
+    task_title: string
+    member_name: string
+  }>
+
+  const hasMore = raw.length > REJECTION_HISTORY_PAGE_SIZE
+  const slice = hasMore ? raw.slice(0, REJECTION_HISTORY_PAGE_SIZE) : raw
+
+  const rows: OrgRejectionEvent[] = slice.map(r => ({
+    id: r.id,
+    userId: r.user_id,
+    taskId: r.task_id,
+    taskTitle: r.task_title,
+    memberName: r.member_name,
+    rejectionReason: r.rejection_reason,
+    rejectedAt: r.reviewed_at ?? r.submitted_at,
+    rejectedDate: r.submitted_date ?? r.submitted_at.slice(0, 10),
+    submittedTime: fmtTime(r.reviewed_at ?? r.submitted_at),
+    proofUrl: r.proof_url,
+    aiStatus: r.ai_status,
+    aiFeedback: r.ai_feedback,
+    aiConfidence: r.ai_confidence,
+    pointsAwarded: r.points_awarded,
+    currentStatus: r.current_status as OrgRejectionEvent['currentStatus'],
+  }))
+
+  return { rows, hasMore }
+}
+
+export async function getOrgApprovalCounts(orgId: string): Promise<{ pending: number; approved: number; rejected: number; rejectedEver: number }> {
   const client = await createAdminClient()
   const { data } = await client.rpc('get_approval_counts', { org_id_param: orgId })
-  const counts = { pending: 0, approved: 0, rejected: 0 }
+  const counts = { pending: 0, approved: 0, rejected: 0, rejectedEver: 0 }
   for (const row of (data ?? []) as { status: string; cnt: number }[]) {
     if (row.status === 'pending') counts.pending = row.cnt
     else if (row.status === 'approved') counts.approved = row.cnt
     else if (row.status === 'rejected') counts.rejected = row.cnt
+    else if (row.status === 'rejected_ever') counts.rejectedEver = row.cnt
   }
   return counts
 }
