@@ -692,10 +692,27 @@ export interface OrgApproval {
 
 const APPROVALS_PAGE_SIZE = 50
 
-export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
+export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string, search?: string, aiDisagreed = false): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
   const client = await createAdminClient()
   const from = page * APPROVALS_PAGE_SIZE
   const to   = from + APPROVALS_PAGE_SIZE - 1
+
+  // Server-side name search: resolve matching profile IDs first, then filter
+  // submissions to those user_ids. Works across all pages, not just the 50
+  // currently loaded in the client.
+  let searchUserIds: string[] | null = null
+  if (search && search.trim().length >= 2) {
+    const { data: matched } = await client
+      .from('profiles')
+      .select('id')
+      .eq('org_id', orgId)
+      .ilike('name', `%${search.trim()}%`)
+      .limit(500)
+    searchUserIds = (matched ?? []).map(p => p.id)
+    if (searchUserIds.length === 0) {
+      return { approvals: [], hasMore: false }
+    }
+  }
 
   let subsQuery = client
     .from('task_submissions')
@@ -704,6 +721,14 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   if (status) subsQuery = subsQuery.eq('status', status)
   if (date) subsQuery = subsQuery.eq('submitted_date', date)
   if (taskId) subsQuery = subsQuery.eq('task_id', taskId)
+  if (searchUserIds) subsQuery = subsQuery.in('user_id', searchUserIds)
+  // "AI disagreed" — admin overrode the AI verdict. Two shapes:
+  //   1. Admin approved but AI said reject (most common — admin was too lenient)
+  //   2. Admin rejected but AI said approve (rare — admin caught what AI missed)
+  // Both are interesting for QA, so we OR them.
+  if (aiDisagreed) {
+    subsQuery = subsQuery.or('and(status.eq.approved,ai_status.eq.rejected),and(status.eq.rejected,ai_status.eq.approved)')
+  }
   // For approved/rejected, sort by reviewed_at so recently-actioned items surface first.
   // For pending/all, sort by submitted_at so oldest-waiting comes first? No — newest first is fine.
   const sortCol = (status === 'approved' || status === 'rejected') ? 'reviewed_at' : 'submitted_at'

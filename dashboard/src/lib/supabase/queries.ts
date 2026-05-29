@@ -1195,6 +1195,13 @@ export async function addTask(challengeId: string, data: {
   title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
   const supabase = await db()
+  // Same validation as updateTask: only accept explicit 'image' or 'video'.
+  // If neither, fall back to 'image' for INSERTs (a new task has no prior
+  // value to preserve); but log so we notice form bugs.
+  const proofType: 'image' | 'video' =
+    data.proofType === 'video' ? 'video' :
+    data.proofType === 'image' ? 'image' :
+    (console.warn('[addTask] missing proofType — defaulting to image'), 'image')
   const { data: newTask, error } = await supabase.from('tasks').insert({
     challenge_id: challengeId,
     title: data.title,
@@ -1207,8 +1214,8 @@ export async function addTask(challengeId: string, data: {
     icon: data.icon,
     start_date: data.startDate || null,
     end_date: data.endDate || null,
-    proof_type: data.proofType ?? 'image',
-    max_video_seconds: data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null,
+    proof_type: proofType,
+    max_video_seconds: proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null,
   }).select().single()
 
   if (newTask && data.teams.length > 0) {
@@ -1227,7 +1234,14 @@ export async function updateTask(id: string, data: {
   title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
   const supabase = await db()
-  await supabase.from('tasks').update({
+  // Additive update: only touch columns whose values were explicitly provided.
+  // Previously the function unconditionally wrote `proof_type: data.proofType ?? 'image'`
+  // which silently flipped video tasks to image when the form forgot to send proofType.
+  // Real incident 2026-05-28: an admin edited the Plank task's date, the form
+  // somehow omitted proofType, the DB column got reset to 'image', and mobile
+  // started rejecting MP4 uploads ("Only photos are accepted").
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: Record<string, any> = {
     title: data.title,
     description: data.description,
     points: data.points,
@@ -1238,9 +1252,12 @@ export async function updateTask(id: string, data: {
     icon: data.icon,
     start_date: data.startDate || null,
     end_date: data.endDate || null,
-    proof_type: data.proofType ?? 'image',
-    max_video_seconds: data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null,
-  }).eq('id', id)
+  }
+  if (data.proofType === 'image' || data.proofType === 'video') {
+    updates.proof_type = data.proofType
+    updates.max_video_seconds = data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null
+  }
+  await supabase.from('tasks').update(updates).eq('id', id)
 
   const { data: taskData } = await supabase.from('tasks').select('challenge_id').eq('id', id).single()
   const challengeId = taskData?.challenge_id

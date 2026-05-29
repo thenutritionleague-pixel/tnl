@@ -297,7 +297,12 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
       setPoints(editTarget.points); setWeek(editTarget.weekNumber)
       setCategory(editTarget.category); setTeams(editTarget.teams)
       setStartDate(editTarget.startDate || ''); setEndDate(editTarget.endDate || '')
-      setProofType(editTarget.proofType ?? 'image')
+      // Fail loudly if proofType is missing from the loaded task — silently
+      // defaulting to 'image' is how the 2026-05-28 Plank incident happened.
+      if (editTarget.proofType !== 'image' && editTarget.proofType !== 'video') {
+        console.error('[task-edit] editTarget loaded without a valid proofType:', editTarget)
+      }
+      setProofType(editTarget.proofType === 'video' ? 'video' : 'image')
       setMaxVideoSeconds(editTarget.maxVideoSeconds ?? 90)
       if (editTarget.pointsTiers && editTarget.pointsTiers.length > 0) {
         setTiered(true); setTiers(editTarget.pointsTiers)
@@ -399,7 +404,14 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
             <div className="flex items-center justify-between">
               <Label>Points 🥦</Label>
               <div className="flex rounded-lg border border-border overflow-hidden text-xs">
-                <button type="button" onClick={() => setTiered(false)}
+                <button type="button" onClick={() => {
+                  // Switching from Tiered → Fixed on an existing task drops all tiers.
+                  // Ask first so this doesn't happen by accident.
+                  if (editTarget?.pointsTiers && editTarget.pointsTiers.length > 0 && tiered) {
+                    if (!confirm(`Switch "${editTarget.title}" from Tiered (${editTarget.pointsTiers.length} tiers) to Fixed?\n\nAll tier data will be removed when you save.`)) return
+                  }
+                  setTiered(false)
+                }}
                   className={cn('px-3 py-1.5 transition-colors', !tiered ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
                   Fixed
                 </button>
@@ -466,7 +478,14 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
           <div className="space-y-2">
             <Label>Proof type</Label>
             <div className="flex rounded-lg border border-border overflow-hidden text-xs">
-              <button type="button" onClick={() => setProofType('image')}
+              <button type="button" onClick={() => {
+                // Switching from Video → Photo on an existing video task breaks
+                // mobile submissions (rejects MP4s). Ask first.
+                if (editTarget?.proofType === 'video' && proofType === 'video') {
+                  if (!confirm(`Switch "${editTarget.title}" from Video to Photo?\n\nMembers will only be able to upload photos. Existing video submissions stay, but new attempts will be rejected if they use video.`)) return
+                }
+                setProofType('image')
+              }}
                 className={cn('flex-1 px-3 py-2 transition-colors', proofType === 'image' ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
                 📷  Photo
               </button>
@@ -528,6 +547,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
 
   const [taskModal, setTaskModal]   = useState<{ open: boolean; editTarget: TaskUI | null }>({ open: false, editTarget: null })
   const [deleteTarget, setDeleteTarget] = useState<TaskUI | null>(null)
+  const [toggleTarget, setToggleTarget] = useState<TaskUI | null>(null)
   const [confirmClose, setConfirmClose] = useState<'close' | 'reopen' | null>(null)
   const [toggling, setToggling]     = useState(false)
   const [orgTimezone, setOrgTimezone] = useState('UTC')
@@ -716,7 +736,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                     <div className="flex items-center gap-1 shrink-0">
                       <span className="flex items-center gap-1 text-xs font-semibold bg-primary/10 text-primary px-2 py-1 rounded-lg">🥦 {task.pointsTiers && task.pointsTiers.length > 0 ? `${task.pointsTiers[0].points}–${task.pointsTiers[task.pointsTiers.length - 1].points}` : task.points}</span>
                       <button
-                        onClick={() => toggleTaskActive(task.id, task.isActive)}
+                        onClick={() => setToggleTarget(task)}
                         className="p-1.5 text-muted-foreground hover:text-foreground transition-colors rounded opacity-0 group-hover:opacity-100"
                         title={task.isActive ? 'Deactivate' : 'Activate'}
                       >
@@ -790,6 +810,39 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
         teamOptions={challenge.teams.length ? challenge.teams : teamList}
         onSave={handleSaveTask}
       />
+
+      {/* Activate / Deactivate task confirm — prevents accidental clicks on
+          the toggle icon from silently flipping a task off (real incident
+          2026-05-28 with Plank). */}
+      <Dialog open={!!toggleTarget} onOpenChange={v => { if (!v) setToggleTarget(null) }}>
+        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>
+              {toggleTarget?.isActive
+                ? `Deactivate "${toggleTarget?.title}"?`
+                : `Activate "${toggleTarget?.title}"?`}
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {toggleTarget?.isActive
+                ? 'Members will stop seeing this task and cannot submit it. You can reactivate it later.'
+                : 'Members will see this task again and can submit it.'}
+            </p>
+          </DialogHeader>
+          <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
+            <button onClick={() => setToggleTarget(null)} className={cn(buttonVariants({ variant: 'outline' }))}>Cancel</button>
+            <Button
+              onClick={async () => {
+                if (!toggleTarget) return
+                await toggleTaskActive(toggleTarget.id, toggleTarget.isActive)
+                setToggleTarget(null)
+              }}
+              className={toggleTarget?.isActive ? 'bg-destructive text-white hover:bg-destructive/90' : ''}
+            >
+              {toggleTarget?.isActive ? 'Deactivate' : 'Activate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete task confirm */}
       <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) setDeleteTarget(null) }}>

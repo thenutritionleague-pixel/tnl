@@ -288,16 +288,16 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   const [dateFilter, setDateFilter] = useState('')
   const [taskFilter, setTaskFilter] = useState('all')
   const [manualOnly, setManualOnly] = useState(false)
+  // "AI disagreed" — admin overrode AI verdict (server-side filter).
+  const [aiDisagreed, setAiDisagreed] = useState(false)
 
   const tasks = initialTasks
   const teams = useMemo(() => Array.from(new Set(approvals.map(a => a.teamName))).sort(), [approvals])
 
-  async function loadPage(page: number, status: StatusFilter, date?: string, taskId?: string) {
+  async function loadPage(page: number, status: StatusFilter, date?: string, taskId?: string, searchTerm?: string, disagreed = false) {
     setLoading(true)
-    // Only the four real statuses are valid for the server query — 'history' is
-    // handled by loadHistoryPage and never reaches here.
     const s = (status === 'pending' || status === 'approved' || status === 'rejected') ? status : undefined
-    const res = await loadApprovalsPage(orgId, page, s, date || undefined, taskId || undefined)
+    const res = await loadApprovalsPage(orgId, page, s, date || undefined, taskId || undefined, searchTerm || undefined, disagreed)
     if (res) {
       setApprovals(res.approvals)
       setHasMore(res.hasMore)
@@ -305,6 +305,16 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     }
     setLoading(false)
   }
+
+  // Debounce search so we don't fire a request on every keystroke.
+  // Two-character minimum (matches the server-side check) keeps queries cheap.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
+    }, 300)
+    return () => clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
 
   async function refreshCounts() {
     const [c, b] = await Promise.all([loadApprovalCounts(orgId), loadOrgTaskBreakdown(orgId)])
@@ -314,24 +324,30 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
 
   function handleStatusChange(s: StatusFilter) {
     setStatusFilter(s)
-    setSearch(''); setTeamFilter('all'); setDateFilter(''); setTaskFilter('all'); setManualOnly(false)
+    setSearch(''); setTeamFilter('all'); setDateFilter(''); setTaskFilter('all'); setManualOnly(false); setAiDisagreed(false)
     loadPage(0, s)
     refreshCounts()
   }
 
   function handleDateChange(d: string) {
     setDateFilter(d)
-    loadPage(0, statusFilter, d, taskFilter !== 'all' ? taskFilter : undefined)
+    loadPage(0, statusFilter, d, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
   }
 
   function handleTaskChange(t: string) {
     setTaskFilter(t)
-    loadPage(0, statusFilter, dateFilter || undefined, t !== 'all' ? t : undefined)
+    loadPage(0, statusFilter, dateFilter || undefined, t !== 'all' ? t : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
+  }
+
+  function handleAiDisagreedToggle() {
+    const next = !aiDisagreed
+    setAiDisagreed(next)
+    loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, next)
   }
 
   function clearAllFilters() {
-    const needsReload = !!(dateFilter || (taskFilter !== 'all'))
-    setSearch(''); setTeamFilter('all'); setManualOnly(false); setDateFilter(''); setTaskFilter('all')
+    const needsReload = !!(dateFilter || (taskFilter !== 'all') || aiDisagreed)
+    setSearch(''); setTeamFilter('all'); setManualOnly(false); setDateFilter(''); setTaskFilter('all'); setAiDisagreed(false)
     if (needsReload) loadPage(0, statusFilter)
   }
 
@@ -399,13 +415,15 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   }
 
   const filtered = useMemo(() => approvals.filter(a => {
+    // member search is server-side now (see loadPage), but a fast client-side
+    // pass also runs to narrow further within the loaded page.
     if (search && !a.member.toLowerCase().includes(search.toLowerCase())) return false
     if (teamFilter !== 'all' && a.teamName !== teamFilter) return false
     if (manualOnly && !(a.status === 'approved' && a.aiStatus !== 'approved')) return false
     return true
   }), [approvals, search, teamFilter, manualOnly])
 
-  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter || taskFilter !== 'all' || manualOnly)
+  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter || taskFilter !== 'all' || manualOnly || aiDisagreed)
 
   function openReview(a: OrgApproval) {
     setReviewTarget(a)
@@ -602,6 +620,20 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
             </button>
           )}
 
+          {/* AI disagreed — server-side filter for admin-overrode-AI cases */}
+          <button
+            type="button"
+            onClick={handleAiDisagreedToggle}
+            className={cn(
+              'shrink-0 inline-flex items-center gap-1.5 px-3 h-9 rounded-md border text-xs font-medium transition-colors',
+              aiDisagreed ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-input bg-background text-muted-foreground hover:text-foreground',
+            )}
+            title="Show only rows where the admin's verdict differed from the AI's. Useful for QA / catching override mistakes."
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            AI disagreed
+          </button>
+
           {/* Clear filters */}
           {hasActiveFilter && (
             <button
@@ -713,21 +745,22 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
         )}
       </div>
 
-      {/* Pagination */}
-      {(currentPage > 0 || hasMore) && !loading && !hasActiveFilter && (
+      {/* Pagination — also shown during search/task/date filters since
+          those are now server-side and can return multiple pages. */}
+      {(currentPage > 0 || hasMore) && !loading && (
         <div className="flex items-center justify-between pt-1">
           <p className="text-xs text-muted-foreground">Page {currentPage + 1}</p>
           <div className="flex items-center gap-2">
             <button
               disabled={currentPage === 0}
-              onClick={() => loadPage(currentPage - 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined)}
+              onClick={() => loadPage(currentPage - 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
             >
               <ChevronLeft className="w-3.5 h-3.5" /> Prev
             </button>
             <button
               disabled={!hasMore}
-              onClick={() => loadPage(currentPage + 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined)}
+              onClick={() => loadPage(currentPage + 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
             >
               Next <ChevronRight className="w-3.5 h-3.5" />

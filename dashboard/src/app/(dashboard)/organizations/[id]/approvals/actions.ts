@@ -90,11 +90,11 @@ export async function rejectSubmission(
   return { success: true }
 }
 
-export async function loadApprovalsPage(orgId: string, page: number, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string) {
+export async function loadApprovalsPage(orgId: string, page: number, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string, search?: string, aiDisagreed = false) {
   const profile = await getAdminProfile()
   if (!profile) return null
   const { getOrgApprovals } = await import('@/lib/supabase/admin-queries')
-  return getOrgApprovals(orgId, page, status, date, taskId)
+  return getOrgApprovals(orgId, page, status, date, taskId, search, aiDisagreed)
 }
 
 export async function loadOrgTasks(orgId: string) {

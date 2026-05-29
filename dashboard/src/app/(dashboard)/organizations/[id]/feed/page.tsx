@@ -119,6 +119,11 @@ export default function OrgFeedPage({ params }: { params: Promise<{ id: string }
     setEditTarget(post)
     setEditType(post.type)
     const matchedCh = challengeOptions.find(c => c.name === post.challenge)
+    // Fail loudly if the post claims a challenge we can't find — that's a
+    // rename mismatch that would silently un-link the post on save.
+    if (post.challenge && !matchedCh) {
+      console.error('[feed-edit] post references challenge that no longer matches by name:', post.challenge)
+    }
     setEditChallengeId(matchedCh?.id ?? '')
     setEditTitle(post.title)
     setEditContent(post.content)
