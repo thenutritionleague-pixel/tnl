@@ -111,8 +111,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final team = firstIfList(teamMembership?['teams']);
       final myTeamId = team?['id'] as String?;
 
-      // Fetch every active challenge in the org along with its challenge_teams.
-      // We filter in-Dart to those the user's team participates in:
+      // Fetch every active or completed challenge in the org along with its
+      // challenge_teams. We include 'completed' so members can still see their
+      // final standings after a challenge ends — the points and rankings are
+      // permanent records, not transient state.
+      // 'upcoming' is excluded because those haven't started yet.
+      //
+      // In-Dart we then filter to challenges the user's team participates in:
       //   - challenge has no challenge_teams entries (open to all teams), OR
       //   - team_id is explicitly listed in challenge_teams.
       // Matches the same membership pattern team_points_view + get_mobile_tasks use.
@@ -120,7 +125,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           .from('challenges')
           .select('id, name, created_at, challenge_teams(team_id)')
           .eq('org_id', orgId)
-          .eq('status', 'active')
+          .inFilter('status', ['active', 'completed'])
           .order('created_at', ascending: false);
 
       final visibleChallenges = (allChallengesRaw as List)

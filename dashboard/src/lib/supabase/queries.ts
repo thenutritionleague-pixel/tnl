@@ -720,16 +720,17 @@ export async function getOrgTeams(orgId: string): Promise<TeamUI[]> {
 
   if (!teams) return []
 
-  // Sum points across every active challenge in the org so a team in multiple
-  // concurrent challenges sees their points merged here. team_points_view
-  // already scopes per (team, challenge), so we just .in() over the active
-  // challenge IDs and add up the rows.
-  const { data: activeChallenges } = await supabase
+  // Sum points across every active OR completed challenge in the org so a
+  // team's points never disappear when a challenge ends. Completed challenges
+  // still have valid team_points_view rows; we just have to include them.
+  // 'upcoming' is excluded — those haven't started yet so there's nothing to
+  // count.
+  const { data: relevantChallenges } = await supabase
     .from('challenges')
     .select('id')
     .eq('org_id', orgId)
-    .eq('status', 'active')
-  const activeChallengeIds = (activeChallenges ?? []).map((c: { id: string }) => c.id)
+    .in('status', ['active', 'completed'])
+  const activeChallengeIds = (relevantChallenges ?? []).map((c: { id: string }) => c.id)
 
   let pointsMap: Record<string, number> = {}
 
@@ -832,28 +833,30 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
 
   if (!team) return null
 
-  // Primary active challenge — used for the weekly breakdown which is
-  // inherently per-challenge (different challenges have different start dates,
-  // so "Week 1" means different things; merging week numbers across challenges
-  // doesn't make sense). Picks the most-recently-created.
+  // Primary challenge — used for the weekly breakdown which is inherently
+  // per-challenge (different challenges have different start dates, so
+  // "Week 1" means different things; merging week numbers across challenges
+  // doesn't make sense). Picks the most-recently-created active or completed
+  // challenge so the breakdown stays visible after a challenge ends.
   const { data: challenge } = await supabase
     .from('challenges')
     .select('id, start_date, end_date')
     .eq('org_id', orgId)
-    .eq('status', 'active')
+    .in('status', ['active', 'completed'])
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  // List of ALL active challenges for this org — used to sum the team's
-  // total points and compute rank across the merged leaderboard. Matches
-  // mobile + dashboard org overview behavior.
-  const { data: allActiveChallenges } = await supabase
+  // List of ALL active or completed challenges for this org — used to sum the
+  // team's total points and compute rank across the merged leaderboard. The
+  // 'completed' inclusion is critical so points don't disappear once a
+  // challenge ends. Matches mobile + dashboard org overview behavior.
+  const { data: allRelevantChallenges } = await supabase
     .from('challenges')
     .select('id')
     .eq('org_id', orgId)
-    .eq('status', 'active')
-  const allActiveChallengeIds = (allActiveChallenges ?? []).map((c: { id: string }) => c.id)
+    .in('status', ['active', 'completed'])
+  const allActiveChallengeIds = (allRelevantChallenges ?? []).map((c: { id: string }) => c.id)
 
   type TmRaw = { user_id: string; role: string; profiles: { id: string; name: string; avatar_color: string } | null }
   const teamRaw = team as unknown as { id: string; name: string; emoji: string; color: string; team_members: TmRaw[] }

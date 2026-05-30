@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import {
   ArrowLeft, Calendar, CheckCircle2, Clock, XCircle,
-  ToggleLeft, ToggleRight, Plus, AlertTriangle, Pencil, Trash2, ChevronDown,
+  ToggleLeft, ToggleRight, Plus, AlertTriangle, Pencil, Trash2, ChevronDown, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -662,6 +662,9 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <Link href={`/organizations/${orgId}/reports/${cid}`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5 border-primary/40 text-primary hover:bg-primary/5')}>
+            <Sparkles className="w-3.5 h-3.5" /> Report
+          </Link>
           <Link href={`${base}/approvals`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5')}>
             <Clock className="w-3.5 h-3.5" /> {subCounts.pending} Pending
           </Link>

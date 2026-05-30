@@ -316,7 +316,10 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     subsData, missedData, manualData, rejectedData,
     orgRes, teamTransfersData,
   ] = await Promise.all([
-    client.from('challenges').select('id, start_date').eq('org_id', orgId).eq('status', 'active').order('created_at', { ascending: false }),
+    // Include completed challenges too so the points breakdown stays visible
+    // after a challenge ends. mostRecentStartDate (line ~364) still picks the
+    // newest by created_at, which is what the week math needs.
+    client.from('challenges').select('id, start_date').eq('org_id', orgId).in('status', ['active', 'completed']).order('created_at', { ascending: false }),
     client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
     client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
     fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
@@ -1055,16 +1058,15 @@ export async function getOrgOverview(orgId: string): Promise<OrgOverview | null>
     }))
 
   // Fetch points per team via team_points_view, SUMMED across every active
-  // challenge in the org. Teams in multiple concurrent challenges see their
-  // points merged into one ranking — matches the mobile leaderboard behavior.
-  // team_points_view already scopes per challenge, so we just .in(...) over
-  // the active-challenge IDs and add up the rows.
-  const { data: activeChallengeRows } = await client
+  // OR completed challenge in the org. Including completed challenges keeps
+  // the overview populated after a challenge ends (points are permanent
+  // records, not transient state). Matches mobile leaderboard behavior.
+  const { data: relevantChallengeRows } = await client
     .from('challenges')
     .select('id')
     .eq('org_id', orgId)
-    .eq('status', 'active')
-  const activeChallengeIds = (activeChallengeRows ?? []).map((c: { id: string }) => c.id)
+    .in('status', ['active', 'completed'])
+  const activeChallengeIds = (relevantChallengeRows ?? []).map((c: { id: string }) => c.id)
   const teamPtsMap: Record<string, number> = {}
   let totalPoints = 0
   if (activeChallengeIds.length > 0) {
