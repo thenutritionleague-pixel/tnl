@@ -1179,7 +1179,49 @@ export async function updateChallenge(id: string, data: {
   name: string; description: string; startDate: string; endDate: string; teamIds: string[]
 }) {
   const supabase = await db()
-  await supabase.from('challenges').update({ name: data.name, description: data.description || '', start_date: data.startDate, end_date: data.endDate || NO_END_DATE }).eq('id', id)
+
+  // Recompute the correct status based on the new dates so an admin extending
+  // end_date past today brings the challenge back to life automatically. The
+  // matrix mirrors the auto-activate / auto-complete crons:
+  //   today < start_date          → upcoming
+  //   start_date <= today <= end  → active
+  //   today > end_date            → completed
+  // We DON'T override when the admin has manually closed the challenge — that
+  // flag is sticky and reflects an explicit decision.
+  const { data: current } = await supabase
+    .from('challenges')
+    .select('manually_closed, org_id, organizations(timezone)')
+    .eq('id', id)
+    .single()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orgTz: string = ((current as any)?.organizations?.timezone as string) || 'UTC'
+  const todayInOrgTz = (() => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: orgTz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+      return parts // YYYY-MM-DD
+    } catch {
+      return new Date().toISOString().slice(0, 10)
+    }
+  })()
+  const effectiveEnd = data.endDate || NO_END_DATE
+  let computedStatus: 'upcoming' | 'active' | 'completed'
+  if (todayInOrgTz < data.startDate) computedStatus = 'upcoming'
+  else if (todayInOrgTz > effectiveEnd) computedStatus = 'completed'
+  else computedStatus = 'active'
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updates: Record<string, any> = {
+    name: data.name,
+    description: data.description || '',
+    start_date: data.startDate,
+    end_date: effectiveEnd,
+  }
+  // Only auto-flip status when the admin hasn't manually closed it.
+  if (!(current?.manually_closed)) {
+    updates.status = computedStatus
+  }
+
+  await supabase.from('challenges').update(updates).eq('id', id)
   await supabase.from('challenge_teams').delete().eq('challenge_id', id)
   if (data.teamIds.length > 0) {
     await supabase.from('challenge_teams').insert(data.teamIds.map(tid => ({ challenge_id: id, team_id: tid })))
