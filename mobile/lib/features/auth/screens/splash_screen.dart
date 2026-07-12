@@ -124,7 +124,8 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           ),
 
-          // Partner logos pinned to bottom
+          // Partner logos pinned to bottom — hidden
+          /*
           Positioned(
             bottom: 40,
             left: 0,
@@ -161,6 +162,7 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
+          */
         ],
       ),
     );

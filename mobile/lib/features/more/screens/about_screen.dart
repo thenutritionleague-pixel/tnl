@@ -114,7 +114,8 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
-              // Partners section
+              // Partners section — hidden
+              /*
               Divider(color: context.borderColor),
               const SizedBox(height: 20),
               Text(
@@ -136,6 +137,7 @@ class AboutScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 32),
+              */
             ],
           ),
         ),
