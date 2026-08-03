@@ -726,7 +726,9 @@ class _TaskSkeletonState extends State<_TaskSkeleton> with SingleTickerProviderS
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
-      child: Column(
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
@@ -767,6 +769,7 @@ class _TaskSkeletonState extends State<_TaskSkeleton> with SingleTickerProviderS
             ),
           )),
         ],
+        ),
       ),
     ),
   );

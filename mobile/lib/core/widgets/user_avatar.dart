@@ -20,11 +20,12 @@ class UserAvatar extends StatelessWidget {
   });
 
   String get initials {
-    final parts = name.trim().split(' ');
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return name.isNotEmpty ? name[0].toUpperCase() : '?';
+    // Split on any run of whitespace and drop empty tokens — defends against
+    // double spaces (`"Ashu  Diwan"`) which would otherwise crash on `''[0]`.
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return '?';
   }
 
   static const _palette = [

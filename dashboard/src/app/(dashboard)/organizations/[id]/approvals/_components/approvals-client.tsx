@@ -115,7 +115,10 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'unsupported' | 'none'>('none')
 
-  const isVideo = !!proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
+  const isVideo = !!proofUrl && (
+    proofUrl.startsWith('bunny://') ||
+    /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
+  )
   const isHeic = !!proofUrl && /\.heic$|\.heif$/i.test(proofUrl)
 
   useEffect(() => {
@@ -151,7 +154,14 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
           <button type="button" className="text-xs text-primary hover:underline" onClick={async () => { const url = await getProofSignedUrl(proofUrl); if (url) window.open(url, '_blank') }}>Download to view →</button>
         </div>
       )}
-      {state === 'error' && (
+      {state === 'error' && proofUrl?.startsWith('bunny://') && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
+          <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          <span className="text-xs font-semibold">Video is being processed</span>
+          <span className="text-[11px]">Bunny is transcoding this video (usually 30-90 seconds). Reopen this review in a moment.</span>
+        </div>
+      )}
+      {state === 'error' && !proofUrl?.startsWith('bunny://') && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
           <ImageIcon className="w-8 h-8" />
           <span className="text-xs font-semibold">Could not load proof</span>

@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_compress/video_compress.dart';
+import 'bunny_video_service.dart';
 import '../utils/org_date_utils.dart';
 
 class AlreadySubmittedTodayException implements Exception {
@@ -214,6 +215,7 @@ class TaskService {
     String? note,
     int? selectedTierIndex,
     void Function(double progress)? onCompressProgress,
+    void Function(double progress)? onUploadProgress,
   }) async {
     final session = _client.auth.currentSession;
     if (session == null) {
@@ -234,16 +236,14 @@ class TaskService {
     String uploadMime;
 
     if (kIsWeb) {
-      // Flutter web: video_compress has no web implementation. Skip compression
-      // — upload the picked file as-is. Temporary cap at 200 MB.
-      //
-      // Duration check is also skipped on web. The picker enforces maxDuration
-      // for camera capture; gallery picks fall through to admin review.
+      // Flutter web: video_compress has no web implementation. Upload raw
+      // — Bunny Stream transcodes any input to browser-safe MP4 server-side.
+      // Bunny bucket accepts up to 500 MB. iPhone 90s .mov typically 60-150 MB.
       final raw = await videoFile.readAsBytes();
-      if (raw.lengthInBytes > 200 * 1024 * 1024) {
+      if (raw.lengthInBytes > 500 * 1024 * 1024) {
         final mb = (raw.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
         throw Exception(
-          'Video is $mb MB — too large to upload (max 200 MB). Please trim the video or record a shorter clip.',
+          'Video is $mb MB — too large to upload (max 500 MB). Please trim the video or record a shorter clip.',
         );
       }
       bytes = raw;
@@ -257,6 +257,8 @@ class TaskService {
       };
     } else {
       // Native (iOS / Android): probe duration then compress to 480p .mp4.
+      // Compression here still helps upload speed on 4G — Bunny would transcode
+      // anyway, but a 20 MB upload is much faster than a 100 MB one.
       final info = await VideoCompress.getMediaInfo(videoFile.path);
       final srcDurationSec = ((info.duration ?? 0) / 1000).round();
       if (srcDurationSec > maxDurationSeconds + 1) {
@@ -286,10 +288,10 @@ class TaskService {
       final compressedFile = File(outPath);
       bytes = await compressedFile.readAsBytes();
 
-      // Final safety net — compressed 90s video should be well under 30MB.
-      if (bytes.lengthInBytes > 30 * 1024 * 1024) {
+      // Final safety net — compressed 90s video should be well under 50MB.
+      if (bytes.lengthInBytes > 50 * 1024 * 1024) {
         throw Exception(
-          'Compressed video is still too large (>30 MB). Please record a shorter or simpler video.',
+          'Compressed video is still too large (>50 MB). Please record a shorter or simpler video.',
         );
       }
 
@@ -300,17 +302,16 @@ class TaskService {
       uploadMime = 'video/mp4';
     }
 
-    final fileName = 'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$uploadExt';
-
-    await _client.storage.from('task-proofs').uploadBinary(
-      fileName,
-      bytes,
-      // 1 year — proof URLs include timestamp so they're immutable.
-      fileOptions: FileOptions(
-        upsert: false,
-        contentType: uploadMime,
-        cacheControl: '31536000',
-      ),
+    // Upload directly to Bunny Stream — server-side transcodes to browser-safe
+    // MP4 + adaptive HLS. proof_url becomes "bunny://<guid>" so downstream
+    // (analyze-submission, admin dashboard) can route to the CDN.
+    // ignore: unused_local_variable
+    final _extForLegacy = uploadExt;
+    final fileName = await BunnyVideoService.uploadVideo(
+      bytes: bytes,
+      mimeType: uploadMime,
+      title: 'proof-$taskId-${DateTime.now().millisecondsSinceEpoch}',
+      onProgress: onUploadProgress,
     );
 
     final dateStr = submittedDate ?? orgEffectiveTodayStr(orgTimezone);

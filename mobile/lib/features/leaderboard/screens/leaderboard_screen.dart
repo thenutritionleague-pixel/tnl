@@ -1200,6 +1200,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   // ── Animated Podium ──────────────────────────────────────────────────────
   Widget _buildAnimatedPodium(List<Map<String, dynamic>> items,
       {required bool isTeam}) {
+    // Empty state — nothing to rank yet. Return a placeholder so ranks[0]
+    // doesn't RangeError when items comes in empty (e.g. no team members yet).
+    if (items.isEmpty) return const SizedBox.shrink();
+
     final pointsKey = isTeam ? 'total_points' : 'challenge_points';
     // Pad to 3 with empty placeholders so podium always renders
     final padded = [
@@ -1210,8 +1214,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     final ranks = _tiedRanks(items, pointsKey);
     // Podium layout: left=items[1], center=items[0], right=items[2]
     final r0 = ranks[0];
-    final r1 = padded.length > 1 && padded[1]['_empty'] != true ? ranks[1] : 0;
-    final r2 = padded.length > 2 && padded[2]['_empty'] != true ? ranks[2] : 0;
+    final r1 = padded.length > 1 && padded[1]['_empty'] != true && ranks.length > 1 ? ranks[1] : 0;
+    final r2 = padded.length > 2 && padded[2]['_empty'] != true && ranks.length > 2 ? ranks[2] : 0;
     return AnimatedBuilder(
       animation: _podiumAnim,
       builder: (context, _) => Container(
@@ -1609,11 +1613,14 @@ class _TeamAvatarRow extends StatelessWidget {
     return _palette[hash.abs() % _palette.length];
   }
 
-  /// First letter(s) of name as initials.
+  /// First letter(s) of name as initials. Defensive against names with
+  /// double-spaces, leading/trailing whitespace, or empty tokens which
+  /// would otherwise crash with RangeError on `''[0]`.
   String _initials(String name) {
-    final parts = name.trim().split(' ');
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    return name.isNotEmpty ? name[0].toUpperCase() : '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return '?';
   }
 
   @override

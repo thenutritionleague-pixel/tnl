@@ -64,7 +64,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [imgState, setImgState] = useState<'none' | 'loading' | 'loaded' | 'error'>('none')
 
-  const isVideo = !!proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
+  const isVideo = !!proofUrl && (proofUrl.startsWith('bunny://') || /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl))
 
   async function load() {
     if (!proofUrl) return
@@ -103,7 +103,14 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
       )}
 
       {/* Error */}
-      {imgState === 'error' && (
+      {imgState === 'error' && proofUrl?.startsWith('bunny://') && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground text-center px-4">
+          <ImageIcon className="w-6 h-6 opacity-40 animate-pulse" />
+          <p className="text-xs font-semibold">Video is being processed</p>
+          <p className="text-[11px]">Bunny is transcoding this video (usually 30-90 seconds). Try again in a moment.</p>
+        </div>
+      )}
+      {imgState === 'error' && !proofUrl?.startsWith('bunny://') && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground">
           <ImageIcon className="w-8 h-8 opacity-40" />
           <p className="text-xs">Failed to load {isVideo ? 'video' : 'image'}</p>
@@ -287,7 +294,7 @@ function ProofDialog({ submission, onClose }: ProofDialogProps) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
 
-  const isVideo = !!submission?.proofUrl && /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(submission.proofUrl)
+  const isVideo = !!submission?.proofUrl && (submission.proofUrl.startsWith('bunny://') || /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(submission.proofUrl))
 
   // Auto-load the proof whenever the dialog opens with a new submission
   useEffect(() => {
@@ -316,7 +323,14 @@ function ProofDialog({ submission, onClose }: ProofDialogProps) {
                   <span className="text-xs">Loading proof…</span>
                 </div>
               )}
-              {imgState === 'error' && (
+              {imgState === 'error' && submission.proofUrl?.startsWith('bunny://') && (
+                <div className="flex flex-col items-center gap-2 text-muted-foreground text-center px-4">
+                  <ImageIcon className="w-6 h-6 opacity-40 animate-pulse" />
+                  <p className="text-xs font-semibold">Video is being processed</p>
+                  <p className="text-[11px]">Bunny is transcoding this video. Try again in a moment.</p>
+                </div>
+              )}
+              {imgState === 'error' && !submission.proofUrl?.startsWith('bunny://') && (
                 <div className="flex flex-col items-center gap-2 text-muted-foreground">
                   <ImageIcon className="w-8 h-8 opacity-40" />
                   <p className="text-xs">Failed to load {isVideo ? 'video' : 'image'}</p>

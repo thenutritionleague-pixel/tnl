@@ -25,6 +25,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   Uint8List? _imageBytes;
   bool _isVideoPicked = false;
   double? _compressProgress; // 0–100 during video compression
+  double? _uploadProgress;   // 0.0–1.0 during Bunny upload
   bool _submitting = false;
   bool _done = false;
   int? _selectedTierIndex;
@@ -198,6 +199,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
           onCompressProgress: (p) {
             if (mounted) setState(() => _compressProgress = p);
           },
+          onUploadProgress: (p) {
+            if (mounted) setState(() => _uploadProgress = p);
+          },
         );
       } else {
         await TaskService.submitTaskImage(
@@ -214,26 +218,26 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         );
       }
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; _done = true; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _done = true; });
         _confettiCtrl.play();
       }
     } on VideoTooLongException catch (e) {
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; _selectedImage = null; _imageBytes = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 6)),
         );
       }
     } on VideoCompressionFailedException catch (e) {
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error),
         );
       }
     } on AlreadySubmittedTodayException {
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('You have already submitted this task today.'),
@@ -246,7 +250,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       if (mounted) {
         setState(() {
           _submitting = false;
-          _compressProgress = null;
+          _compressProgress = null; _uploadProgress = null;
           _selectedImage = null;
           _imageBytes = null;
         });
@@ -261,13 +265,13 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     } on AuthException {
       // Session expired — sign out (fire & forget) and navigate to login
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         Supabase.instance.client.auth.signOut();
         context.go('/login');
       }
     } catch (e) {
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Upload failed: $e'),
@@ -395,12 +399,39 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     }
 
     // ── Main submission screen ─────────────────────────────────────────────
-    return Scaffold(
+    // Block back nav + system pop while a submission is uploading — leaving
+    // mid-upload aborts the video and wastes the user's time. iOS/Android/web
+    // system back all funnel through this canPop guard.
+    return PopScope(
+      canPop: !_submitting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _submitting) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Upload in progress — please wait. Closing now would cancel your submission.'),
+              backgroundColor: AppColors.error,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      },
+      child: Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: Text(_isResubmit ? 'Resubmit Proof' : 'Submit Proof'),
         elevation: 0,
-        leading: BackButton(onPressed: () => context.pop()),
+        leading: BackButton(onPressed: () {
+          if (_submitting) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Upload in progress — please wait. Do not close.'),
+                backgroundColor: AppColors.error,
+              ),
+            );
+            return;
+          }
+          context.pop();
+        }),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -838,9 +869,23 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                 ),
                 child: Center(
                   child: _submitting
-                      ? const SizedBox(
-                          height: 20, width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              height: 20, width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              _uploadProgress != null
+                                  ? 'Uploading ${(_uploadProgress! * 100).clamp(0, 100).toStringAsFixed(0)}%…'
+                                  : (_compressProgress != null
+                                      ? 'Compressing ${_compressProgress!.clamp(0, 100).toStringAsFixed(0)}%…'
+                                      : 'Uploading… please do not close'),
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+                            ),
+                          ],
                         )
                       : Text(
                           _isLocked ? 'Opens at 4:00 AM 🕐' : 'Submit Proof',
@@ -850,9 +895,36 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
               ),
             ),
 
+            // Prominent "don't close" warning banner while uploading
+            if (_submitting) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.error.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: AppColors.error, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Your video is uploading. Please keep this screen open — closing or navigating away will cancel the submission.',
+                        style: TextStyle(fontSize: 12.5, color: AppColors.error, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 40),
           ],
         ),
+      ),
       ),
     );
   }
