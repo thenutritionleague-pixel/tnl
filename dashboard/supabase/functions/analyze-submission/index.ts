@@ -1,5 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import OpenAI from 'npm:openai'
+import { crypto as stdCrypto } from 'https://deno.land/std@0.224.0/crypto/mod.ts'
+import { Image } from 'https://deno.land/x/imagescript@1.2.15/mod.ts'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -7,171 +9,67 @@ const supabase = createClient(
 )
 const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') })
 
-// Set this in Supabase: Settings → Edge Functions → Secrets → GEMINI_API_KEY.
-// Empty/missing key → video submissions fall back to needs_review.
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') ?? ''
-// 'flash-latest' auto-upgrades when Google releases newer Flash versions.
 const GEMINI_MODEL   = 'gemini-flash-latest'
 const GEMINI_BASE    = 'https://generativelanguage.googleapis.com'
 
-type Tier = { label: string; description: string; points: number }
-type AIResult = { approved: boolean; confidence: number; issues: string[]; feedback: string }
+const BUNNY_LIBRARY_ID    = Deno.env.get('BUNNY_LIBRARY_ID')    ?? ''
+const BUNNY_API_KEY       = Deno.env.get('BUNNY_API_KEY')       ?? ''
+const BUNNY_CDN_HOSTNAME  = Deno.env.get('BUNNY_CDN_HOSTNAME')  ?? ''
+const BUNNY_TOKEN_AUTH    = Deno.env.get('BUNNY_TOKEN_AUTH_KEY') ?? ''
 
-async function fetchImageAsBase64(url: string): Promise<string | null> {
+// pHash shadow mode: compute + store + log, but DO NOT reject on it yet.
+const PHASH_ENFORCE = false
+const PHASH_DUP_THRESHOLD = 6
+
+// Video rep-count calibration. Gemini Flash samples frames and undercounts
+// real effort by ~30%, so we only require this fraction of the target to
+// approve. When we upgrade to Gemini Pro (accurate counting) raise toward 0.9.
+const VIDEO_COUNT_TOLERANCE = 0.65
+
+type Tier = { label: string; description: string; points: number }
+type AIResult = {
+  approved:   boolean
+  confidence: number
+  issues:     string[]
+  feedback:   string
+  read?: { value?: number | null; unit?: string | null } | null
+}
+
+type BunnyPollResult =
+  | { kind: 'ready'; url: string }
+  | { kind: 'pending' }
+  | { kind: 'failed'; reason: string }
+
+// Pull the required rep/second count out of a tier like "20 push-ups" or
+// "30 secs duration" -> 20 / 30. Null if no number present.
+function extractRequiredCount(tier: Tier): number | null {
+  const m = `${tier.label} ${tier.description}`.match(/(\d+)/)
+  return m ? parseInt(m[1], 10) : null
+}
+
+async function bunnySignedUrl(guid: string, ttlSeconds = 900): Promise<string> {
+  const path = `/${guid}/play_480p.mp4`
+  const base = `https://${BUNNY_CDN_HOSTNAME}${path}`
+  if (!BUNNY_TOKEN_AUTH) return base
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds
+  const raw = new TextEncoder().encode(BUNNY_TOKEN_AUTH + path + String(expires))
+  const digest = new Uint8Array(await stdCrypto.subtle.digest('MD5', raw))
+  let bin = ''
+  for (const b of digest) bin += String.fromCharCode(b)
+  const token = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${base}?token=${token}&expires=${expires}`
+}
+
+async function fetchBytes(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    const CHUNK = 8192
-    let binary = ''
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-    }
-    return btoa(binary)
-  } catch {
-    return null
-  }
+    return new Uint8Array(await res.arrayBuffer())
+  } catch { return null }
 }
-
-function buildPrompt(opts: {
-  medium: 'image' | 'video'
-  taskTitle: string
-  taskDesc: string
-  claimedTier: Tier | null
-  taskPoints: number
-  prevCount: number
-}): string {
-  const { medium, taskTitle, taskDesc, claimedTier, taskPoints, prevCount } = opts
-  const hasPrev = prevCount > 0
-
-  const tierBlock = claimedTier
-    ? `CLAIMED TIER: ${claimedTier.label} (${claimedTier.points} pts)\nTiers are MINIMUM thresholds. The member must prove they reached at least the "${claimedTier.label}" level. Achieving MORE than the minimum is perfectly valid — do NOT reject because a higher result could have earned a higher tier. Only reject if the proof clearly shows they fell BELOW this tier's minimum.`
-    : `POINTS: ${taskPoints}`
-
-  if (medium === 'video') {
-    return `You are a strict but fair AI reviewer for a wellness challenge app. Your goal is to make a confident approve/reject decision on every video submission to minimise human review.
-
-TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
-${tierBlock}
-
-This is a VIDEO submission. Evaluate it on motion, duration, form, and audio cues — not just one frame.
-
-═══════════════════════════════════════════════════════════════
-EVALUATION PROCEDURE — follow these steps in order, in your head.
-═══════════════════════════════════════════════════════════════
-
-STEP 1 — DERIVE EXPECTED PROOF (from the task title + description above):
-What kind of video would actually prove the member did this task? Most wellness videos fall into one of:
-  • A person performing the named exercise (plank, squat, push-up, jumping jacks, run, dance, yoga pose, etc.) with visible form and duration
-  • A timer or fitness-app screen recording showing the activity being tracked
-  • A short demonstration of a habit (drinking water, preparing a meal, journalling)
-
-STEP 2 — DESCRIBE THE VIDEO (silently, in your own reasoning):
-What activity is actually being performed in the video? For how long? Is it the right activity for the task?
-
-STEP 3 — APPLY THE HARD GATE:
-Does the video from STEP 2 match the expected activity from STEP 1?
-  • YES → continue to the rules below.
-  • NO  → REJECT immediately with approved=false and confidence ≤ 0.20. Set feedback to explain what the task needs.
-  • UNSURE → continue but cap confidence at 0.60 so an admin reviews it.
-
-═══════════════════════════════════════════════════════════════
-
-APPROVE when ALL of the following are clearly true:
-• The video genuinely shows the activity described in the task.
-• If the task is time-based (e.g. plank, wall-sit, run, hold), the visible duration meets or exceeds the claimed tier's minimum.
-• The video is a single continuous take — no obvious cuts, splices, or replays that would fake duration.
-• Form/execution is consistent with the activity (not faked, not just standing/sitting while pretending).
-${claimedTier ? `• Visible evidence confirms the member reached at least the "${claimedTier.label}" threshold.` : ''}
-
-REJECT when ANY of the following are clearly true:
-• The video shows a different activity than the task describes.
-• The activity is held or performed for noticeably less than the claimed tier's minimum.
-• Hard cuts or edits suggest faked duration.
-• The activity is obviously simulated (e.g. lying down but claiming to plank, walking but claiming to run).
-
-LENIENCY RULES:
-• Slightly low-quality, dim, or shaky video → approve if the activity is still clearly visible.
-• Brief pauses to adjust the camera or wipe sweat are OK during long exercises.
-• Audio (stopwatch beep, counting, breathing) is helpful context — but absence of audio is fine.
-• If the camera misses part of the body but the activity is still clearly happening → approve.
-• Only set confidence ≥ 0.85 when clearly sure it should be approved.
-• Only set confidence < 0.35 when clearly fake, wrong activity, or duration grossly short.
-• Use 0.35–0.84 for genuinely uncertain cases (will be sent to admin review).
-
-Respond in JSON only — no markdown:
-{"approved":true|false,"confidence":0.0-1.0,"issues":["short codes"],"feedback":"If not approved: 1–2 actionable sentences telling the member what was wrong and how to resubmit correctly."}`
-  }
-
-  // medium === 'image'
-  const prevNote = hasPrev
-    ? `Images 2–${prevCount + 1} are this member's previous approved submissions for the SAME task (duplicate detection only).`
-    : ''
-
-  return `You are a strict but fair AI reviewer for a wellness challenge app. Your goal is to make a confident approve/reject decision on every submission to minimise human review.
-
-TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
-${tierBlock}
-
-Image 1 is the current submission proof.${prevNote ? `\n${prevNote}` : ''}
-
-═══════════════════════════════════════════════════════════════
-EVALUATION PROCEDURE — follow these steps in order, in your head.
-═══════════════════════════════════════════════════════════════
-
-STEP 1 — DERIVE EXPECTED PROOF (from the task title + description above):
-Based on what the task asks the member to do, what kind of image would actually prove they did it? Possible categories:
-  • A fitness-tracker screenshot showing a number (steps, distance, calories, heart rate, active minutes)
-  • A photograph of food/meal/drink (plate, bowl, glass, bottle)
-  • A photograph or video frame of physical activity (person exercising, pose, gym, outdoors)
-  • A screenshot of an app screen (meditation timer, sleep tracker, journaling, etc.)
-  • A selfie demonstrating something specific to the task (e.g. holding an object, in a setting)
-  • A document/written entry (handwritten journal, list)
-
-Decide silently which one (or two) of these the task requires. If the task description is specific, follow it.
-
-STEP 2 — DESCRIBE THE IMAGE (silently, in your own reasoning):
-What does Image 1 actually show? A meal? An app screenshot with numbers? A person mid-exercise? A selfie holding a glass? A selfie with no obvious context? Scenery?
-
-STEP 3 — APPLY THE HARD GATE:
-Does the image from STEP 2 match the expected proof from STEP 1?
-  • YES → continue to the rules below.
-  • NO  → REJECT immediately with approved=false and confidence ≤ 0.20. Set feedback to explain what the task needs (e.g. "This task requires a step-counter screenshot, but you submitted a photo of a drink. Please open your fitness app and submit a screenshot of today's step count.").
-  • UNSURE (proof is ambiguous, could match) → continue to the rules below but cap confidence at 0.60 so an admin reviews it.
-
-A REAL, well-composed photo of the WRONG subject is still WRONG. Sincerity does not override mismatch.
-
-═══════════════════════════════════════════════════════════════
-
-APPROVE when ALL of the following are clearly true:
-• The photo passes the STEP 3 gate (subject matter matches what the task asks for).
-• It is a real photograph (not AI-generated, stock image, internet download, or screenshot of someone else's photo).
-${hasPrev ? '• The key DATA visible in the image (step count, distance, calories, date, time) is different from the previous submission — the app UI looking similar is NORMAL and expected.\n' : ''}${claimedTier ? `• Visible evidence (readable numbers, labels, screens) confirms the member reached at least the "${claimedTier.label}" threshold. Exceeding it is fine.` : ''}
-
-REJECT when ANY of the following are clearly true:
-• The photo fails the STEP 3 gate (subject unrelated to the task — e.g. a drink photo for a step-count task, a selfie for a hydration task, food for an exercise task).
-• It appears AI-generated, is a stock/internet image, or is clearly staged/fake.
-${hasPrev ? '• The exact same numbers/metrics AND the same date/time are visible in both the current and a previous submission (meaning it is literally the same screenshot reused).\n' : ''}${claimedTier ? `• The proof clearly shows the member fell BELOW the "${claimedTier.label}" minimum (e.g. visible number is lower than required).` : ''}
-
-LENIENCY RULES (apply ONLY after the STEP 3 gate has passed):
-• Blurry, casual, or low-quality real photos → approve if task completion is still evident.
-• For fitness metrics (steps, distance, calories, time) numbers must be visible and match the claimed tier.
-• FITNESS TRACKER APPS (StepUp, Google Fit, Apple Health, Samsung Health, Garmin, etc.): many members use the same app. The UI will look visually identical across days — this is NORMAL. Only flag as duplicate if the EXACT same step count or metric value is visible in both images. Different numbers = different day = valid.
-• Only set confidence ≥ 0.78 when clearly sure it should be approved.
-• Only set confidence < 0.40 when clearly fake, literally the same screenshot reused, OR the proof type is wrong for this task.
-• Use 0.40–0.77 sparingly for genuinely uncertain cases.
-
-Respond in JSON only — no markdown:
-{"approved":true|false,"confidence":0.0-1.0,"issues":["short codes"],"feedback":"If not approved: 1–2 actionable sentences telling the member what was wrong and how to resubmit correctly."}`
-}
-
-// Videos ≤ 15 MB go via inline base64 — one round-trip, no upload/poll overhead,
-// fits well inside the 26 s edge-function wall-clock limit.
-// Videos > 15 MB fall back to the File API (resumable upload + poll).
-const INLINE_LIMIT = 15 * 1024 * 1024
 
 function bytesToBase64(bytes: Uint8Array): string {
-  // Process in 8 KB chunks — spread operator is fast; char-by-char concat is O(n²)
   const CHUNK = 8192
   let binary = ''
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -180,10 +78,141 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-async function geminiGenerate(
-  parts: unknown[],
-  prompt: string,
-): Promise<AIResult> {
+// Perceptual fingerprint (dHash, 64-bit). Resize to 9x8, compare each pixel's
+// brightness to its right neighbour. Returns 16-hex, or null on decode error.
+async function computeDHash(bytes: Uint8Array): Promise<string | null> {
+  try {
+    const img = await Image.decode(bytes)
+    const small = img.resize(9, 8)
+    let hash = 0n
+    let bit = 0n
+    for (let y = 1; y <= 8; y++) {
+      for (let x = 1; x <= 8; x++) {
+        const l = small.getRGBAAt(x, y)
+        const r = small.getRGBAAt(x + 1, y)
+        const lb = 0.299 * l[0] + 0.587 * l[1] + 0.114 * l[2]
+        const rb = 0.299 * r[0] + 0.587 * r[1] + 0.114 * r[2]
+        if (lb > rb) hash |= (1n << bit)
+        bit++
+      }
+    }
+    return hash.toString(16).padStart(16, '0')
+  } catch (e) {
+    console.warn('[dhash] decode failed', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
+function hamming(aHex: string, bHex: string): number {
+  let x = BigInt('0x' + aHex) ^ BigInt('0x' + bHex)
+  let count = 0
+  while (x > 0n) { count += Number(x & 1n); x >>= 1n }
+  return count
+}
+
+async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
+  if (!BUNNY_LIBRARY_ID || !BUNNY_API_KEY || !BUNNY_CDN_HOSTNAME) {
+    return { kind: 'failed', reason: 'Bunny credentials missing on the server.' }
+  }
+  const statusUrl = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${guid}`
+  const deadline = Date.now() + 40_000
+  let lastKnownStatus = -1
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(statusUrl, {
+        headers: { 'AccessKey': BUNNY_API_KEY, 'accept': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.status === 404) return { kind: 'failed', reason: 'Video was deleted from the video service before analysis. Please re-upload.' }
+      if (!res.ok) { await new Promise(r => setTimeout(r, 2000)); continue }
+      const data = await res.json() as { status?: number }
+      lastKnownStatus = data.status ?? -1
+      if (lastKnownStatus === 4) return { kind: 'ready', url: await bunnySignedUrl(guid) }
+      if (lastKnownStatus === 5) return { kind: 'failed', reason: 'Video could not be processed — likely audio/video sync issue, unsupported codec, or corrupted file. Please re-record and try again.' }
+      if (lastKnownStatus === 6) return { kind: 'failed', reason: 'Video upload was incomplete. Please try again on a stable network.' }
+    } catch (e) {
+      console.warn('[bunny] status check error', e instanceof Error ? e.message : e)
+    }
+    await new Promise(r => setTimeout(r, 2500))
+  }
+  console.log('[bunny] poll timeout, last status =', lastKnownStatus)
+  return { kind: 'pending' }
+}
+
+function buildPrompt(opts: {
+  medium: 'image' | 'video'
+  taskTitle: string
+  taskDesc: string
+  claimedTier: Tier | null
+  taskPoints: number
+}): string {
+  const { medium, taskTitle, taskDesc, claimedTier, taskPoints } = opts
+
+  if (medium === 'video') {
+    const req = claimedTier ? extractRequiredCount(claimedTier) : null
+    return `You are a fair AI reviewer for a wellness challenge app reviewing a VIDEO. You have TWO jobs.
+
+TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
+${claimedTier ? `CLAIMED TIER: "${claimedTier.label}"${req != null ? ` (target: ${req})` : ''}` : `POINTS: ${taskPoints}`}
+
+JOB 1 — GENUINE & RIGHT ACTIVITY?
+Confirm the member is genuinely performing the RIGHT activity for this task (e.g. actual push-ups for a push-up task). Set approved=false ONLY if it is clearly cheating: a completely different activity, a screen recording / screenshot / random clip, or obviously faked/simulated motion. Otherwise approved=true.
+
+JOB 2 — COUNT.
+Count the repetitions (or, for a hold like plank, the seconds held) as carefully as you can. Watch the whole clip. Count GENEROUSLY — include every rep you see, even partial ones at the start/end. Put your best count in "read.value" and the unit in "read.unit" ("reps" or "seconds"). If you truly cannot tell, use null.
+
+The server applies a generous tolerance to your count (it knows video counting undercounts), so just give your honest best count — do NOT try to reject on the count yourself. Your feedback field is only used if approved=false.
+
+Respond JSON only:
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<your rep or second count, or null>,"unit":"reps|seconds|null"}}`
+  }
+
+  const tierBlock = claimedTier
+    ? `CLAIMED TIER: "${claimedTier.label}" — minimum ${claimedTier.points}.
+
+If this task involves a number (steps, calories, minutes, reps):
+  1. Read the number in the image as carefully as you can.
+  2. Compare to the minimum ${claimedTier.points}. GREATER THAN OR EQUAL → APPROVE.
+     Examples: 7,544 vs 7,500 → APPROVE. 7,890 vs 6,000 → APPROVE. 6,000 vs 6,000 → APPROVE.
+  3. If you CANNOT clearly read the number (blur, glare, cropped) → APPROVE anyway, confidence ~0.6. Do NOT reject for an unreadable number.
+  4. Only set approved=false if the number is CLEARLY legible AND clearly below ${claimedTier.points}.
+  Always put the number you read in the "read" field so the server can double-check.`
+    : `POINTS: ${taskPoints}`
+
+  return `You are a fair, LENIENT AI reviewer for a wellness challenge app. Your default is to APPROVE. Only reject when the image is clearly, obviously wrong. When unsure → APPROVE.
+
+TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
+${tierBlock}
+
+WHAT THE IMAGE SHOULD ROUGHLY SHOW (derive from the task title/description):
+  • Step/fitness task → a fitness tracker screenshot (ANY app) or activity photo.
+  • Food/meal/protein/veggie task → a photo of food or drink.
+  • Water/hydration task → water container or a hydration app.
+  • Habit task → the relevant photo/screenshot.
+
+APPROVE when the image is plausibly the right KIND of proof. Give the benefit of the doubt.
+
+REJECT ONLY when the image is clearly unrelated (random selfie with no food for a food task, a landscape for a step task) OR clearly AI-generated / a stock image.
+
+FOOD TASKS — BE VERY LENIENT (most wrong rejections happen here):
+  • Example foods in the task (sattu, sprouts, chana, salad, cucumber, etc) are EXAMPLES, NOT a strict allowed-list.
+  • If the image shows reasonable food in the SAME SPIRIT as the task, APPROVE. Do NOT reject because a salad also contains corn, or has sprouts, or is a soup/smoothie/chilla/curd instead of the exact example.
+  • Poor lighting, odd angle, half-eaten, take-away box, restaurant plate, home-cooked, a drink/smoothie form → all APPROVE if food is visible.
+  • A selfie that ALSO clearly shows the required food → APPROVE.
+
+Do NOT judge whether the food is "healthy enough" or nitpick specific ingredients. Food + roughly matches theme → APPROVE.
+
+CONFIDENCE: clearly right → 0.85–0.95. Plausible/unsure → 0.60 (approved=true). Clearly wrong → approved=false, 0.85+.
+
+This app has NEVER had a problem with wrong approvals — only wrongly REJECTING honest members. Lean approve.
+
+Respond JSON only:
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if rejected: 1–2 sentences on what to submit instead. Empty if approved.","read":{"value":<number or null>,"unit":"steps|calories|reps|minutes|null"}}`
+}
+
+const INLINE_LIMIT = 15 * 1024 * 1024
+
+async function geminiGenerate(parts: unknown[], prompt: string): Promise<AIResult> {
   const genRes = await fetch(
     `${GEMINI_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
@@ -191,61 +220,44 @@ async function geminiGenerate(
       headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-        generationConfig: { response_mime_type: 'application/json', temperature: 0.2, maxOutputTokens: 2048 },
+        generationConfig: { response_mime_type: 'application/json', temperature: 0.1, maxOutputTokens: 2048 },
       }),
     },
   )
   if (!genRes.ok) throw new Error(`Gemini generate failed (${genRes.status}): ${await genRes.text()}`)
   const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }
   const candidate = genData.candidates?.[0]
-  if (!candidate?.content) {
-    throw new Error(`Gemini returned no content (finishReason: ${candidate?.finishReason ?? 'unknown'})`)
-  }
+  if (!candidate?.content) throw new Error(`Gemini returned no content (finishReason: ${candidate?.finishReason ?? 'unknown'})`)
   const text = candidate.content.parts?.[0]?.text ?? '{}'
-  try {
-    return JSON.parse(text) as AIResult
-  } catch {
-    throw new Error(`Gemini JSON parse failed. Raw text: ${text.slice(0, 300)}`)
-  }
+  try { return JSON.parse(text) as AIResult }
+  catch { throw new Error(`Gemini JSON parse failed. Raw text: ${text.slice(0, 300)}`) }
 }
 
 async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promise<AIResult> {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured')
-
   const videoRes = await fetch(signedUrl, { signal: AbortSignal.timeout(30_000) })
   if (!videoRes.ok) throw new Error(`Could not fetch video (${videoRes.status})`)
   const videoBytes = new Uint8Array(await videoRes.arrayBuffer())
   const mimeType = videoRes.headers.get('content-type') ?? 'video/mp4'
-
-  // Fast path: inline base64 — no File API, no polling, ~3-8 s total
   if (videoBytes.byteLength <= INLINE_LIMIT) {
     const base64 = bytesToBase64(videoBytes)
-    return geminiGenerate(
-      [{ inline_data: { mime_type: mimeType, data: base64 } }],
-      prompt,
-    )
+    return geminiGenerate([{ inline_data: { mime_type: mimeType, data: base64 } }], prompt)
   }
-
-  // Slow path: File API for large videos (resumable upload → poll → generate)
-  const initRes = await fetch(
-    `${GEMINI_BASE}/upload/v1beta/files`,
-    {
-      method: 'POST',
-      headers: {
-        'X-goog-api-key': GEMINI_API_KEY,
-        'X-Goog-Upload-Protocol': 'resumable',
-        'X-Goog-Upload-Command': 'start',
-        'X-Goog-Upload-Header-Content-Length': videoBytes.byteLength.toString(),
-        'X-Goog-Upload-Header-Content-Type': mimeType,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ file: { display_name: 'proof_video' } }),
+  const initRes = await fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
+    method: 'POST',
+    headers: {
+      'X-goog-api-key': GEMINI_API_KEY,
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': videoBytes.byteLength.toString(),
+      'X-Goog-Upload-Header-Content-Type': mimeType,
+      'Content-Type': 'application/json',
     },
-  )
+    body: JSON.stringify({ file: { display_name: 'proof_video' } }),
+  })
   if (!initRes.ok) throw new Error(`Upload init failed (${initRes.status}): ${await initRes.text()}`)
   const uploadUrl = initRes.headers.get('x-goog-upload-url') ?? initRes.headers.get('X-Goog-Upload-URL')
   if (!uploadUrl) throw new Error('No upload URL returned by Gemini File API')
-
   const uploadRes = await fetch(uploadUrl, {
     method: 'POST',
     headers: {
@@ -260,37 +272,16 @@ async function analyzeVideoWithGemini(signedUrl: string, prompt: string): Promis
   const fileName = uploadData.file.name
   const fileUri  = uploadData.file.uri
   let   state    = uploadData.file.state
-
-  const deleteFile = () => {
-    fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
-      method: 'DELETE',
-      headers: { 'X-goog-api-key': GEMINI_API_KEY },
-    }).catch(() => {})
-  }
-
-  // Poll until ACTIVE (max 20 s — leave headroom for the generate call)
+  const deleteFile = () => { fetch(`${GEMINI_BASE}/v1beta/${fileName}`, { method: 'DELETE', headers: { 'X-goog-api-key': GEMINI_API_KEY } }).catch(() => {}) }
   const start = Date.now()
   while (state === 'PROCESSING' && Date.now() - start < 20_000) {
     await new Promise(r => setTimeout(r, 2000))
-    const stateRes = await fetch(`${GEMINI_BASE}/v1beta/${fileName}`, {
-      headers: { 'X-goog-api-key': GEMINI_API_KEY },
-    })
+    const stateRes = await fetch(`${GEMINI_BASE}/v1beta/${fileName}`, { headers: { 'X-goog-api-key': GEMINI_API_KEY } })
     if (!stateRes.ok) break
     state = ((await stateRes.json()) as { state: string }).state
   }
-  if (state !== 'ACTIVE') {
-    deleteFile()
-    throw new Error(`Video processing did not complete (final state: ${state})`)
-  }
-
-  try {
-    return await geminiGenerate(
-      [{ file_data: { mime_type: mimeType, file_uri: fileUri } }],
-      prompt,
-    )
-  } finally {
-    deleteFile()
-  }
+  if (state !== 'ACTIVE') { deleteFile(); throw new Error(`Video processing did not complete (final state: ${state})`) }
+  try { return await geminiGenerate([{ file_data: { mime_type: mimeType, file_uri: fileUri } }], prompt) } finally { deleteFile() }
 }
 
 Deno.serve(async (req: Request) => {
@@ -300,24 +291,16 @@ Deno.serve(async (req: Request) => {
     const record = body.record ?? body
     submissionId = record.id
     const orgId: string = record.org_id
+    if (!submissionId || !orgId) return new Response(JSON.stringify({ error: 'Missing id or org_id' }), { status: 400 })
 
-    if (!submissionId || !orgId) {
-      return new Response(JSON.stringify({ error: 'Missing id or org_id' }), { status: 400 })
-    }
-
-    // Atomic claim — only proceed if we flip ai_status from null → 'analyzing'
     const { data: claimed } = await supabase
       .from('task_submissions')
       .update({ ai_status: 'analyzing' })
       .is('ai_status', null)
       .eq('id', submissionId)
       .select('id')
+    if (!claimed || claimed.length === 0) return new Response(JSON.stringify({ skipped: true }), { status: 200 })
 
-    if (!claimed || claimed.length === 0) {
-      return new Response(JSON.stringify({ skipped: true }), { status: 200 })
-    }
-
-    // Fetch submission + task (with tier data)
     const { data: sub } = await supabase
       .from('task_submissions')
       .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, tasks(title, description, points, points_tiers), profiles:user_id(name)')
@@ -325,10 +308,7 @@ Deno.serve(async (req: Request) => {
       .single()
 
     if (!sub?.proof_url) {
-      await supabase
-        .from('task_submissions')
-        .update({ ai_status: 'needs_review', ai_feedback: 'No proof image found.' })
-        .eq('id', submissionId)
+      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'No proof image found.' }).eq('id', submissionId)
       return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
     }
 
@@ -342,202 +322,189 @@ Deno.serve(async (req: Request) => {
     const claimedTierIndex: number | null = sd.selected_tier_index ?? null
     const claimedTier: Tier | null = (tiers && claimedTierIndex != null) ? (tiers[claimedTierIndex] ?? null) : null
 
-    const isVideo = /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(sub.proof_url)
+    const isBunny = sub.proof_url.startsWith('bunny://')
+    const isVideo = isBunny || /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(sub.proof_url)
     const medium: 'image' | 'video' = isVideo ? 'video' : 'image'
 
-    // ── Branch on medium ────────────────────────────────────────────────────
     let aiResult: AIResult
 
     if (medium === 'video') {
-      // Video path — Gemini 2.0 Flash via File API
       if (!GEMINI_API_KEY) {
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' })
-          .eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'gemini_not_configured' }), { status: 200 })
       }
-
-      const { data: signed } = await supabase.storage
-        .from('task-proofs')
-        .createSignedUrl(sub.proof_url, 300)
-      if (!signed?.signedUrl) {
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof video.' })
-          .eq('id', submissionId)
-        return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
+      let videoUrl: string | null = null
+      if (isBunny) {
+        const guid = sub.proof_url.replace('bunny://', '')
+        const poll = await bunnyCheckStatus(guid)
+        if (poll.kind === 'ready') videoUrl = poll.url
+        else if (poll.kind === 'pending') {
+          await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId)
+          return new Response(JSON.stringify({ aiStatus: 'retry' }), { status: 200 })
+        } else {
+          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: poll.reason }).eq('id', submissionId)
+          return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'bunny_failed' }), { status: 200 })
+        }
+      } else {
+        const { data: signed } = await supabase.storage.from('task-proofs').createSignedUrl(sub.proof_url, 300)
+        videoUrl = signed?.signedUrl ?? null
+        if (!videoUrl) {
+          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof video.' }).eq('id', submissionId)
+          return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
+        }
       }
-
-      const prompt = buildPrompt({ medium, taskTitle, taskDesc, claimedTier, taskPoints, prevCount: 0 })
-
+      const prompt = buildPrompt({ medium, taskTitle, taskDesc, claimedTier, taskPoints })
       try {
-        aiResult = await analyzeVideoWithGemini(signed.signedUrl, prompt)
+        aiResult = await analyzeVideoWithGemini(videoUrl!, prompt)
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/video]', errMsg)
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: `Video analysis failed: ${errMsg}` })
-          .eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: `Video analysis failed: ${errMsg}` }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
       }
     } else {
-      // Image path — OpenAI GPT-4o (existing flow, unchanged)
-      const { data: signed } = await supabase.storage
-        .from('task-proofs')
-        .createSignedUrl(sub.proof_url, 120)
+      const { data: signed } = await supabase.storage.from('task-proofs').createSignedUrl(sub.proof_url, 120)
       if (!signed?.signedUrl) {
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof image.' })
-          .eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof image.' }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
       }
-
-      const currentBase64 = await fetchImageAsBase64(signed.signedUrl)
-      if (!currentBase64) {
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'Could not download proof image.' })
-          .eq('id', submissionId)
+      const bytes = await fetchBytes(signed.signedUrl)
+      if (!bytes) {
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not download proof image.' }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
       }
+      const currentBase64 = bytesToBase64(bytes)
 
-      // Previous approved proofs for duplicate detection
-      const { data: prevSubs } = await supabase
-        .from('task_submissions')
-        .select('proof_url')
-        .eq('task_id', sub.task_id)
-        .eq('user_id', sub.user_id)
-        .eq('status', 'approved')
-        .order('submitted_at', { ascending: false })
-        .limit(3)
-
-      type ImageBlock = { type: 'image_url'; image_url: { url: string; detail: 'low' | 'high' } }
-      type TextBlock  = { type: 'text'; text: string }
-
-      const imageBlocks: ImageBlock[] = [
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'high' } },
-      ]
-
-      let prevCount = 0
-      for (const prev of prevSubs ?? []) {
-        if (!prev.proof_url) continue
-        const { data: ps } = await supabase.storage.from('task-proofs').createSignedUrl(prev.proof_url, 60)
-        if (!ps?.signedUrl) continue
-        const b64 = await fetchImageAsBase64(ps.signedUrl)
-        if (!b64) continue
-        imageBlocks.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'low' } })
-        prevCount++
+      // pHash SHADOW MODE: compute, compare, store, log (no rejection yet).
+      const myHash = await computeDHash(bytes)
+      if (myHash) {
+        const { data: prevHashed } = await supabase
+          .from('task_submissions')
+          .select('id, proof_hash')
+          .eq('user_id', sub.user_id)
+          .eq('task_id', sub.task_id)
+          .eq('status', 'approved')
+          .not('proof_hash', 'is', null)
+          .neq('id', submissionId)
+          .order('submitted_at', { ascending: false })
+          .limit(20)
+        let minDist = 999
+        for (const p of prevHashed ?? []) {
+          if (!p.proof_hash) continue
+          const d = hamming(myHash, p.proof_hash)
+          if (d < minDist) minDist = d
+        }
+        console.log('[phash]', JSON.stringify({ submissionId, myHash, minDist, wouldFlag: minDist <= PHASH_DUP_THRESHOLD }))
+        await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
+        void PHASH_ENFORCE
       }
 
-      const prompt = buildPrompt({ medium, taskTitle, taskDesc, claimedTier, taskPoints, prevCount })
-      const contentBlocks: (TextBlock | ImageBlock)[] = [
-        { type: 'text', text: prompt },
-        ...imageBlocks,
+      const prompt = buildPrompt({ medium, taskTitle, taskDesc, claimedTier, taskPoints })
+      const contentBlocks = [
+        { type: 'text' as const, text: prompt },
+        { type: 'image_url' as const, image_url: { url: `data:image/jpeg;base64,${currentBase64}`, detail: 'high' as const } },
       ]
-
       try {
         const response = await openai.chat.completions.create({
           model: 'gpt-4o',
           messages: [{ role: 'user', content: contentBlocks }],
           response_format: { type: 'json_object' },
+          temperature: 0.1,
           max_tokens: 400,
         })
         aiResult = JSON.parse(response.choices[0].message.content ?? '{}')
       } catch (e) {
-        // Log the actual OpenAI error so it shows in Supabase function logs.
-        // Common causes: OPENAI_API_KEY invalid/expired, billing/quota exhausted,
-        // rate limit, OpenAI partial outage, or model deprecation.
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/openai-image]', errMsg)
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: `AI analysis failed: ${errMsg}` })
-          .eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: `AI analysis failed: ${errMsg}` }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
       }
     }
 
-    // ── Shared scoring + DB writes ──────────────────────────────────────────
-    const confidence = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
-    const feedback   = aiResult.feedback ?? ''
-
-    const approveAt = 0.70
-    const rejectAt  = 0.50
-
+    // ================= DECISION =================
     let aiStatus: string
-    if (aiResult.approved && confidence >= approveAt) {
-      aiStatus = 'approved'
-    } else if (!aiResult.approved || confidence < rejectAt) {
-      aiStatus = 'rejected'
+    let feedback = aiResult.feedback ?? ''
+    const confidence = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
+
+    if (medium === 'video') {
+      // 1) Clear cheating / wrong activity -> reject.
+      if (aiResult.approved === false && confidence >= 0.55) {
+        aiStatus = 'rejected'
+        feedback = feedback || 'The video does not clearly show the required activity. Please re-record performing the exercise.'
+      } else {
+        // 2) Genuine activity. Apply calibrated count check.
+        const required = claimedTier ? extractRequiredCount(claimedTier) : null
+        const counted  = aiResult.read && typeof aiResult.read.value === 'number' ? aiResult.read.value : null
+        if (required != null && counted != null) {
+          const need = Math.ceil(required * VIDEO_COUNT_TOLERANCE)
+          console.log('[video-count]', JSON.stringify({ submissionId, required, counted, need, tolerance: VIDEO_COUNT_TOLERANCE }))
+          if (counted >= need) {
+            aiStatus = 'approved'
+            feedback = ''
+          } else {
+            // Clearly low even after tolerance -> admin decides (never hard reject).
+            aiStatus = 'needs_review'
+            feedback = `Video looks genuine but the count read low (~${counted} vs target ${required}). Please verify.`
+          }
+        } else {
+          // Couldn't count -> trust genuineness -> approve.
+          aiStatus = 'approved'
+          feedback = ''
+        }
+      }
     } else {
-      aiStatus = 'needs_review'
+      // IMAGE numeric safety net
+      let forceNeedsReview = false
+      if (claimedTier && aiResult.approved === false) {
+        const readVal = aiResult.read && typeof aiResult.read.value === 'number' ? aiResult.read.value : null
+        if (readVal != null && readVal >= claimedTier.points) {
+          aiResult.approved = true
+          aiResult.confidence = Math.max(aiResult.confidence ?? 0, 0.8)
+          feedback = `Approved by server — image shows ${readVal} which meets the ${claimedTier.points} minimum.`
+        } else if (readVal != null && readVal < claimedTier.points) {
+          forceNeedsReview = true
+        }
+      }
+      const conf = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
+      if (forceNeedsReview) { aiStatus = 'needs_review'; feedback = 'Number below tier on an unclear read — please verify the value.' }
+      else if (aiResult.approved && conf >= 0.60) aiStatus = 'approved'
+      else if (!aiResult.approved && conf >= 0.55) aiStatus = 'rejected'
+      else aiStatus = 'needs_review'
     }
 
-    await supabase
-      .from('task_submissions')
-      .update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: confidence })
-      .eq('id', submissionId)
+    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: confidence }).eq('id', submissionId)
 
-    // Auto-approve: use claimed tier's points if tiered, else task base
     if (aiStatus === 'approved') {
       const finalPoints = claimedTier?.points ?? taskPoints
-      await supabase
-        .from('task_submissions')
-        .update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() })
-        .eq('id', submissionId)
-
+      await supabase.from('task_submissions').update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() }).eq('id', submissionId)
       await supabase.from('feed_items').insert({
-        org_id: orgId,
-        type: 'submission_approved',
+        org_id: orgId, type: 'submission_approved',
         title: `${memberName} completed ${taskTitle}`,
         content: `+${finalPoints} 🥦 broccoli points earned`,
-        is_auto_generated: true,
-        author_id: sub.user_id,
-        challenge_id: sub.challenge_id ?? null,
+        is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null,
       })
     }
-
-    // Auto-reject: update status + notify member via feed
     if (aiStatus === 'rejected') {
-      await supabase
-        .from('task_submissions')
-        .update({
-          status: 'rejected',
-          rejection_reason: feedback || 'Rejected by AI review.',
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq('id', submissionId)
-
+      await supabase.from('task_submissions').update({
+        status: 'rejected', rejection_reason: feedback || 'Rejected by AI review.',
+        reviewed_at: new Date().toISOString(),
+      }).eq('id', submissionId)
       await supabase.from('feed_items').insert({
-        org_id: orgId,
-        type: 'submission_rejected',
+        org_id: orgId, type: 'submission_rejected',
         title: `Your ${taskTitle} submission was not approved`,
-        content: feedback || (medium === 'video'
-          ? 'Please resubmit with a clear proof video.'
-          : 'Please resubmit with a clear proof photo.'),
-        is_auto_generated: true,
-        author_id: sub.user_id,
-        challenge_id: sub.challenge_id ?? null,
+        content: feedback || 'Please resubmit with a clear proof.',
+        is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null,
       })
     }
 
     return new Response(JSON.stringify({ aiStatus, feedback, confidence, medium }), { status: 200 })
-
   } catch (err) {
     console.error('[analyze-submission]', err)
-    // Best-effort: reset stuck 'analyzing' so pg_cron retry doesn't spin forever
     if (submissionId) {
       try {
-        await supabase
-          .from('task_submissions')
-          .update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' })
-          .eq('id', submissionId)
-          .eq('ai_status', 'analyzing')
-      } catch { /* ignore secondary failure */ }
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' }).eq('id', submissionId).eq('ai_status', 'analyzing')
+      } catch { /* ignore */ }
     }
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 })
+    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 200 })
   }
 })
