@@ -18,13 +18,16 @@ const BUNNY_API_KEY       = Deno.env.get('BUNNY_API_KEY')       ?? ''
 const BUNNY_CDN_HOSTNAME  = Deno.env.get('BUNNY_CDN_HOSTNAME')  ?? ''
 const BUNNY_TOKEN_AUTH    = Deno.env.get('BUNNY_TOKEN_AUTH_KEY') ?? ''
 
-// pHash shadow mode: compute + store + log, but DO NOT reject on it yet.
-const PHASH_ENFORCE = false
-const PHASH_DUP_THRESHOLD = 6
+// pHash duplicate detection.
+//  ENFORCE=true: a near-identical fingerprint routes the submission to
+//  needs_review (admin verifies) — NEVER an auto-reject. Applied ONLY to photo
+//  tasks: screenshot/number tasks are skipped because a low-res fingerprint
+//  cannot see the changing number (same-app screenshots look near-identical).
+const PHASH_ENFORCE = true
+const PHASH_DUP_THRESHOLD = 8 // Hamming distance <= this on a PHOTO task = likely reuse -> admin review
 
-// Video rep-count calibration. Gemini Flash samples frames and undercounts
-// real effort by ~30%, so we only require this fraction of the target to
-// approve. When we upgrade to Gemini Pro (accurate counting) raise toward 0.9.
+// Video rep-count calibration. Gemini Flash undercounts ~30%, so require this
+// fraction of the target to approve. Raise toward 0.9 when Gemini Pro is added.
 const VIDEO_COUNT_TOLERANCE = 0.65
 
 type Tier = { label: string; description: string; points: number }
@@ -41,8 +44,6 @@ type BunnyPollResult =
   | { kind: 'pending' }
   | { kind: 'failed'; reason: string }
 
-// Pull the required rep/second count out of a tier like "20 push-ups" or
-// "30 secs duration" -> 20 / 30. Null if no number present.
 function extractRequiredCount(tier: Tier): number | null {
   const m = `${tier.label} ${tier.description}`.match(/(\d+)/)
   return m ? parseInt(m[1], 10) : null
@@ -327,6 +328,7 @@ Deno.serve(async (req: Request) => {
     const medium: 'image' | 'video' = isVideo ? 'video' : 'image'
 
     let aiResult: AIResult
+    let phashMinDist = 999 // best (smallest) distance to a prior approved photo
 
     if (medium === 'video') {
       if (!GEMINI_API_KEY) {
@@ -375,7 +377,7 @@ Deno.serve(async (req: Request) => {
       }
       const currentBase64 = bytesToBase64(bytes)
 
-      // pHash SHADOW MODE: compute, compare, store, log (no rejection yet).
+      // pHash: compute + store fingerprint, find closest prior approved photo.
       const myHash = await computeDHash(bytes)
       if (myHash) {
         const { data: prevHashed } = await supabase
@@ -388,15 +390,13 @@ Deno.serve(async (req: Request) => {
           .neq('id', submissionId)
           .order('submitted_at', { ascending: false })
           .limit(20)
-        let minDist = 999
         for (const p of prevHashed ?? []) {
           if (!p.proof_hash) continue
           const d = hamming(myHash, p.proof_hash)
-          if (d < minDist) minDist = d
+          if (d < phashMinDist) phashMinDist = d
         }
-        console.log('[phash]', JSON.stringify({ submissionId, myHash, minDist, wouldFlag: minDist <= PHASH_DUP_THRESHOLD }))
+        console.log('[phash]', JSON.stringify({ submissionId, myHash, minDist: phashMinDist }))
         await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
-        void PHASH_ENFORCE
       }
 
       const prompt = buildPrompt({ medium, taskTitle, taskDesc, claimedTier, taskPoints })
@@ -427,30 +427,18 @@ Deno.serve(async (req: Request) => {
     const confidence = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
 
     if (medium === 'video') {
-      // 1) Clear cheating / wrong activity -> reject.
       if (aiResult.approved === false && confidence >= 0.55) {
         aiStatus = 'rejected'
         feedback = feedback || 'The video does not clearly show the required activity. Please re-record performing the exercise.'
       } else {
-        // 2) Genuine activity. Apply calibrated count check.
         const required = claimedTier ? extractRequiredCount(claimedTier) : null
         const counted  = aiResult.read && typeof aiResult.read.value === 'number' ? aiResult.read.value : null
         if (required != null && counted != null) {
           const need = Math.ceil(required * VIDEO_COUNT_TOLERANCE)
           console.log('[video-count]', JSON.stringify({ submissionId, required, counted, need, tolerance: VIDEO_COUNT_TOLERANCE }))
-          if (counted >= need) {
-            aiStatus = 'approved'
-            feedback = ''
-          } else {
-            // Clearly low even after tolerance -> admin decides (never hard reject).
-            aiStatus = 'needs_review'
-            feedback = `Video looks genuine but the count read low (~${counted} vs target ${required}). Please verify.`
-          }
-        } else {
-          // Couldn't count -> trust genuineness -> approve.
-          aiStatus = 'approved'
-          feedback = ''
-        }
+          if (counted >= need) { aiStatus = 'approved'; feedback = '' }
+          else { aiStatus = 'needs_review'; feedback = `Video looks genuine but the count read low (~${counted} vs target ${required}). Please verify.` }
+        } else { aiStatus = 'approved'; feedback = '' }
       }
     } else {
       // IMAGE numeric safety net
@@ -470,6 +458,22 @@ Deno.serve(async (req: Request) => {
       else if (aiResult.approved && conf >= 0.60) aiStatus = 'approved'
       else if (!aiResult.approved && conf >= 0.55) aiStatus = 'rejected'
       else aiStatus = 'needs_review'
+
+      // ---- pHash duplicate flag (photo tasks only) ----
+      // Only when this would otherwise APPROVE, the fingerprint is near-
+      // identical to a prior approved photo, AND this is NOT a screenshot/
+      // number task (the AI didn't read a steps/calories/minutes value — those
+      // proofs are screenshots where a low-res fingerprint is unreliable).
+      // Route to admin review, never auto-reject.
+      if (PHASH_ENFORCE && aiStatus === 'approved' && phashMinDist <= PHASH_DUP_THRESHOLD) {
+        const unit = aiResult.read?.unit ?? null
+        const isScreenshotNumber = unit === 'steps' || unit === 'calories' || unit === 'minutes'
+        if (!isScreenshotNumber) {
+          console.log('[phash-flag]', JSON.stringify({ submissionId, phashMinDist }))
+          aiStatus = 'needs_review'
+          feedback = 'This photo looks very similar to a previous submission for this task. Please verify it is a new photo.'
+        }
+      }
     }
 
     await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: confidence }).eq('id', submissionId)
