@@ -22,14 +22,20 @@ class LeaderboardService {
 
     final Map<String, int> pointsMap = {};
     if (challengeIds.isNotEmpty) {
-      final points = await _client
-          .from('team_points_view')
-          .select('team_id, total_points')
-          .inFilter('challenge_id', challengeIds);
-      // Sum across challenges — a team in N challenges contributes N rows here.
+      // Reads the precomputed materialized view (team_points_mv) via a
+      // SECURITY DEFINER RPC that enforces org isolation. This is a tiny
+      // indexed lookup that cannot time out under load — unlike the live
+      // 5-table JOIN (team_points_view) that previously broke the leaderboard
+      // as data volume grew. The MV is refreshed every 45s; a member's own
+      // approval + points still update instantly (those don't use the MV).
+      // The RPC already SUMs across the passed challenge_ids -> one row/team.
+      final points = await _client.rpc(
+        'get_team_leaderboard_points',
+        params: {'p_challenge_ids': challengeIds},
+      );
       for (final row in points as List) {
         final tid = row['team_id'] as String;
-        pointsMap[tid] = (pointsMap[tid] ?? 0) + ((row['total_points'] as int?) ?? 0);
+        pointsMap[tid] = (row['total_points'] as int?) ?? 0;
       }
     }
 
