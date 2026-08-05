@@ -11,23 +11,37 @@ const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin
 const BUNNY_CDN_HOSTNAME  = process.env.BUNNY_CDN_HOSTNAME  || 'vz-c97d7e4d-363.b-cdn.net'
 const BUNNY_TOKEN_AUTH    = process.env.BUNNY_TOKEN_AUTH_KEY || ''
 
+const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
+
 /**
- * Build a Bunny signed URL for playback. Bunny's Token Authentication uses:
+ * Sign an arbitrary Bunny CDN path. Token Authentication:
  *   token = base64url( md5_binary(TokenAuthKey + path + expires) )
- *   URL   = https://<CDN>/<path>?token=<token>&expires=<expires>
- * If TOKEN_AUTH is empty (token auth disabled on the library), fall back to
- * plain unsigned URL — that also works if the library is public.
+ * If TOKEN_AUTH is empty, returns the plain URL (works if the library is public).
  */
-function bunnySignedUrl(guid: string, ttlSeconds = 1800): string {
-  const path = `/${guid}/play_480p.mp4`
-  const url  = `https://${BUNNY_CDN_HOSTNAME}${path}`
+function bunnySignPath(path: string, ttlSeconds = 1800): string {
+  const url = `https://${BUNNY_CDN_HOSTNAME}${path}`
   if (!BUNNY_TOKEN_AUTH) return url
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds
   const raw = BUNNY_TOKEN_AUTH + path + String(expires)
   const md5 = createHash('md5').update(raw).digest()
-  // base64url: replace + / = with - _ (empty)
   const token = md5.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   return `${url}?token=${token}&expires=${expires}`
+}
+
+/**
+ * Bunny only generates renditions that fit the source, so a hardcoded 480p can
+ * 404 for some videos. Try each resolution (HEAD) and return the first that
+ * exists; fall back to 480p unverified so we always return something.
+ */
+async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string> {
+  for (const r of BUNNY_MP4_RESOLUTIONS) {
+    const url = bunnySignPath(`/${guid}/play_${r}.mp4`, ttlSeconds)
+    try {
+      const head = await fetch(url, { method: 'HEAD' })
+      if (head.ok) return url
+    } catch { /* try next resolution */ }
+  }
+  return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
 }
 
 export async function approveSubmission(
@@ -156,7 +170,7 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   // enabled on the library, so playback requires a signed token).
   if (path.startsWith('bunny://')) {
     const guid = path.replace('bunny://', '')
-    return bunnySignedUrl(guid)
+    return await bunnyPlayableUrl(guid)
   }
 
   const client = await createAdminClient()
@@ -194,7 +208,7 @@ export async function getPreviousApprovedProof(
   // Bunny video → signed CDN URL
   if (data.proof_url.startsWith('bunny://')) {
     const guid = data.proof_url.replace('bunny://', '')
-    return bunnySignedUrl(guid, 300)
+    return await bunnyPlayableUrl(guid, 300)
   }
 
   // No transform — see getProofSignedUrl above for the rationale (transformation

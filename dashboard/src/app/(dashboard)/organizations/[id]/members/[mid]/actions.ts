@@ -8,15 +8,29 @@ import { getAdminProfile } from '@/lib/auth'
 const BUNNY_CDN_HOSTNAME = process.env.BUNNY_CDN_HOSTNAME  || 'vz-c97d7e4d-363.b-cdn.net'
 const BUNNY_TOKEN_AUTH   = process.env.BUNNY_TOKEN_AUTH_KEY || ''
 
-function bunnySignedUrl(guid: string, ttlSeconds = 1800): string {
-  const path = `/${guid}/play_480p.mp4`
-  const url  = `https://${BUNNY_CDN_HOSTNAME}${path}`
+const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
+
+function bunnySignPath(path: string, ttlSeconds = 1800): string {
+  const url = `https://${BUNNY_CDN_HOSTNAME}${path}`
   if (!BUNNY_TOKEN_AUTH) return url
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds
   const raw = BUNNY_TOKEN_AUTH + path + String(expires)
   const md5 = createHash('md5').update(raw).digest()
   const token = md5.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   return `${url}?token=${token}&expires=${expires}`
+}
+
+// Try each resolution (HEAD) and return the first that exists; Bunny only
+// generates renditions that fit the source, so a hardcoded 480p can 404.
+async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string> {
+  for (const r of BUNNY_MP4_RESOLUTIONS) {
+    const url = bunnySignPath(`/${guid}/play_${r}.mp4`, ttlSeconds)
+    try {
+      const head = await fetch(url, { method: 'HEAD' })
+      if (head.ok) return url
+    } catch { /* try next resolution */ }
+  }
+  return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
 }
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
@@ -26,10 +40,11 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
 
-  // Bunny Stream videos — signed CDN URL (Token Authentication is enabled).
+  // Bunny Stream videos — signed CDN URL (tries resolutions so a missing 480p
+  // rendition never 404s).
   if (path.startsWith('bunny://')) {
     const guid = path.replace('bunny://', '')
-    return bunnySignedUrl(guid)
+    return await bunnyPlayableUrl(guid)
   }
 
   const client = await createAdminClient()

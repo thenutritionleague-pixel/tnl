@@ -18,17 +18,15 @@ const BUNNY_API_KEY       = Deno.env.get('BUNNY_API_KEY')       ?? ''
 const BUNNY_CDN_HOSTNAME  = Deno.env.get('BUNNY_CDN_HOSTNAME')  ?? ''
 const BUNNY_TOKEN_AUTH    = Deno.env.get('BUNNY_TOKEN_AUTH_KEY') ?? ''
 
-// pHash duplicate detection.
-//  ENFORCE=true: a near-identical fingerprint routes the submission to
-//  needs_review (admin verifies) — NEVER an auto-reject. Applied ONLY to photo
-//  tasks: screenshot/number tasks are skipped because a low-res fingerprint
-//  cannot see the changing number (same-app screenshots look near-identical).
 const PHASH_ENFORCE = true
-const PHASH_DUP_THRESHOLD = 8 // Hamming distance <= this on a PHOTO task = likely reuse -> admin review
-
-// Video rep-count calibration. Gemini Flash undercounts ~30%, so require this
-// fraction of the target to approve. Raise toward 0.9 when Gemini Pro is added.
+const PHASH_DUP_THRESHOLD = 8
 const VIDEO_COUNT_TOLERANCE = 0.65
+const NUMBER_REJECT_CONFIDENCE = 0.85
+
+// Resolutions to try, in order, when resolving a playable MP4 from Bunny.
+// Bunny only generates renditions that fit the source, so a hardcoded 480p can
+// 404 for some videos. We try several and use the first that exists.
+const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
 
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
@@ -49,8 +47,8 @@ function extractRequiredCount(tier: Tier): number | null {
   return m ? parseInt(m[1], 10) : null
 }
 
-async function bunnySignedUrl(guid: string, ttlSeconds = 900): Promise<string> {
-  const path = `/${guid}/play_480p.mp4`
+// Sign an arbitrary Bunny CDN path with token authentication (if configured).
+async function bunnySignPath(path: string, ttlSeconds = 900): Promise<string> {
   const base = `https://${BUNNY_CDN_HOSTNAME}${path}`
   if (!BUNNY_TOKEN_AUTH) return base
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds
@@ -60,6 +58,24 @@ async function bunnySignedUrl(guid: string, ttlSeconds = 900): Promise<string> {
   for (const b of digest) bin += String.fromCharCode(b)
   const token = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   return `${base}?token=${token}&expires=${expires}`
+}
+
+// Try each resolution's MP4 (HEAD) and return the first signed URL that exists.
+// Falls back to /original. Returns null if nothing is downloadable.
+async function bunnyResolvePlayableUrl(guid: string): Promise<string | null> {
+  for (const r of BUNNY_MP4_RESOLUTIONS) {
+    const url = await bunnySignPath(`/${guid}/play_${r}.mp4`)
+    try {
+      const head = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      if (head.ok) return url
+    } catch { /* try next resolution */ }
+  }
+  const orig = await bunnySignPath(`/${guid}/original`)
+  try {
+    const h = await fetch(orig, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+    if (h.ok) return orig
+  } catch { /* none */ }
+  return null
 }
 
 async function fetchBytes(url: string): Promise<Uint8Array | null> {
@@ -79,8 +95,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-// Perceptual fingerprint (dHash, 64-bit). Resize to 9x8, compare each pixel's
-// brightness to its right neighbour. Returns 16-hex, or null on decode error.
 async function computeDHash(bytes: Uint8Array): Promise<string | null> {
   try {
     const img = await Image.decode(bytes)
@@ -128,7 +142,11 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
       if (!res.ok) { await new Promise(r => setTimeout(r, 2000)); continue }
       const data = await res.json() as { status?: number }
       lastKnownStatus = data.status ?? -1
-      if (lastKnownStatus === 4) return { kind: 'ready', url: await bunnySignedUrl(guid) }
+      if (lastKnownStatus === 4) {
+        const url = await bunnyResolvePlayableUrl(guid)
+        if (url) return { kind: 'ready', url }
+        return { kind: 'failed', reason: 'Video processed but no downloadable version is available. Please re-upload the video.' }
+      }
       if (lastKnownStatus === 5) return { kind: 'failed', reason: 'Video could not be processed — likely audio/video sync issue, unsupported codec, or corrupted file. Please re-record and try again.' }
       if (lastKnownStatus === 6) return { kind: 'failed', reason: 'Video upload was incomplete. Please try again on a stable network.' }
     } catch (e) {
@@ -175,12 +193,12 @@ If this task involves a number (steps, calories, minutes, reps):
   1. Read the number in the image as carefully as you can.
   2. Compare to the minimum ${claimedTier.points}. GREATER THAN OR EQUAL → APPROVE.
      Examples: 7,544 vs 7,500 → APPROVE. 7,890 vs 6,000 → APPROVE. 6,000 vs 6,000 → APPROVE.
-  3. If you CANNOT clearly read the number (blur, glare, cropped) → APPROVE anyway, confidence ~0.6. Do NOT reject for an unreadable number.
-  4. Only set approved=false if the number is CLEARLY legible AND clearly below ${claimedTier.points}.
+  3. If the number is CLEARLY legible and CLEARLY below ${claimedTier.points} (e.g. 6,666 vs 7,500) → set approved=false with HIGH confidence (0.9+). The member did not reach the target.
+  4. If you CANNOT clearly read the number (blur, glare, cropped) → APPROVE anyway with confidence ~0.6. Do NOT reject for an unreadable number.
   Always put the number you read in the "read" field so the server can double-check.`
     : `POINTS: ${taskPoints}`
 
-  return `You are a fair, LENIENT AI reviewer for a wellness challenge app. Your default is to APPROVE. Only reject when the image is clearly, obviously wrong. When unsure → APPROVE.
+  return `You are a fair, LENIENT AI reviewer for a wellness challenge app. Your default is to APPROVE. Only reject when the image is clearly, obviously wrong, or a legible number is clearly below the tier. When unsure → APPROVE.
 
 TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
 ${tierBlock}
@@ -191,9 +209,9 @@ WHAT THE IMAGE SHOULD ROUGHLY SHOW (derive from the task title/description):
   • Water/hydration task → water container or a hydration app.
   • Habit task → the relevant photo/screenshot.
 
-APPROVE when the image is plausibly the right KIND of proof. Give the benefit of the doubt.
+APPROVE when the image is plausibly the right KIND of proof (and, if numeric, the number meets the tier). Give the benefit of the doubt.
 
-REJECT ONLY when the image is clearly unrelated (random selfie with no food for a food task, a landscape for a step task) OR clearly AI-generated / a stock image.
+REJECT when the image is clearly unrelated (random selfie with no food for a food task, a landscape for a step task), clearly AI-generated / a stock image, OR a clearly-legible number is below the tier.
 
 FOOD TASKS — BE VERY LENIENT (most wrong rejections happen here):
   • Example foods in the task (sattu, sprouts, chana, salad, cucumber, etc) are EXAMPLES, NOT a strict allowed-list.
@@ -203,9 +221,9 @@ FOOD TASKS — BE VERY LENIENT (most wrong rejections happen here):
 
 Do NOT judge whether the food is "healthy enough" or nitpick specific ingredients. Food + roughly matches theme → APPROVE.
 
-CONFIDENCE: clearly right → 0.85–0.95. Plausible/unsure → 0.60 (approved=true). Clearly wrong → approved=false, 0.85+.
+CONFIDENCE: clearly right → 0.85–0.95. Plausible/unsure → 0.60 (approved=true). Clearly wrong or clearly-below-number → approved=false, 0.9+.
 
-This app has NEVER had a problem with wrong approvals — only wrongly REJECTING honest members. Lean approve.
+This app's bigger risk is wrongly REJECTING honest members — so when the proof type is right and any number is unclear, lean approve.
 
 Respond JSON only:
 {"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if rejected: 1–2 sentences on what to submit instead. Empty if approved.","read":{"value":<number or null>,"unit":"steps|calories|reps|minutes|null"}}`
@@ -328,7 +346,7 @@ Deno.serve(async (req: Request) => {
     const medium: 'image' | 'video' = isVideo ? 'video' : 'image'
 
     let aiResult: AIResult
-    let phashMinDist = 999 // best (smallest) distance to a prior approved photo
+    let phashMinDist = 999
 
     if (medium === 'video') {
       if (!GEMINI_API_KEY) {
@@ -377,7 +395,6 @@ Deno.serve(async (req: Request) => {
       }
       const currentBase64 = bytesToBase64(bytes)
 
-      // pHash: compute + store fingerprint, find closest prior approved photo.
       const myHash = await computeDHash(bytes)
       if (myHash) {
         const { data: prevHashed } = await supabase
@@ -441,8 +458,9 @@ Deno.serve(async (req: Request) => {
         } else { aiStatus = 'approved'; feedback = '' }
       }
     } else {
-      // IMAGE numeric safety net
-      let forceNeedsReview = false
+      let belowTier = false
+      let belowTierConfident = false
+      let belowTierVal: number | null = null
       if (claimedTier && aiResult.approved === false) {
         const readVal = aiResult.read && typeof aiResult.read.value === 'number' ? aiResult.read.value : null
         if (readVal != null && readVal >= claimedTier.points) {
@@ -450,21 +468,23 @@ Deno.serve(async (req: Request) => {
           aiResult.confidence = Math.max(aiResult.confidence ?? 0, 0.8)
           feedback = `Approved by server — image shows ${readVal} which meets the ${claimedTier.points} minimum.`
         } else if (readVal != null && readVal < claimedTier.points) {
-          forceNeedsReview = true
+          belowTier = true
+          belowTierVal = readVal
+          belowTierConfident = (aiResult.confidence ?? 0) >= NUMBER_REJECT_CONFIDENCE
         }
       }
       const conf = Math.min(1, Math.max(0, aiResult.confidence ?? 0))
-      if (forceNeedsReview) { aiStatus = 'needs_review'; feedback = 'Number below tier on an unclear read — please verify the value.' }
+      if (belowTier && belowTierConfident) {
+        aiStatus = 'rejected'
+        feedback = `Your submission shows ${belowTierVal}, which is below the ${claimedTier!.points} required for this tier. Please submit proof showing at least ${claimedTier!.points}.`
+      } else if (belowTier) {
+        aiStatus = 'needs_review'
+        feedback = 'Number appears below the tier but the read is unclear — please verify the value.'
+      }
       else if (aiResult.approved && conf >= 0.60) aiStatus = 'approved'
       else if (!aiResult.approved && conf >= 0.55) aiStatus = 'rejected'
       else aiStatus = 'needs_review'
 
-      // ---- pHash duplicate flag (photo tasks only) ----
-      // Only when this would otherwise APPROVE, the fingerprint is near-
-      // identical to a prior approved photo, AND this is NOT a screenshot/
-      // number task (the AI didn't read a steps/calories/minutes value — those
-      // proofs are screenshots where a low-res fingerprint is unreliable).
-      // Route to admin review, never auto-reject.
       if (PHASH_ENFORCE && aiStatus === 'approved' && phashMinDist <= PHASH_DUP_THRESHOLD) {
         const unit = aiResult.read?.unit ?? null
         const isScreenshotNumber = unit === 'steps' || unit === 'calories' || unit === 'minutes'
