@@ -449,15 +449,30 @@ Deno.serve(async (req: Request) => {
       }
       const currentBase64 = bytesToBase64(bytes)
 
-      let phashMinDist = 999
+      // Track the closest duplicate separately for THIS task vs a DIFFERENT task.
+      let sameTaskMinDist = 999
+      let crossTaskMinDist = 999
+      let crossTaskTitle: string | null = null
       const myHash = await computeDHash(bytes)
       if (myHash) {
+        // Compare against ALL the member's recent approved proofs (not just this
+        // task) so the same photo reused for a DIFFERENT task is caught too.
         const { data: prevHashed } = await supabase.from('task_submissions')
-          .select('id, proof_hash').eq('user_id', sub.user_id).eq('task_id', sub.task_id)
+          .select('id, task_id, proof_hash, tasks(title)').eq('user_id', sub.user_id)
           .eq('status', 'approved').not('proof_hash', 'is', null).neq('id', submissionId)
-          .order('submitted_at', { ascending: false }).limit(20)
-        for (const p of prevHashed ?? []) { if (p.proof_hash) { const d = hamming(myHash, p.proof_hash); if (d < phashMinDist) phashMinDist = d } }
-        console.log('[phash]', JSON.stringify({ submissionId, minDist: phashMinDist }))
+          .order('submitted_at', { ascending: false }).limit(50)
+        for (const p of prevHashed ?? []) {
+          if (!p.proof_hash) continue
+          const d = hamming(myHash, p.proof_hash)
+          if (p.task_id === sub.task_id) {
+            if (d < sameTaskMinDist) sameTaskMinDist = d
+          } else if (d < crossTaskMinDist) {
+            crossTaskMinDist = d
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            crossTaskTitle = (p as any).tasks?.title ?? null
+          }
+        }
+        console.log('[phash]', JSON.stringify({ submissionId, sameTaskMinDist, crossTaskMinDist }))
         await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
       }
 
@@ -498,10 +513,23 @@ Deno.serve(async (req: Request) => {
       else if (!ai.approved && conf >= 0.55) status = 'rejected'
       else status = 'needs_review'
 
-      if (PHASH_ENFORCE && status === 'approved' && phashMinDist <= PHASH_DUP_THRESHOLD) {
+      if (PHASH_ENFORCE && status === 'approved') {
         const unit = ai.read?.unit ?? null
-        if (!(unit === 'steps' || unit === 'calories' || unit === 'minutes')) {
-          status = 'needs_review'; feedback = 'This photo looks very similar to a previous submission for this task. Please verify it is a new photo.'
+        // Skip number/screenshot proofs (step/calorie/minute app screens
+        // legitimately look near-identical day to day).
+        const isScreenshot = unit === 'steps' || unit === 'calories' || unit === 'minutes'
+        if (!isScreenshot) {
+          if (crossTaskMinDist <= PHASH_DUP_THRESHOLD) {
+            // Same photo already used for a DIFFERENT task -> wrong image, reject.
+            status = 'rejected'
+            feedback = crossTaskTitle
+              ? `This is the wrong image for this task — you already submitted this photo for "${crossTaskTitle}". Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
+              : `This is the wrong image for this task — this photo was already submitted for another task. Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
+          } else if (sameTaskMinDist <= PHASH_DUP_THRESHOLD) {
+            // Same photo re-used for the SAME task -> let an admin verify.
+            status = 'needs_review'
+            feedback = 'This photo looks very similar to a previous submission for this task. Please verify it is a new photo.'
+          }
         }
       }
       decision = { status, feedback, confidence: conf }
