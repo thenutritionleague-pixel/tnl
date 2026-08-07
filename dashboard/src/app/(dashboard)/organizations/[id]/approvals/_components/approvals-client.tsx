@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts, loadOrgTaskBreakdown } from '../actions'
-import { runAiAnalysis } from '../ai-actions'
+import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
 // ── DatePicker ────────────────────────────────────────────────────────────────
@@ -373,25 +373,44 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     setPrevProofUrl(url ?? null)
   }
 
+  // Poll the DB until AI analysis finishes. Analysis runs in the background
+  // (fire-and-forget), and video can take up to ~6 min, so we can't hold the
+  // trigger request open — we poll for the verdict instead.
+  async function pollAiResult(
+    submissionId: string,
+    timeoutMs = 240_000,
+  ): Promise<{ aiStatus: string; aiFeedback: string; aiConfidence: number } | null> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 3000))
+      const s = await getSubmissionAiStatus(submissionId)
+      if (s && s.aiStatus && s.aiStatus !== 'analyzing') {
+        return { aiStatus: s.aiStatus, aiFeedback: s.aiFeedback, aiConfidence: s.aiConfidence }
+      }
+    }
+    return null
+  }
+
   async function runAiChecks() {
     const toAnalyze = approvals.filter(a => a.status === 'pending' && a.aiStatus !== 'analyzing')
     if (toAnalyze.length === 0) { toast.info('No pending submissions to analyze.'); return }
     setAiChecking(true)
     setApprovals(prev => prev.map(a => toAnalyze.some(t => t.id === a.id) ? { ...a, aiStatus: 'analyzing' } : a))
-    await Promise.all(toAnalyze.map(a =>
-      runAiAnalysis(a.id).then(res => {
-        if (!res) return
-        setApprovals(prev => prev.map(x => {
-          if (x.id !== a.id) return x
-          return {
-            ...x,
-            aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence,
-            ...(res.aiStatus === 'approved' ? { status: 'approved' as const, pointsAwarded: x.pointsAwarded ?? x.taskPoints } : {}),
-            ...(res.aiStatus === 'rejected' ? { status: 'rejected' as const, rejectionReason: res.aiFeedback || 'Rejected by AI review.' } : {}),
-          }
-        }))
-      })
-    ))
+    await Promise.all(toAnalyze.map(async a => {
+      const triggered = await runAiAnalysis(a.id)
+      if (!triggered) return
+      const res = await pollAiResult(a.id)
+      if (!res) return
+      setApprovals(prev => prev.map(x => {
+        if (x.id !== a.id) return x
+        return {
+          ...x,
+          aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence,
+          ...(res.aiStatus === 'approved' ? { status: 'approved' as const, pointsAwarded: x.pointsAwarded ?? x.taskPoints } : {}),
+          ...(res.aiStatus === 'rejected' ? { status: 'rejected' as const, rejectionReason: res.aiFeedback || 'Rejected by AI review.' } : {}),
+        }
+      }))
+    }))
     setAiChecking(false)
     toast.success('AI checks complete.')
   }
@@ -401,11 +420,18 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     const patch = { aiStatus: 'analyzing', aiFeedback: null as string | null, aiConfidence: null as number | null }
     setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...patch } : x))
     setReviewTarget(t => t?.id === a.id ? { ...t, ...patch } : t)
-    const res = await runAiAnalysis(a.id, true)
-    if (!res) {
+    const triggered = await runAiAnalysis(a.id, true)
+    if (!triggered) {
       setApprovals(prev => prev.map(x => x.id === a.id ? { ...x, ...priorAi } : x))
       setReviewTarget(t => t?.id === a.id ? { ...t, ...priorAi } : t)
-      toast.error('Could not re-analyze — see edge function logs for details.')
+      toast.error('Could not start re-analysis — see edge function logs for details.')
+      return
+    }
+    const res = await pollAiResult(a.id)
+    if (!res) {
+      // Still analyzing after the timeout — the edge fn will finish in the
+      // background; the verdict shows on next open/refresh.
+      toast.info('Still analyzing — this video is taking a while. The result will appear shortly.')
       return
     }
     const update = { aiStatus: res.aiStatus, aiFeedback: res.aiFeedback, aiConfidence: res.aiConfidence }

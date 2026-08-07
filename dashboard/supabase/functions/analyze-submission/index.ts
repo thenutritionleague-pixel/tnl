@@ -61,7 +61,7 @@ type AIResult = {
   feedback:   string
   read?: { value?: number | null; unit?: string | null } | null
 }
-type Decision = { status: 'approved' | 'rejected' | 'needs_review'; feedback: string; confidence: number }
+type Decision = { status: 'approved' | 'rejected' | 'needs_review'; feedback: string; confidence: number; model?: 'flash' | 'pro' | null }
 type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
 
 type BunnyPollResult =
@@ -237,22 +237,41 @@ async function geminiGenerate(parts: unknown[], prompt: string, model: string, o
     // gemini-2.5-series uses thinkingBudget (-1 dynamic, 0 off, N fixed).
     generationConfig.thinkingConfig = { thinkingBudget: opts.thinkingBudget }
   }
-  const genRes = await fetch(`${GEMINI_BASE}/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
-      generationConfig,
-    }),
+  const reqBody = JSON.stringify({
+    contents: [{ role: 'user', parts: [...parts, { text: prompt }] }],
+    generationConfig,
   })
-  if (!genRes.ok) throw new Error(`Gemini ${model} failed (${genRes.status}): ${(await genRes.text()).slice(0, 200)}`)
-  const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }
-  const candidate = genData.candidates?.[0]
-  if (!candidate?.content) throw new Error(`Gemini ${model} no content (finishReason: ${candidate?.finishReason ?? 'unknown'})`)
-  // Join all text parts (thoughts are not returned unless includeThoughts is set).
-  const text = (candidate.content.parts ?? []).map(p => p.text ?? '').join('')
-  if (!text.trim()) throw new Error(`Gemini ${model} empty output (finishReason: ${candidate.finishReason ?? 'unknown'} — likely maxOutputTokens exhausted by thinking)`)
-  try { return JSON.parse(text) as AIResult } catch { throw new Error(`Gemini ${model} JSON parse failed: ${text.slice(0, 200)}`) }
+  // Retry transient Gemini failures (429/500/503/overloaded/network) with
+  // backoff so a brief Pro/Flash demand spike self-heals INSIDE the call rather
+  // than surfacing to an admin. Non-transient errors (4xx, bad output) fail fast.
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 4000)) // 4s, then 8s
+    let genRes: Response
+    try {
+      genRes = await fetch(`${GEMINI_BASE}/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': GEMINI_API_KEY },
+        body: reqBody,
+      })
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e)); continue // network blip -> retry
+    }
+    if (!genRes.ok) {
+      const errTxt = (await genRes.text()).slice(0, 200)
+      const err = new Error(`Gemini ${model} failed (${genRes.status}): ${errTxt}`)
+      if (genRes.status === 429 || genRes.status === 500 || genRes.status === 503) { lastErr = err; continue } // transient -> retry
+      throw err // non-transient -> fail now
+    }
+    const genData = await genRes.json() as { candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] }
+    const candidate = genData.candidates?.[0]
+    if (!candidate?.content) throw new Error(`Gemini ${model} no content (finishReason: ${candidate?.finishReason ?? 'unknown'})`)
+    // Join all text parts (thoughts are not returned unless includeThoughts is set).
+    const text = (candidate.content.parts ?? []).map(p => p.text ?? '').join('')
+    if (!text.trim()) throw new Error(`Gemini ${model} empty output (finishReason: ${candidate.finishReason ?? 'unknown'} — likely maxOutputTokens exhausted by thinking)`)
+    try { return JSON.parse(text) as AIResult } catch { throw new Error(`Gemini ${model} JSON parse failed: ${text.slice(0, 200)}`) }
+  }
+  throw lastErr ?? new Error(`Gemini ${model} failed after retries`)
 }
 
 // Fetch video once, return bytes + mime so Flash and Pro can reuse it.
@@ -316,12 +335,12 @@ async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: strin
 
   // Flash cleanly approves -> trust it (cheap path).
   if (HYBRID_VIDEO && !flashRejects && flashCountOk) {
-    return { status: 'approved', feedback: '', confidence: fConf }
+    return { status: 'approved', feedback: '', confidence: fConf, model: 'flash' }
   }
   if (!HYBRID_VIDEO) {
-    if (flashRejects) return { status: 'rejected', feedback: flash.feedback || 'The video does not clearly show the required activity.', confidence: fConf }
-    if (!flashCountOk) return { status: 'needs_review', feedback: `Count read low (~${fCount} vs ${required}). Please verify.`, confidence: fConf }
-    return { status: 'approved', feedback: '', confidence: fConf }
+    if (flashRejects) return { status: 'rejected', feedback: flash.feedback || 'The video does not clearly show the required activity.', confidence: fConf, model: 'flash' }
+    if (!flashCountOk) return { status: 'needs_review', feedback: `Count read low (~${fCount} vs ${required}). Please verify.`, confidence: fConf, model: 'flash' }
+    return { status: 'approved', feedback: '', confidence: fConf, model: 'flash' }
   }
 
   // Escalate to Pro for an accurate verdict.
@@ -334,23 +353,23 @@ async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: strin
     // Throttled Pro -> let the handler auto-retry (throw) instead of dumping to admin.
     if (isTransientError(msg)) throw e
     // Non-transient Pro failure: don't hard-reject on Flash alone -> admin verifies.
-    return { status: 'needs_review', feedback: 'Automated recount unavailable — please verify manually.', confidence: fConf }
+    return { status: 'needs_review', feedback: 'Automated recount unavailable — please verify manually.', confidence: fConf, model: 'flash' }
   }
   const pConf = clamp01(pro.confidence ?? 0)
   const pCount = pro.read && typeof pro.read.value === 'number' ? pro.read.value : null
   const unit = pro.read?.unit ? ` ${pro.read.unit}` : ''
 
   if (pro.approved === false && pConf >= 0.55) {
-    return { status: 'rejected', feedback: pro.feedback || 'The video does not clearly show the required activity. Please re-record performing the exercise.', confidence: pConf }
+    return { status: 'rejected', feedback: pro.feedback || 'The video does not clearly show the required activity. Please re-record performing the exercise.', confidence: pConf, model: 'pro' }
   }
   if (required != null && pCount != null) {
     if (pCount >= Math.ceil(required * VIDEO_PRO_TOLERANCE)) {
-      return { status: 'approved', feedback: '', confidence: pConf }
+      return { status: 'approved', feedback: '', confidence: pConf, model: 'pro' }
     }
-    return { status: 'rejected', feedback: `You completed about ${pCount}${unit}, which is below the ${required} required for this tier. Please re-record showing the full set.`, confidence: pConf }
+    return { status: 'rejected', feedback: `You completed about ${pCount}${unit}, which is below the ${required} required for this tier. Please re-record showing the full set.`, confidence: pConf, model: 'pro' }
   }
   // Pro genuine but couldn't count -> approve.
-  return { status: 'approved', feedback: '', confidence: pConf }
+  return { status: 'approved', feedback: '', confidence: pConf, model: 'pro' }
 }
 
 Deno.serve(async (req: Request) => {
@@ -538,7 +557,7 @@ Deno.serve(async (req: Request) => {
     // ---- Shared write ----
     const aiStatus = decision.status
     const feedback = decision.feedback
-    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence }).eq('id', submissionId)
+    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence, ai_video_model: decision.model ?? null }).eq('id', submissionId)
 
     if (aiStatus === 'approved') {
       const finalPoints = claimedTier?.points ?? taskPoints
