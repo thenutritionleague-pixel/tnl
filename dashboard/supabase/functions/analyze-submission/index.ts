@@ -325,25 +325,23 @@ async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt:
 async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number): Promise<Decision> {
   const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints)
   const video = await fetchVideo(signedUrl)
-  const required = claimedTier ? extractRequiredCount(claimedTier) : null
 
+  // AI CANNOT reliably count reps from video (front/depth angles, knees-down,
+  // portrait framing, ~1fps sampling all defeat counting). So the rep count is
+  // ADVISORY ONLY and never rejects a genuine member. The AI's job for video is
+  // anti-cheat: is this a genuine attempt at the RIGHT exercise?
+  //   genuine -> approve   |   fake / wrong activity -> reject (confirmed by Pro)
   const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
   const fConf = clamp01(flash.confidence ?? 0)
-  const fCount = flash.read && typeof flash.read.value === 'number' ? flash.read.value : null
-  const flashRejects = flash.approved === false && fConf >= 0.55
-  const flashCountOk = required == null || fCount == null || fCount >= Math.ceil(required * VIDEO_FLASH_TOLERANCE)
+  const flashFlagsFake = flash.approved === false && fConf >= 0.55
 
-  // Flash cleanly approves -> trust it (cheap path).
-  if (HYBRID_VIDEO && !flashRejects && flashCountOk) {
-    return { status: 'approved', feedback: '', confidence: fConf, model: 'flash' }
-  }
-  if (!HYBRID_VIDEO) {
-    if (flashRejects) return { status: 'rejected', feedback: flash.feedback || 'The video does not clearly show the required activity.', confidence: fConf, model: 'flash' }
-    if (!flashCountOk) return { status: 'needs_review', feedback: `Count read low (~${fCount} vs ${required}). Please verify.`, confidence: fConf, model: 'flash' }
+  // Genuine (or unsure) -> approve on the cheap Flash path. No count gate.
+  if (!flashFlagsFake) {
     return { status: 'approved', feedback: '', confidence: fConf, model: 'flash' }
   }
 
-  // Escalate to Pro for an accurate verdict.
+  // Flash suspects fake / wrong activity -> confirm with Pro before rejecting so
+  // we NEVER reject a genuine video on Flash's word alone.
   let pro: AIResult
   try {
     pro = await runVideoModel(video, prompt, GEMINI_PRO, { maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
@@ -352,23 +350,14 @@ async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: strin
     console.error('[video/pro escalation failed]', msg)
     // Throttled Pro -> let the handler auto-retry (throw) instead of dumping to admin.
     if (isTransientError(msg)) throw e
-    // Non-transient Pro failure: don't hard-reject on Flash alone -> admin verifies.
-    return { status: 'needs_review', feedback: 'Automated recount unavailable — please verify manually.', confidence: fConf, model: 'flash' }
+    // Pro unavailable -> don't hard-reject on Flash alone; a human confirms.
+    return { status: 'needs_review', feedback: 'Could not fully verify this video — please confirm the exercise.', confidence: fConf, model: 'flash' }
   }
   const pConf = clamp01(pro.confidence ?? 0)
-  const pCount = pro.read && typeof pro.read.value === 'number' ? pro.read.value : null
-  const unit = pro.read?.unit ? ` ${pro.read.unit}` : ''
-
   if (pro.approved === false && pConf >= 0.55) {
-    return { status: 'rejected', feedback: pro.feedback || 'The video does not clearly show the required activity. Please re-record performing the exercise.', confidence: pConf, model: 'pro' }
+    return { status: 'rejected', feedback: pro.feedback || 'This video does not clearly show you performing the required exercise. Please re-record showing the full exercise.', confidence: pConf, model: 'pro' }
   }
-  if (required != null && pCount != null) {
-    if (pCount >= Math.ceil(required * VIDEO_PRO_TOLERANCE)) {
-      return { status: 'approved', feedback: '', confidence: pConf, model: 'pro' }
-    }
-    return { status: 'rejected', feedback: `You completed about ${pCount}${unit}, which is below the ${required} required for this tier. Please re-record showing the full set.`, confidence: pConf, model: 'pro' }
-  }
-  // Pro genuine but couldn't count -> approve.
+  // Pro agrees it's genuine -> approve.
   return { status: 'approved', feedback: '', confidence: pConf, model: 'pro' }
 }
 
