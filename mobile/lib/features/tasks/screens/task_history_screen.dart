@@ -106,7 +106,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Tasks from previous days pending review or open for resubmission.',
+                      'Your submissions from previous days — approved, pending review, or open for resubmission.',
                       style: TextStyle(
                         fontSize: 13,
                         color: context.textSecondary,
@@ -141,7 +141,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'No tasks from previous days need resubmission.',
+                        'No submissions from previous days yet.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
@@ -326,7 +326,9 @@ class _HistoryCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: status == 'pending'
                   ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D2000) : const Color(0xFFFFF9EC))
-                  : Theme.of(context).scaffoldBackgroundColor,
+                  : status == 'approved'
+                      ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF102A1F) : const Color(0xFFEAF6F0))
+                      : Theme.of(context).scaffoldBackgroundColor,
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
               border: Border(
                 top: BorderSide(color: context.borderColor.withValues(alpha: 0.6)),
@@ -336,7 +338,7 @@ class _HistoryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       if (status == 'pending') ...[
                         const Icon(Icons.hourglass_top_rounded,
@@ -348,6 +350,23 @@ class _HistoryCard extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 11.5,
                               color: Color(0xFFB07D00),
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ] else if (status == 'approved') ...[
+                        const Icon(Icons.check_circle_rounded,
+                            size: 14, color: AppColors.primary),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            (submission['points_awarded'] as int?) != null
+                                ? 'Approved · +${submission['points_awarded']} 🥦 earned'
+                                : 'Approved 🎉',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
                               height: 1.4,
                             ),
                           ),

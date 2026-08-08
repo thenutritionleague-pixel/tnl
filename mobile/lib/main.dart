@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,6 +7,7 @@ import 'app/router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_notifier.dart';
 import 'core/constants/supabase_config.dart';
+import 'core/services/submission_outbox.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +20,10 @@ Future<void> main() async {
   );
 
   await loadSavedTheme();
+
+  // Complete any submission that uploaded but couldn't be saved last session
+  // (network/app-close). Fire-and-forget — never blocks or breaks startup.
+  unawaited(SubmissionOutbox.flush());
 
   runApp(const YiNutritionApp());
 }

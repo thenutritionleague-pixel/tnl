@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_compress/video_compress.dart';
 import 'bunny_video_service.dart';
+import 'submission_outbox.dart';
 import '../utils/org_date_utils.dart';
 
 class AlreadySubmittedTodayException implements Exception {
@@ -44,6 +45,19 @@ class VideoCompressionFailedException implements Exception {
       'Could not compress the video. Please try a different video or contact support.';
 }
 
+/// Thrown when the proof uploaded successfully but the submission row couldn't
+/// be saved after retries. The submission is SAFELY queued on the device and
+/// will auto-complete on the next app launch — nothing is lost. The UI should
+/// show a reassuring (not error) message.
+class SubmissionQueuedException implements Exception {
+  final Object? cause;
+  const SubmissionQueuedException(this.cause);
+  @override
+  String toString() =>
+      'Your proof was uploaded and saved. It will finish submitting '
+      'automatically the next time you open the app.';
+}
+
 class TaskService {
   static final _client = Supabase.instance.client;
 
@@ -75,6 +89,88 @@ class TaskService {
     return List<Map<String, dynamic>>.from(data);
   }
 
+  /// Ensure the auth access token is fresh before a write. supabase_flutter
+  /// auto-refreshes, but a long upload (60–90s video) can outlive the ~1h access
+  /// token, causing the follow-up insert to fail with a 403. Proactively refresh
+  /// when it is close to expiry. This is SILENT (uses the stored refresh token)
+  /// — the member is NOT asked to log in again.
+  static Future<void> _ensureFreshSession() async {
+    final session = _client.auth.currentSession;
+    if (session == null) {
+      throw AuthException('Session expired — please log in again.');
+    }
+    final expiresAt = session.expiresAt; // epoch seconds
+    if (expiresAt != null) {
+      final secondsLeft =
+          expiresAt - (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+      if (secondsLeft < 120) {
+        try {
+          await _client.auth.refreshSession();
+        } catch (_) {
+          // If refresh fails, the write below surfaces the real error.
+        }
+      }
+    }
+  }
+
+  /// Insert a NEW submission durably: queue it locally first (so a failure or an
+  /// app-close never loses it), then insert with a fresh session + retries. On
+  /// permanent failure it stays queued and auto-completes on next app launch.
+  /// Throws [AlreadySubmittedTodayException] on a same-day duplicate.
+  static Future<void> _insertSubmissionDurable(Map<String, dynamic> record) async {
+    final proofUrl = record['proof_url'] as String;
+    await SubmissionOutbox.enqueue(record);
+
+    Object? lastErr;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await Future.delayed(Duration(seconds: attempt * 2)); // 2s, 4s
+      }
+      try {
+        await _ensureFreshSession();
+        await _client
+            .from('task_submissions')
+            .insert(SubmissionOutbox.buildInsertPayload(record));
+        await SubmissionOutbox.remove(proofUrl);
+        return; // success
+      } on PostgrestException catch (e) {
+        if (e.code == '23505') {
+          await SubmissionOutbox.remove(proofUrl); // already submitted today
+          throw AlreadySubmittedTodayException();
+        }
+        lastErr = e; // transient DB error → retry
+      } on AuthException {
+        // Session truly dead → surface to UI (login). Outbox keeps the record
+        // and completes it on next launch after re-auth.
+        rethrow;
+      } catch (e) {
+        lastErr = e; // network / other → retry
+      }
+    }
+    // Retries exhausted, but the submission is safely queued and will finish on
+    // the next launch. Surface a reassuring (non-fatal) signal to the UI.
+    throw SubmissionQueuedException(lastErr);
+  }
+
+  /// Update an existing (rejected) submission row in place, with a fresh session
+  /// + retries. The row already exists so this is not queued in the outbox.
+  static Future<void> _updateWithRetry(
+      String id, Map<String, dynamic> patch) async {
+    Object? lastErr;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await Future.delayed(Duration(seconds: attempt * 2));
+      try {
+        await _ensureFreshSession();
+        await _client.from('task_submissions').update(patch).eq('id', id);
+        return;
+      } on AuthException {
+        rethrow;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr ?? Exception('Could not update the submission.');
+  }
 
   /// Upload an image proof and submit the task.
   /// [submittedDate] overrides the submission date (YYYY-MM-DD).
@@ -158,8 +254,10 @@ class TaskService {
         : await rejectedQuery
             .order('submitted_at', ascending: false).limit(1).maybeSingle();
 
+    final trimmedNote = (note != null && note.trim().isNotEmpty) ? note.trim() : null;
+
     if (existing != null) {
-      await _client.from('task_submissions').update({
+      await _updateWithRetry(existing['id'] as String, {
         'submitted_at': DateTime.now().toUtc().toIso8601String(),
         'status': 'pending',
         'proof_url': fileName,
@@ -168,32 +266,24 @@ class TaskService {
         'ai_feedback': null,
         'ai_confidence': null,
         'task_snapshot': taskSnapshot,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (trimmedNote != null) 'note': trimmedNote,
         if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
-      }).eq('id', existing['id']);
+      });
       return;
     }
 
-    try {
-      await _client.from('task_submissions').insert({
-        'task_id': taskId,
-        if (challengeId != null) 'challenge_id': challengeId,
-        'user_id': userId,
-        'org_id': orgId,
-        'submitted_at': DateTime.now().toUtc().toIso8601String(),
-        'submitted_date': dateStr,
-        'status': 'pending',
-        'proof_url': fileName,
-        'task_snapshot': taskSnapshot,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
-        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
-      });
-    } on PostgrestException catch (e) {
-      if (e.code == '23505') {
-        throw AlreadySubmittedTodayException();
-      }
-      rethrow;
-    }
+    await _insertSubmissionDurable({
+      'task_id': taskId,
+      'challenge_id': challengeId,
+      'user_id': userId,
+      'org_id': orgId,
+      'submitted_at': DateTime.now().toUtc().toIso8601String(),
+      'submitted_date': dateStr,
+      'proof_url': fileName,
+      'task_snapshot': taskSnapshot,
+      'note': trimmedNote,
+      'selected_tier_index': selectedTierIndex,
+    });
   }
 
   /// Submit a video proof. Picks any input format (mp4/mov/webm/mkv/3gp),
@@ -216,6 +306,7 @@ class TaskService {
     int? selectedTierIndex,
     void Function(double progress)? onCompressProgress,
     void Function(double progress)? onUploadProgress,
+    Uint8List? preloadedBytes,
   }) async {
     final session = _client.auth.currentSession;
     if (session == null) {
@@ -239,7 +330,10 @@ class TaskService {
       // Flutter web: video_compress has no web implementation. Upload raw
       // — Bunny Stream transcodes any input to browser-safe MP4 server-side.
       // Bunny bucket accepts up to 500 MB. iPhone 90s .mov typically 60-150 MB.
-      final raw = await videoFile.readAsBytes();
+      // Prefer bytes read at PICK time — on web the blob backing videoFile may
+      // have been evicted by now ("Could not load Blob"). Fall back to a fresh
+      // read only if no preloaded bytes were passed.
+      final raw = preloadedBytes ?? await videoFile.readAsBytes();
       if (raw.lengthInBytes > 500 * 1024 * 1024) {
         final mb = (raw.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
         throw Exception(
@@ -332,8 +426,10 @@ class TaskService {
         : await rejectedQuery
             .order('submitted_at', ascending: false).limit(1).maybeSingle();
 
+    final trimmedNote = (note != null && note.trim().isNotEmpty) ? note.trim() : null;
+
     if (existing != null) {
-      await _client.from('task_submissions').update({
+      await _updateWithRetry(existing['id'] as String, {
         'submitted_at': DateTime.now().toUtc().toIso8601String(),
         'status': 'pending',
         'proof_url': fileName,
@@ -342,32 +438,24 @@ class TaskService {
         'ai_feedback': null,
         'ai_confidence': null,
         'task_snapshot': taskSnapshot,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        if (trimmedNote != null) 'note': trimmedNote,
         if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
-      }).eq('id', existing['id']);
+      });
       return;
     }
 
-    try {
-      await _client.from('task_submissions').insert({
-        'task_id': taskId,
-        if (challengeId != null) 'challenge_id': challengeId,
-        'user_id': userId,
-        'org_id': orgId,
-        'submitted_at': DateTime.now().toUtc().toIso8601String(),
-        'submitted_date': dateStr,
-        'status': 'pending',
-        'proof_url': fileName,
-        'task_snapshot': taskSnapshot,
-        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
-        if (selectedTierIndex != null) 'selected_tier_index': selectedTierIndex,
-      });
-    } on PostgrestException catch (e) {
-      if (e.code == '23505') {
-        throw AlreadySubmittedTodayException();
-      }
-      rethrow;
-    }
+    await _insertSubmissionDurable({
+      'task_id': taskId,
+      'challenge_id': challengeId,
+      'user_id': userId,
+      'org_id': orgId,
+      'submitted_at': DateTime.now().toUtc().toIso8601String(),
+      'submitted_date': dateStr,
+      'proof_url': fileName,
+      'task_snapshot': taskSnapshot,
+      'note': trimmedNote,
+      'selected_tier_index': selectedTierIndex,
+    });
   }
 
   /// Build the task_snapshot JSONB blob frozen onto each submission row.
@@ -452,8 +540,11 @@ class TaskService {
   }
 
   /// Get submissions from previous days (for Task History).
-  /// Returns pending (awaiting review) and rejected submissions from before today.
-  /// - pending: member already submitted, waiting for admin review (read-only card)
+  /// Returns approved, pending, and rejected submissions from before today.
+  /// - approved: read-only "✓ Approved" card — so members can always see their
+  ///   completed work (an approved task otherwise disappears from every list,
+  ///   which members mistake for a "missing" submission).
+  /// - pending: member already submitted, waiting for admin review (read-only)
   /// - rejected: member can resubmit (shows Resubmit button)
   static Future<List<Map<String, dynamic>>> getPastSubmissions(
     String userId,
@@ -466,15 +557,15 @@ class TaskService {
         .from('task_submissions')
         .select(
           'id, task_id, challenge_id, status, submitted_date, submitted_at, rejection_reason, '
-          'task_snapshot, '
+          'points_awarded, task_snapshot, '
           'tasks!task_id(id, title, description, icon, points, points_tiers)',
         )
         .eq('user_id', userId)
         .eq('org_id', orgId)
-        .inFilter('status', ['pending', 'rejected'])
+        .inFilter('status', ['pending', 'rejected', 'approved'])
         .neq('submitted_date', todayStr) // exclude today — handled by Tasks screen
         .order('submitted_date', ascending: false)
-        .limit(60);
+        .limit(120);
 
     return List<Map<String, dynamic>>.from(data);
   }

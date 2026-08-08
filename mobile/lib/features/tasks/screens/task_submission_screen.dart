@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +24,7 @@ class TaskSubmissionScreen extends StatefulWidget {
 class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   XFile? _selectedImage;     // also reused for picked video file
   Uint8List? _imageBytes;
+  Uint8List? _videoBytes;    // web: video bytes read at pick time (blob can expire before submit)
   bool _isVideoPicked = false;
   double? _compressProgress; // 0–100 during video compression
   double? _uploadProgress;   // 0.0–1.0 during Bunny upload
@@ -124,9 +126,35 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       return;
     }
 
+    // On web the picker hands us a temporary blob reference that the browser can
+    // evict before Submit (large file, delay while adding a note, or a restrictive
+    // in-app browser) → "Could not load Blob". Read the bytes NOW, while the blob
+    // is fresh, and submit from memory instead.
+    Uint8List? preloaded;
+    if (kIsWeb) {
+      try {
+        preloaded = await picked.readAsBytes();
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not read that video. Please open the app in Chrome or Safari '
+              '(not inside WhatsApp/Instagram) and try again.',
+            ),
+            backgroundColor: AppColors.error,
+            duration: Duration(seconds: 6),
+          ),
+        );
+        return;
+      }
+    }
+    if (!mounted) return;
+
     setState(() {
       _selectedImage = picked;
       _imageBytes = null;
+      _videoBytes = preloaded;
       _isVideoPicked = true;
     });
   }
@@ -191,6 +219,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
           userId: _profileId,
           orgId: _orgId,
           videoFile: _selectedImage!,
+          preloadedBytes: _videoBytes,
           maxDurationSeconds: _maxVideoSeconds,
           submittedDate: _submittedDate,
           orgTimezone: _orgTimezone,
@@ -223,7 +252,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       }
     } on VideoTooLongException catch (e) {
       if (mounted) {
-        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; });
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; _videoBytes = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 6)),
         );
@@ -253,6 +282,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
           _compressProgress = null; _uploadProgress = null;
           _selectedImage = null;
           _imageBytes = null;
+          _videoBytes = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -268,6 +298,20 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         Supabase.instance.client.auth.signOut();
         context.go('/login');
+      }
+    } on SubmissionQueuedException catch (e) {
+      // Proof uploaded + saved on-device; it will auto-complete on next open.
+      // Reassure (not an error) and return to Tasks — nothing is lost.
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.secondary,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+        context.pop();
       }
     } catch (e) {
       if (mounted) {
@@ -656,6 +700,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                               onTap: () => setState(() {
                                 _selectedImage = null;
                                 _imageBytes = null;
+                                _videoBytes = null;
                                 _isVideoPicked = false;
                               }),
                               child: Container(
