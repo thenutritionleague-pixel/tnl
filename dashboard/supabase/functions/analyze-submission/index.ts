@@ -75,6 +75,22 @@ function extractRequiredCount(tier: Tier): number | null {
   return m ? parseInt(m[1], 10) : null
 }
 
+// Extract a numeric target (e.g. "7,500 steps") from a FLAT numeric task whose
+// threshold lives only in the title/description, not a tier. Restores the number
+// safety-net for step/calorie/minute/km tasks that have no points_tiers.
+function extractNumericTarget(title: string, desc: string): { value: number; unit: string } | null {
+  const m = `${title} ${desc}`.match(/(\d[\d,\.]*)\s*(steps?|calories?|kcal|cals?|minutes?|mins?|km|kilometers?)/i)
+  if (!m) return null
+  const value = parseInt(m[1].replace(/[,\.]/g, ''), 10)
+  if (!Number.isFinite(value) || value <= 0) return null
+  const u = m[2].toLowerCase()
+  const unit = u.startsWith('step') ? 'steps'
+    : (u.startsWith('cal') || u === 'kcal') ? 'calories'
+    : u.startsWith('min') ? 'minutes'
+    : 'km'
+  return { value, unit }
+}
+
 async function bunnySignPath(path: string, ttlSeconds = 900): Promise<string> {
   const base = `https://${BUNNY_CDN_HOSTNAME}${path}`
   if (!BUNNY_TOKEN_AUTH) return base
@@ -190,17 +206,18 @@ Respond JSON only:
 {"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<rep or second count, or null>,"unit":"reps|seconds|null"}}`
 }
 
-function buildImagePrompt(taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number): string {
-  const tierBlock = claimedTier
-    ? `CLAIMED TIER: "${claimedTier.label}" — minimum ${claimedTier.points}.
+function buildImagePrompt(taskTitle: string, taskDesc: string, numericTarget: { value: number; unit: string } | null, taskPoints: number): string {
+  const unitWord = numericTarget?.unit ? ` ${numericTarget.unit}` : ''
+  const tierBlock = numericTarget
+    ? `NUMERIC TARGET: this task requires AT LEAST ${numericTarget.value}${unitWord}.
 
-If this task involves a number (steps, calories, minutes, reps):
-  1. Read the number in the image as carefully as you can.
-  2. Compare to the minimum ${claimedTier.points}. GREATER THAN OR EQUAL → APPROVE.
-     Examples: 7,544 vs 7,500 → APPROVE. 7,890 vs 6,000 → APPROVE. 6,000 vs 6,000 → APPROVE.
-  3. If the number is CLEARLY legible and CLEARLY below ${claimedTier.points} (e.g. 6,666 vs 7,500) → approved=false with HIGH confidence (0.9+).
-  4. If you CANNOT clearly read the number (blur, glare, cropped) → APPROVE anyway with confidence ~0.6.
-  Always put the number you read in the "read" field.`
+Read the number and enforce it:
+  1. Read the MAIN number in the image (e.g. the large "steps today" figure). IGNORE every other number — leaderboard / other people's counts, distance (km), calories, time, battery %, dates.
+  2. Compare ONLY that main number to ${numericTarget.value}. GREATER THAN OR EQUAL → APPROVE.
+     Examples: 7,544 vs 7,500 → APPROVE. 7,693 vs 7,500 → APPROVE. 8,181 vs 7,500 → APPROVE.
+  3. Only if the main number is CLEARLY legible and CLEARLY below ${numericTarget.value} (e.g. 6,666 vs 7,500) → approved=false, confidence 0.9+.
+  4. If you CANNOT clearly read the main number (blur, glare, cropped) → APPROVE anyway with confidence ~0.6.
+  Always put the exact main number you read in the "read.value" field.`
     : `POINTS: ${taskPoints}`
 
   return `You are a fair, LENIENT AI reviewer for a wellness challenge app. Default to APPROVE. Only reject when the image is clearly wrong, or a legible number is clearly below the tier. When unsure → APPROVE.
@@ -484,7 +501,12 @@ Deno.serve(async (req: Request) => {
         await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
       }
 
-      const prompt = buildImagePrompt(taskTitle, taskDesc, claimedTier, taskPoints)
+      // Numeric target: from a formal tier, or extracted from the task text for
+      // flat numeric tasks (STEP "7,500 steps" lives only in the description).
+      const numericTarget: { value: number; unit: string } | null = claimedTier
+        ? { value: claimedTier.points, unit: '' }
+        : extractNumericTarget(taskTitle, taskDesc)
+      const prompt = buildImagePrompt(taskTitle, taskDesc, numericTarget, taskPoints)
       let ai: AIResult
       try {
         const response = await openai.chat.completions.create({
@@ -499,27 +521,39 @@ Deno.serve(async (req: Request) => {
         return await requeueOrReview(errMsg, `AI analysis failed: ${errMsg}`)
       }
 
-      // Image decision (numeric safety net + pHash)
+      // Image decision — number-authoritative for numeric tasks, lenient otherwise.
       let status: 'approved' | 'rejected' | 'needs_review'
       let feedback = ai.feedback ?? ''
       const conf = clamp01(ai.confidence ?? 0)
-      let belowTier = false, belowTierConfident = false, belowTierVal: number | null = null
-      if (claimedTier && ai.approved === false) {
-        const readVal = ai.read && typeof ai.read.value === 'number' ? ai.read.value : null
-        if (readVal != null && readVal >= claimedTier.points) {
-          ai.approved = true; feedback = `Approved by server — image shows ${readVal} which meets the ${claimedTier.points} minimum.`
-        } else if (readVal != null && readVal < claimedTier.points) {
-          belowTier = true; belowTierVal = readVal; belowTierConfident = (ai.confidence ?? 0) >= NUMBER_REJECT_CONFIDENCE
+      const readVal = ai.read && typeof ai.read.value === 'number' ? ai.read.value : null
+
+      if (numericTarget) {
+        // Trust the READ NUMBER, not GPT-4o's verdict: approve >= target, reject
+        // only when confidently below, review when unclear. A genuine achiever is
+        // never false-rejected on a misjudgment (e.g. 7,693 read as "below 7,500").
+        const unitWord = numericTarget.unit ? ` ${numericTarget.unit}` : ''
+        if (readVal != null && readVal >= numericTarget.value) {
+          status = 'approved'; feedback = ''
+        } else if (readVal != null && readVal < numericTarget.value) {
+          if (conf >= NUMBER_REJECT_CONFIDENCE) {
+            status = 'rejected'
+            feedback = `Your screenshot shows ${readVal}${unitWord}, which is below the ${numericTarget.value}${unitWord} required. Please submit a screenshot showing at least ${numericTarget.value}${unitWord}.`
+          } else {
+            status = 'needs_review'
+            feedback = 'The number looks below target but the read is unclear — please verify.'
+          }
+        } else {
+          // No number read — be lenient: a valid-looking screenshot is approved;
+          // anything else goes to review (never auto-rejected on a misread).
+          if (ai.approved && conf >= 0.55) { status = 'approved'; feedback = '' }
+          else { status = 'needs_review'; feedback = ai.feedback || 'Could not read the number clearly — please verify the screenshot.' }
         }
+      } else {
+        // Non-numeric tasks (food, water, habit) — trust the lenient AI verdict.
+        if (ai.approved && conf >= 0.60) status = 'approved'
+        else if (!ai.approved && conf >= 0.55) status = 'rejected'
+        else status = 'needs_review'
       }
-      if (belowTier && belowTierConfident) {
-        status = 'rejected'
-        feedback = `Your submission shows ${belowTierVal}, which is below the ${claimedTier!.points} required for this tier. Please submit proof showing at least ${claimedTier!.points}.`
-      } else if (belowTier) {
-        status = 'needs_review'; feedback = 'Number appears below the tier but the read is unclear — please verify the value.'
-      } else if (ai.approved && conf >= 0.60) status = 'approved'
-      else if (!ai.approved && conf >= 0.55) status = 'rejected'
-      else status = 'needs_review'
 
       if (PHASH_ENFORCE && status === 'approved') {
         const unit = ai.read?.unit ?? null
