@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_compress/video_compress.dart';
+import 'package:video_player/video_player.dart';
 import 'bunny_video_service.dart';
 import 'submission_outbox.dart';
 import '../utils/org_date_utils.dart';
@@ -330,6 +331,21 @@ class TaskService {
       // Flutter web: video_compress has no web implementation. Upload raw
       // — Bunny Stream transcodes any input to browser-safe MP4 server-side.
       // Bunny bucket accepts up to 500 MB. iPhone 90s .mov typically 60-150 MB.
+
+      // Enforce the task's own length limit on web too. video_compress can't
+      // probe here, so read the duration through video_player, which supports
+      // the blob URL the picker hands us. Without this the per-task
+      // max_video_seconds (60 / 90 / 120 …) was silently ignored on web, which
+      // is the only platform members actually use.
+      //
+      // Fail OPEN: if the duration can't be determined we let the submission
+      // through. Blocking a genuine member because their browser wouldn't
+      // report metadata is worse than accepting an over-length clip.
+      final probedSeconds = await _probeVideoDurationSeconds(videoFile);
+      if (probedSeconds != null && probedSeconds > maxDurationSeconds + 1) {
+        throw VideoTooLongException(probedSeconds, maxDurationSeconds);
+      }
+
       // Prefer bytes read at PICK time — on web the blob backing videoFile may
       // have been evicted by now ("Could not load Blob"). Fall back to a fresh
       // read only if no preloaded bytes were passed.
@@ -456,6 +472,32 @@ class TaskService {
       'note': trimmedNote,
       'selected_tier_index': selectedTierIndex,
     });
+  }
+
+  /// Read a picked video's duration in whole seconds.
+  ///
+  /// Used on web, where video_compress has no implementation. video_player
+  /// accepts the blob URL that image_picker_for_web puts in [XFile.path].
+  ///
+  /// Returns null when the duration cannot be determined (unsupported codec,
+  /// metadata still loading, blob already revoked). Callers MUST treat null as
+  /// "unknown" and allow the submission — never block a member on a probe that
+  /// simply failed. Bounded by a timeout so a stuck load can't hang submit.
+  static Future<int?> _probeVideoDurationSeconds(XFile file) async {
+    VideoPlayerController? controller;
+    try {
+      controller = VideoPlayerController.networkUrl(Uri.parse(file.path));
+      await controller.initialize().timeout(const Duration(seconds: 12));
+      final d = controller.value.duration;
+      if (d <= Duration.zero) return null;
+      return (d.inMilliseconds / 1000).round();
+    } catch (_) {
+      return null; // fail open
+    } finally {
+      try {
+        await controller?.dispose();
+      } catch (_) {/* ignore */}
+    }
   }
 
   /// Build the task_snapshot JSONB blob frozen onto each submission row.
