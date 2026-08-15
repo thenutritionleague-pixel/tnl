@@ -31,7 +31,7 @@ import {
 import {
   getOrgChallenges, createChallenge, updateChallenge, setChallengeStatus, deleteChallenge as dbDeleteChallenge,
   deleteTask as dbDeleteTask, getOrgTeamList, getOrgTimezone,
-  type ChallengeUI, type TaskUI,
+  type ChallengeUI, type TaskUI, type PeriodLabel,
 } from '@/lib/supabase/queries'
 import { todayInTimezone } from '@/lib/date-utils'
 
@@ -58,9 +58,17 @@ const statusStyle: Record<string, string> = {
   upcoming:  'bg-blue-100 text-blue-700',
 }
 
-type ChallengeFormData = Pick<Challenge, 'name' | 'description' | 'startDate' | 'endDate' | 'teams' | 'teamIds'>
+type ChallengeFormData = Pick<Challenge, 'name' | 'description' | 'startDate' | 'endDate' | 'teams' | 'teamIds' | 'periodLabel'>
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Word used for a task group. The unlock mechanism is identical either way —
+/// a task goes live on its start date and runs daily to the end — only the
+/// cadence differs: weekly for city events, daily for National.
+function periodWord(p: PeriodLabel, capital = false) {
+  const w = p === 'day' ? 'day' : 'week'
+  return capital ? w.charAt(0).toUpperCase() + w.slice(1) : w
+}
 
 function getWeekGaps(existingWeeks: number[], targetWeek: number): number[] {
   const gaps: number[] = []
@@ -367,10 +375,11 @@ interface TaskModalProps {
   editTarget: Task | null
   existingWeeks: number[]
   teamOptions: string[]
+  periodLabel: PeriodLabel
   onSave: (task: Omit<Task, 'id' | 'isActive'>) => void
 }
 
-function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSave }: TaskModalProps) {
+function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, periodLabel, onSave }: TaskModalProps) {
   const [title, setTitle]       = useState('')
   const [desc, setDesc]         = useState('')
   const [points, setPoints]     = useState(10)
@@ -445,7 +454,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
 
           {/* Week */}
           <div className="space-y-1.5">
-            <Label htmlFor="t-week">Week number <span className="text-destructive">*</span></Label>
+            <Label htmlFor="t-week">{periodWord(periodLabel, true)} number <span className="text-destructive">*</span></Label>
             <Input
               id="t-week"
               type="number"
@@ -454,14 +463,14 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
               onChange={e => setWeek(Math.max(1, Number(e.target.value)))}
             />
             <p className="text-xs text-muted-foreground">
-              Existing weeks:{' '}
-              {existingWeeks.length > 0 ? existingWeeks.map(w => `Week ${w}`).join(', ') : 'None yet'}
+              Existing {periodWord(periodLabel)}s:{' '}
+              {existingWeeks.length > 0 ? existingWeeks.map(w => `${periodWord(periodLabel, true)} ${w}`).join(', ') : 'None yet'}
             </p>
             {isDuplicate && (
               <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
                 <p className="text-xs text-destructive">
-                  Week {week} already has a task. Choose a different week number.
+                  {periodWord(periodLabel, true)} {week} already has a task. Choose a different {periodWord(periodLabel)} number.
                 </p>
               </div>
             )}
@@ -577,6 +586,7 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
   const [startDate, setStartDate]     = useState('')
   const [endDate, setEndDate]         = useState('')
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
+  const [periodLabel, setPeriodLabel] = useState<PeriodLabel>('week')
 
   useEffect(() => {
     if (!open) return
@@ -586,19 +596,21 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
       setStartDate(editTarget.startDate)
       setEndDate(editTarget.endDate)
       setSelectedTeams(editTarget.teams)
+      setPeriodLabel(editTarget.periodLabel ?? 'week')
     } else {
       setName('')
       setDescription('')
       setStartDate('')
       setEndDate('')
       setSelectedTeams([])
+      setPeriodLabel('week')
     }
   }, [open, editTarget])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const teamIds = selectedTeams.map(n => teamList.find(t => t.name === n)?.id ?? '').filter(Boolean)
-    onSave({ name, description, startDate, endDate, teams: selectedTeams, teamIds })
+    onSave({ name, description, startDate, endDate, teams: selectedTeams, teamIds, periodLabel })
   }
 
   const isValid = name.trim() && startDate
@@ -647,6 +659,35 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
             </div>
             <p className="col-span-2 text-xs text-muted-foreground -mt-1">
               Challenges start/end at 12:00 AM <strong>{tzAbbr}</strong> — your org&apos;s timezone
+            </p>
+          </div>
+
+          {/* How often a new task is added. Purely how groups are LABELLED —
+              a task still unlocks on its start date and runs daily to the end. */}
+          <div className="space-y-1.5">
+            <Label>New task added every</Label>
+            <div className="inline-flex rounded-lg border border-input overflow-hidden text-sm">
+              {(['week', 'day'] as PeriodLabel[]).map(opt => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => setPeriodLabel(opt)}
+                  className={cn(
+                    'px-4 py-2 transition-colors capitalize',
+                    periodLabel === opt
+                      ? 'bg-primary text-white font-semibold'
+                      : 'bg-background text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Tasks are grouped and labelled as{' '}
+              <strong>{periodWord(periodLabel, true)} 1, {periodWord(periodLabel, true)} 2 …</strong>{' '}
+              for admins and members. Choose <strong>day</strong> when a new task
+              is released each day.
             </p>
           </div>
 
@@ -735,12 +776,14 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
       await updateChallenge(editChallenge.id, {
         name: data.name, description: data.description,
         startDate: data.startDate, endDate: data.endDate, teamIds: data.teamIds,
+        periodLabel: data.periodLabel,
       })
       setChallenges(prev => prev.map(c => c.id === editChallenge.id ? { ...c, ...data } : c))
     } else {
       const { data: newCh } = await createChallenge(id, {
         name: data.name, description: data.description,
         startDate: data.startDate, endDate: data.endDate, teamIds: data.teamIds,
+        periodLabel: data.periodLabel,
       })
       if (newCh) {
         setChallenges(prev => [...prev, {
@@ -909,9 +952,9 @@ export default function OrgChallengesPage({ params }: { params: Promise<{ id: st
                         {weeks.map(({ week, items }) => (
                           <div key={week}>
                             <p className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
-                              Week {week} — New Habit{' '}
+                              {periodWord(c.periodLabel, true)} {week} — New Habit{' '}
                               <span className="text-muted-foreground font-normal normal-case tracking-normal">
-                                (repeats every week from here)
+                                (repeats every {periodWord(c.periodLabel)} from here)
                               </span>
                             </p>
                             <div className="space-y-1.5">

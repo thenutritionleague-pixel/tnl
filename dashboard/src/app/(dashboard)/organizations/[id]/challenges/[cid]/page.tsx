@@ -23,7 +23,7 @@ import {
   getChallengeById, getChallengeSubCounts, getChallengeSubs, getOrgTeamList,
   addTask, updateTask as dbUpdateTask, deleteTask as dbDeleteTask,
   setChallengeStatus, setTaskActive, getOrgTimezone,
-  type ChallengeUI, type TaskUI, type TaskTier, type ChallengeSub,
+  type ChallengeUI, type TaskUI, type TaskTier, type ChallengeSub, type PeriodLabel,
 } from '@/lib/supabase/queries'
 import { todayInTimezone } from '@/lib/date-utils'
 
@@ -78,6 +78,14 @@ function getWeekGaps(existingWeeks: number[], targetWeek: number): number[] {
     if (!existingWeeks.includes(w)) gaps.push(w)
   }
   return gaps
+}
+
+/// Word used for a task group. The mechanism never changes — a task unlocks on
+/// its start date and then runs daily to the end — only the cadence of those
+/// unlocks does: weekly for city events, daily for National.
+function periodWord(p: PeriodLabel, capital = false) {
+  const w = p === 'day' ? 'day' : 'week'
+  return capital ? w.charAt(0).toUpperCase() + w.slice(1) : w
 }
 
 function initials(name: string) {
@@ -265,6 +273,7 @@ interface TaskModalProps {
   editTarget: TaskUI | null
   existingWeeks: number[]
   teamOptions: string[]
+  periodLabel: PeriodLabel
   onSave: (data: Omit<TaskUI, 'id' | 'isActive'>) => Promise<void>
 }
 
@@ -273,7 +282,7 @@ const DEFAULT_TIERS: TaskTier[] = [
   { label: 'Tier 2', description: '', points: 100 },
 ]
 
-function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSave }: TaskModalProps) {
+function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, periodLabel, onSave }: TaskModalProps) {
   const [title, setTitle]       = useState('')
   const [desc, setDesc]         = useState('')
   const [points, setPoints]     = useState(10)
@@ -370,9 +379,9 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="t-week">Week number <span className="text-destructive">*</span></Label>
+            <Label htmlFor="t-week">{periodWord(periodLabel, true)} number <span className="text-destructive">*</span></Label>
             <Input id="t-week" type="number" min={1} value={week} onChange={e => setWeek(Math.max(1, Number(e.target.value)))} />
-            <p className="text-xs text-muted-foreground">Existing weeks: {existingWeeks.length > 0 ? existingWeeks.map(w => `Week ${w}`).join(', ') : 'None yet'}</p>
+            <p className="text-xs text-muted-foreground">Existing {periodWord(periodLabel)}s: {existingWeeks.length > 0 ? existingWeeks.map(w => `${periodWord(periodLabel, true)} ${w}`).join(', ') : 'None yet'}</p>
             {gaps.length > 0 && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
@@ -721,7 +730,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
             <div key={week} className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
                 <p className="text-xs font-bold text-primary uppercase tracking-wider">
-                  Week {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">— repeats every week from here</span>
+                  {periodWord(challenge.periodLabel, true)} {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">— repeats every {periodWord(challenge.periodLabel)} from here</span>
                 </p>
               </div>
               <div className="divide-y divide-border">
@@ -810,6 +819,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
         onClose={() => setTaskModal({ open: false, editTarget: null })}
         editTarget={taskModal.editTarget}
         existingWeeks={existingWeeks}
+        periodLabel={challenge.periodLabel}
         teamOptions={challenge.teams.length ? challenge.teams : teamList}
         onSave={handleSaveTask}
       />

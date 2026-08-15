@@ -158,6 +158,14 @@ export interface TaskUI {
   maxVideoSeconds?: number | null
 }
 
+/// How this challenge's task groups are labelled to admins and members.
+///
+/// The underlying model is the same either way — a task unlocks on its start
+/// date and then runs daily until the challenge ends, so what members see
+/// accumulates. Only the cadence of those unlocks differs: city events add one
+/// task per week, National adds one per day. This just picks the word.
+export type PeriodLabel = 'week' | 'day'
+
 export interface ChallengeUI {
   id: string
   name: string
@@ -170,6 +178,7 @@ export interface ChallengeUI {
   tasks: TaskUI[]
   manuallyClosed: boolean
   submissions: number
+  periodLabel: PeriodLabel
 }
 
 export interface FeedPost {
@@ -216,10 +225,13 @@ export async function getOrganizations(): Promise<OrgSummary[]> {
 
   if (error || !orgs) return []
 
-  const results: OrgSummary[] = []
-
-  for (const org of orgs) {
-    const [membersRes, teamsRes, challengesRes, adminRes] = await Promise.all([
+  // The per-org lookups used to sit behind an `await` INSIDE the loop, so every
+  // org's four queries ran only after the previous org's had finished. With N
+  // orgs that is N sequential network round trips for data that has no ordering
+  // dependency at all. Fan them all out at once instead: the page now waits for
+  // the slowest org, not the sum of every org.
+  const perOrg = await Promise.all(orgs.map(org =>
+    Promise.all([
       supabase.from('org_members').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
       supabase.from('teams').select('id', { count: 'exact', head: true }).eq('org_id', org.id),
       supabase.from('challenges').select('name').eq('org_id', org.id).eq('status', 'active'),
@@ -231,6 +243,13 @@ export async function getOrganizations(): Promise<OrgSummary[]> {
         .limit(1)
         .maybeSingle(),
     ])
+  ))
+
+  const results: OrgSummary[] = []
+
+  for (let i = 0; i < orgs.length; i++) {
+    const org = orgs[i]
+    const [membersRes, teamsRes, challengesRes, adminRes] = perOrg[i]
 
     results.push({
       id: org.id,
@@ -1112,7 +1131,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
     supabase
       .from('challenges')
       .select(`
-        id, name, description, status, start_date, end_date, manually_closed,
+        id, name, description, status, start_date, end_date, manually_closed, period_label,
         challenge_teams(team_id, teams(name)),
         tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, task_teams(teams(name)))
       `)
@@ -1126,7 +1145,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
   type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string; proof_type?: 'image' | 'video'; max_video_seconds?: number | null }
-  type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
+  type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; period_label?: string; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const results: ChallengeUI[] = []
 
@@ -1163,6 +1182,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
       startDate: ch.start_date,
       endDate: ch.end_date >= NO_END_DATE ? '' : ch.end_date,
       manuallyClosed: ch.manually_closed,
+      periodLabel: (ch.period_label === 'day' ? 'day' : 'week') as PeriodLabel,
       teamIds: ch.challenge_teams.map(ct => ct.team_id),
       teams: ch.challenge_teams.map(ct => ct.teams?.name ?? '').filter(Boolean),
       tasks: ch.tasks.map(t => ({
@@ -1190,11 +1210,12 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
 
 export async function createChallenge(orgId: string, data: {
   name: string; description: string; startDate: string; endDate: string; teamIds: string[]
+  periodLabel?: PeriodLabel
 }) {
   const supabase = await db()
   const { data: ch, error } = await supabase
     .from('challenges')
-    .insert({ org_id: orgId, name: data.name, description: data.description || '', start_date: data.startDate, end_date: data.endDate || NO_END_DATE, status: 'upcoming' })
+    .insert({ org_id: orgId, name: data.name, description: data.description || '', start_date: data.startDate, end_date: data.endDate || NO_END_DATE, status: 'upcoming', period_label: data.periodLabel ?? 'week' })
     .select()
     .single()
   if (error || !ch) return { data: null, error }
@@ -1206,6 +1227,7 @@ export async function createChallenge(orgId: string, data: {
 
 export async function updateChallenge(id: string, data: {
   name: string; description: string; startDate: string; endDate: string; teamIds: string[]
+  periodLabel?: PeriodLabel
 }) {
   const supabase = await db()
 
@@ -1244,6 +1266,11 @@ export async function updateChallenge(id: string, data: {
     description: data.description || '',
     start_date: data.startDate,
     end_date: effectiveEnd,
+  }
+  // Only write when supplied, so callers that don't know about it can't reset
+  // an existing challenge back to 'week'.
+  if (data.periodLabel === 'week' || data.periodLabel === 'day') {
+    updates.period_label = data.periodLabel
   }
   // Only auto-flip status when the admin hasn't manually closed it.
   if (!(current?.manually_closed)) {
@@ -1514,7 +1541,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
   const { data: ch } = await supabase
     .from('challenges')
     .select(`
-      id, name, description, status, start_date, end_date, manually_closed,
+      id, name, description, status, start_date, end_date, manually_closed, period_label,
       challenge_teams(team_id, teams(name)),
       tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, task_teams(teams(name)))
     `)
@@ -1524,7 +1551,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
   type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; proof_type?: 'image' | 'video'; max_video_seconds?: number | null }
-  type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
+  type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; period_label?: string; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
   const { count } = await supabase.from('task_submissions').select('id', { count: 'exact', head: true }).eq('challenge_id', challengeId)
@@ -1535,6 +1562,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     startDate: raw.start_date,
     endDate: raw.end_date >= NO_END_DATE ? '' : raw.end_date,
     manuallyClosed: raw.manually_closed,
+    periodLabel: (raw.period_label === 'day' ? 'day' : 'week') as PeriodLabel,
     teamIds: raw.challenge_teams.map(ct => ct.team_id),
     teams: raw.challenge_teams.map(ct => ct.teams?.name ?? '').filter(Boolean),
     tasks: raw.tasks.map(t => ({
