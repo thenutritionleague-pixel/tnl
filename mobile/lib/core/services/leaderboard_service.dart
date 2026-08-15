@@ -48,7 +48,17 @@ class LeaderboardService {
       'color': team['color'] ?? '#059669',
     }).toList();
 
-    result.sort((a, b) => (b['total_points'] as int).compareTo(a['total_points'] as int));
+    // Points first, then name as a deterministic tiebreaker.
+    //
+    // Dart's List.sort is NOT stable, so sorting on points alone leaves tied
+    // teams in an arbitrary order that can differ between loads. At the start of
+    // an event EVERY team is on 0, so without this the whole leaderboard — and
+    // the "Team Rank" on the home screen — reshuffles on each refresh.
+    result.sort((a, b) {
+      final byPoints = (b['total_points'] as int).compareTo(a['total_points'] as int);
+      if (byPoints != 0) return byPoints;
+      return (a['name'] as String).toLowerCase().compareTo((b['name'] as String).toLowerCase());
+    });
     return result;
   }
 

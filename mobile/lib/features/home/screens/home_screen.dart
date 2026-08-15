@@ -158,10 +158,24 @@ class _HomeScreenState extends State<HomeScreen>
     return ((_todayApproved / _tasks.length) * 100).round();
   }
 
+  /// Standard competition rank: 1 + however many teams have strictly MORE points.
+  ///
+  /// Previously this was the row's index in the sorted list, which gave tied
+  /// teams different ranks — two teams on 500 points showed as 3rd and 4th, and
+  /// with every team on 0 at the start of an event each member saw an arbitrary
+  /// rank that moved on every refresh. Teams level on points now share a rank.
   int get _teamRank {
     if (_teamId == null) return 0;
-    final idx = _fullTeamLeaderboard.indexWhere((t) => t['team_id'] == _teamId);
-    return idx >= 0 ? idx + 1 : 0;
+    final me = _fullTeamLeaderboard.firstWhere(
+      (t) => t['team_id'] == _teamId,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (me.isEmpty) return 0;
+    final myPoints = (me['total_points'] as int?) ?? 0;
+    final ahead = _fullTeamLeaderboard
+        .where((t) => ((t['total_points'] as int?) ?? 0) > myPoints)
+        .length;
+    return ahead + 1;
   }
 
   int get _teamPoints {
@@ -524,11 +538,21 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
+  /// English ordinal suffix. Only 1/2/3 were special-cased before, so every
+  /// rank sharing those final digits was wrong once there were enough teams —
+  /// National has 113, so members saw "21th", "22th", "23th", "31th"…
+  ///
+  /// 11/12/13 are the exception that proves the rule: they take "th" despite
+  /// ending in 1/2/3.
   String _ordinal(int n) {
-    if (n == 1) return '1st';
-    if (n == 2) return '2nd';
-    if (n == 3) return '3rd';
-    return '${n}th';
+    final lastTwo = n % 100;
+    if (lastTwo >= 11 && lastTwo <= 13) return '${n}th';
+    switch (n % 10) {
+      case 1: return '${n}st';
+      case 2: return '${n}nd';
+      case 3: return '${n}rd';
+      default: return '${n}th';
+    }
   }
 }
 
