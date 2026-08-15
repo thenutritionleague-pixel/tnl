@@ -47,22 +47,31 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (supabaseReady) {
     try {
-      orgMap = await getAllOrgShortNames()
-      // For org_admin/sub_admin use their profile org_id.
-      // For super admins viewing an org page, extract org ID from the URL pathname.
+      // This layout re-renders on EVERY navigation, so each await here is paid
+      // on every page. The org-name map and the sidebar org row are independent
+      // of one another — run them together rather than back to back.
       const headersList = await headers()
       const pathname = headersList.get('x-pathname') ?? ''
       const urlOrgMatch = pathname.match(/^\/organizations\/([^/]+)/)
+      // For org_admin/sub_admin use their profile org_id.
+      // For super admins viewing an org page, extract org ID from the URL pathname.
       const sidebarOrgId = activeProfile.org_id
         ?? (urlOrgMatch && urlOrgMatch[1] !== 'new' ? urlOrgMatch[1] : undefined)
 
-      if (sidebarOrgId) {
-        const adminClient = await createAdminClient()
-        const { data: org } = await adminClient
-          .from('organizations')
-          .select('name, logo, logo_url')
-          .eq('id', sidebarOrgId)
-          .maybeSingle()
+      const [orgMapRes, orgRes] = await Promise.all([
+        getAllOrgShortNames(),
+        sidebarOrgId
+          ? createAdminClient().then(c =>
+              c.from('organizations')
+                .select('name, logo, logo_url')
+                .eq('id', sidebarOrgId)
+                .maybeSingle())
+          : Promise.resolve({ data: null }),
+      ])
+
+      orgMap = orgMapRes
+      {
+        const org = orgRes.data as { name: string; logo: string; logo_url: string | null } | null
         if (org) {
           orgName = org.name
           orgEmoji = org.logo
