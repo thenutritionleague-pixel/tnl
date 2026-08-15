@@ -633,6 +633,37 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
   const existingWeeks = [...new Set(challenge.tasks.map(t => t.weekNumber))].sort((a, b) => a - b)
   const weeks = groupByWeek(challenge.tasks)
 
+  // Show a task's real availability. Visibility is driven ONLY by start_date /
+  // end_date (see get_mobile_tasks) — week_number is just a grouping label, so
+  // the header must not claim a cadence the data does not have.
+  const shortDate = (d?: string) => {
+    if (!d) return ''
+    const parsed = new Date(`${d}T00:00:00`)
+    return isNaN(parsed.getTime())
+      ? d
+      : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+  const taskWindow = (t: TaskUI): string => {
+    if (!t.startDate && !t.endDate) return 'every day'
+    if (t.startDate && t.startDate === t.endDate) return shortDate(t.startDate)
+    if (t.startDate && t.endDate) return `${shortDate(t.startDate)} → ${shortDate(t.endDate)}`
+    if (t.startDate) return `from ${shortDate(t.startDate)}`
+    return `until ${shortDate(t.endDate)}`
+  }
+  const groupSubtitle = (items: TaskUI[]): string => {
+    if (items.length === 0) return ''
+    if (items.every(t => !t.startDate && !t.endDate)) {
+      return '— no dates set, so every task here is available every day'
+    }
+    if (items.every(t => t.startDate && t.startDate === t.endDate)) {
+      const days = new Set(items.map(t => t.startDate))
+      return days.size === 1
+        ? `— ${shortDate(items[0].startDate)} only`
+        : '— one day each, see the date on every task'
+    }
+    return '— each task runs on its own dates'
+  }
+
   return (
     <div className="space-y-6">
       {/* Back + Header */}
@@ -721,7 +752,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
             <div key={week} className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
                 <p className="text-xs font-bold text-primary uppercase tracking-wider">
-                  Week {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">— repeats every week from here</span>
+                  Week {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">{groupSubtitle(items)}</span>
                 </p>
               </div>
               <div className="divide-y divide-border">
@@ -732,6 +763,10 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className={cn('text-sm font-semibold', !task.isActive && 'line-through text-muted-foreground')}>{task.title}</p>
                         <span className="text-[11px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-medium">{task.category}</span>
+                        {/* When this task is actually visible to members */}
+                        <span className="text-[11px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium whitespace-nowrap">
+                          {taskWindow(task)}
+                        </span>
                         {!task.isActive && <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full">inactive</span>}
                       </div>
                       {task.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{task.description}</p>}
