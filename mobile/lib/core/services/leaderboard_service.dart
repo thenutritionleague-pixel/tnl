@@ -104,7 +104,7 @@ class LeaderboardService {
           .eq('org_id', orgId)
           .order('team_id', ascending: true)
           .order('user_id', ascending: true)
-          .range(from, to),
+          .order('id', ascending: true).range(from, to),
     );
 
     final Map<String, List<Map<String, dynamic>>> result = {};

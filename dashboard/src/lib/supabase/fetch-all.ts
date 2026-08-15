@@ -9,11 +9,25 @@
 // using `.range(from, to)` until the response returns fewer than `pageSize`
 // rows, then returns the concatenated list.
 //
+// REQUIRED: the query MUST end with a `.order()` on a UNIQUE column (`id`).
+//
+// Paging with `.range()` only means something if the rows have a guaranteed
+// order. Without one, Postgres may return them in a different order for page 2
+// than for page 1, so the same row can appear on both pages while another is
+// never returned — you get the right row COUNT with duplicated and missing
+// records. That is worse than the truncation this helper exists to fix,
+// because nothing looks wrong.
+//
+// Ordering on a non-unique column (created_at, total_points, name) is NOT
+// enough: rows that tie can still be reshuffled between pages. Always finish
+// with `.order('id')` as a tiebreaker, even when another sort comes first.
+//
 //   const rows = await fetchAllRows(
 //     (from, to) => client.from('task_submissions')
 //       .select('user_id, points_awarded')
 //       .eq('org_id', orgId)
 //       .eq('status', 'approved')
+//       .order('id', { ascending: true })   // ← unique tiebreaker, required
 //       .range(from, to),
 //   )
 //

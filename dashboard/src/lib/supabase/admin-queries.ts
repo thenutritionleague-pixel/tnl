@@ -106,7 +106,7 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
   const [challengesRes, members, teamsRes] = await Promise.all([
     client.from('challenges').select('id, org_id').in('org_id', orgIds),
     fetchAllRows<{ org_id: string }>(
-      (from, to) => client.from('org_members').select('org_id').in('org_id', orgIds).range(from, to),
+      (from, to) => client.from('org_members').select('org_id').in('org_id', orgIds).order('id', { ascending: true }).range(from, to),
     ),
     client.from('teams').select('org_id').in('org_id', orgIds),
   ])
@@ -137,7 +137,7 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
         .select('challenge_id')
         .in('challenge_id', allChallengeIds)
         .eq('status', 'pending')
-        .range(from, to),
+        .order('id', { ascending: true }).range(from, to),
     )
 
     const challengeToOrg: Record<string, string> = {}
@@ -332,38 +332,38 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     client.from('challenges').select('id, start_date').eq('org_id', orgId).in('status', ['active', 'completed']).order('created_at', { ascending: false }),
     // Member rosters also cross the 1000-row cap at National scale.
     fetchAllRows<any>(
-      (from, to) => client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId).range(from, to),
+      (from, to) => client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<any>(
-      (from, to) => client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId).range(from, to),
+      (from, to) => client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
       (from, to) => client.from('task_submissions')
         .select('user_id, challenge_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)')
-        .eq('org_id', orgId).eq('status', 'approved').range(from, to),
+        .eq('org_id', orgId).eq('status', 'approved').order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ user_id: string; org_id: string; reason: string; created_at: string }>(
       (from, to) => client.from('points_transactions')
         .select('user_id, org_id, reason, created_at')
-        .eq('org_id', orgId).eq('amount', 0).like('reason', 'Task missed:%').range(from, to),
+        .eq('org_id', orgId).eq('amount', 0).like('reason', 'Task missed:%').order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ id: string; user_id: string; amount: number; reason: string; created_at: string; transaction_date: string | null }>(
       (from, to) => client.from('points_transactions')
         .select('id, user_id, amount, reason, created_at, transaction_date')
         .eq('org_id', orgId).eq('is_manual', true)
-        .order('created_at', { ascending: false }).range(from, to),
+        .order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; tasks: { title: string; icon: string; start_week: number } | null }>(
       (from, to) => client.from('task_submissions')
         .select('user_id, challenge_id, submitted_date, tasks(title, icon, start_week)')
-        .eq('org_id', orgId).eq('status', 'rejected').range(from, to),
+        .eq('org_id', orgId).eq('status', 'rejected').order('id', { ascending: true }).range(from, to),
     ),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
     fetchAllRows<{ id: string; team_id: string; amount: number; reason: string; source_user_name: string | null; kind: string; created_at: string; transaction_date: string | null }>(
       (from, to) => client.from('team_transactions')
         .select('id, team_id, amount, reason, source_user_name, kind, created_at, transaction_date')
         .eq('org_id', orgId)
-        .order('created_at', { ascending: false }).range(from, to),
+        .order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to),
     ),
   ])
 
@@ -627,7 +627,7 @@ export async function getInviteWhitelist(orgId: string): Promise<{ invites: Invi
     fetchAllRows<InviteRow>(
       (from, to) => client.from('invite_whitelist')
         .select('id, email, team_id, role, used_at, created_at, teams(name)')
-        .eq('org_id', orgId).order('created_at', { ascending: false }).range(from, to),
+        .eq('org_id', orgId).order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to),
     ),
     client.from('teams').select('id, name').eq('org_id', orgId).order('name'),
   ])
@@ -773,13 +773,13 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       (from, to) => client
         .from('team_members')
         .select('user_id, teams!team_id(name)')
-        .eq('org_id', orgId).range(from, to),
+        .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<{ id: string; name: string }>(
       (from, to) => client
         .from('profiles')
         .select('id, name')
-        .eq('org_id', orgId).range(from, to),
+        .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
   ])
@@ -1193,10 +1193,10 @@ export async function getOrgMembersForAdjust(orgId: string): Promise<OrgMemberFo
   // picker silently omits members past the cap.
   const [members, teamMems] = await Promise.all([
     fetchAllRows<any>(
-      (from, to) => client.from('org_members').select('user_id, profiles(id, name)').eq('org_id', orgId).range(from, to),
+      (from, to) => client.from('org_members').select('user_id, profiles(id, name)').eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
     fetchAllRows<any>(
-      (from, to) => client.from('team_members').select('user_id, teams(name)').eq('org_id', orgId).range(from, to),
+      (from, to) => client.from('team_members').select('user_id, teams(name)').eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
     ),
   ])
 

@@ -287,7 +287,7 @@ export async function getOrganization(id: string): Promise<OrgDetail | null> {
       .select('points_awarded')
       .eq('org_id', id)
       .eq('status', 'approved')
-      .range(from, to),
+      .order('id', { ascending: true }).range(from, to),
   )
 
   const totalPoints = ptsData.reduce((sum, s) => sum + (s.points_awarded ?? 0), 0)
@@ -375,7 +375,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
       .select('id, name, email, avatar_color, total_points, created_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: true })
-      .range(from, to),
+      .order('id', { ascending: true }).range(from, to),
   )
 
   if (!profiles.length) return []
@@ -385,7 +385,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     (from, to) => supabase
       .from('org_members')
       .select('user_id, role, joined_at')
-      .eq('org_id', orgId).range(from, to),
+      .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
   )
 
   // 3. Fetch Team assignments separately
@@ -393,7 +393,7 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
     (from, to) => supabase
       .from('team_members')
       .select('user_id, role, team_id, teams(id, name)')
-      .eq('org_id', orgId).range(from, to),
+      .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
   )
 
   const roleMap: Record<string, { role: string; joinedAt: string }> = {}
@@ -789,14 +789,14 @@ export async function getAvailableMembers(orgId: string): Promise<AvailableMembe
     (from, to) => supabase
       .from('org_members')
       .select('profiles(id, name, avatar_color)')
-      .eq('org_id', orgId).range(from, to),
+      .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
   )
 
   const teamMemberIds = await fetchAllRows<{ user_id: string }>(
     (from, to) => supabase
       .from('team_members')
       .select('user_id')
-      .eq('org_id', orgId).range(from, to),
+      .eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
   )
 
   const assignedIds = new Set((teamMemberIds ?? []).map((r: { user_id: string }) => r.user_id))
@@ -920,7 +920,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
         .in('user_id', memberIds)
         .gte('created_at', challenge.start_date)
         .order('created_at', { ascending: true })
-        .range(from, to),
+        .order('id', { ascending: true }).range(from, to),
     )
     for (const t of txnData) {
       if (!txnsByUser[t.user_id]) txnsByUser[t.user_id] = []
@@ -1036,7 +1036,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
       .select('id, amount, reason, source_user_name, kind, created_at, transaction_date')
       .eq('team_id', teamId)
       .order('created_at', { ascending: false })
-      .range(from, to),
+      .order('id', { ascending: true }).range(from, to),
   )
 
   const legacyEntries: TeamLegacyEntryUI[] = ttData.map(t => ({

@@ -133,7 +133,7 @@ export async function getTeamRoleStatus(orgId: string): Promise<Record<string, {
       client.from('team_members').select('team_id, role').eq('org_id', orgId).in('role', ['captain', 'vice_captain']),
       client.from('invite_whitelist').select('team_id, role').eq('org_id', orgId).is('used_at', null).in('role', ['captain', 'vice_captain']),
       fetchAllRows<{ email: string }>(
-        (from, to) => client.from('invite_whitelist').select('email').eq('org_id', orgId).range(from, to),
+        (from, to) => client.from('invite_whitelist').select('email').eq('org_id', orgId).order('id', { ascending: true }).range(from, to),
       ),
     ])
 

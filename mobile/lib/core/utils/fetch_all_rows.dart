@@ -7,17 +7,26 @@
 ///
 /// National runs 1100+ members, so org-wide member queries cross that line.
 ///
-/// IMPORTANT: the query you build MUST apply a deterministic `.order(...)`.
-/// Paginating with `.range()` over an unordered query is undefined — Postgres
-/// may return rows in a different order per page, which duplicates some rows
-/// and drops others.
+/// REQUIRED: the query MUST end with an `.order()` on a UNIQUE column (`id`).
+///
+/// Paging with `.range()` only means something if the rows have a guaranteed
+/// order. Without one, Postgres may return them in a different order for page 2
+/// than for page 1, so the same row can land on both pages while another is
+/// never returned — the right row COUNT, with duplicates and silent gaps. That
+/// is worse than the truncation this helper exists to fix, because nothing
+/// looks broken.
+///
+/// Ordering on a non-unique column (total_points, created_at, name) is NOT
+/// enough: tied rows can still be reshuffled between pages. Always finish with
+/// `.order('id')` as a tiebreaker, even when a real sort comes first.
 ///
 ///   final rows = await fetchAllRows(
 ///     (from, to) => client
 ///         .from('profiles')
 ///         .select('id, name')
 ///         .eq('org_id', orgId)
-///         .order('total_points', ascending: false)
+///         .order('total_points', ascending: false) // real sort
+///         .order('id', ascending: true)            // unique tiebreaker
 ///         .range(from, to),
 ///   );
 Future<List<dynamic>> fetchAllRows(
