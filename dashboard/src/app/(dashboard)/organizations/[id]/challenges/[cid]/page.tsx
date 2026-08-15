@@ -643,23 +643,29 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
       ? d
       : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
+  // The normal pattern is a CUMULATIVE unlock: a task goes live on its start
+  // date and then stays available every day until the challenge ends, so the
+  // list members see grows as the event runs. Weekly chapters stagger the start
+  // dates a week apart; National staggers them a day apart. Same mechanism.
+  const runsToEnd = (t: TaskUI) => !!t.endDate && t.endDate === challenge.endDate
   const taskWindow = (t: TaskUI): string => {
     if (!t.startDate && !t.endDate) return 'every day'
-    if (t.startDate && t.startDate === t.endDate) return shortDate(t.startDate)
+    if (t.startDate && t.startDate === t.endDate) return `${shortDate(t.startDate)} only`
+    if (t.startDate && runsToEnd(t)) return `from ${shortDate(t.startDate)}, then daily`
     if (t.startDate && t.endDate) return `${shortDate(t.startDate)} → ${shortDate(t.endDate)}`
-    if (t.startDate) return `from ${shortDate(t.startDate)}`
+    if (t.startDate) return `from ${shortDate(t.startDate)}, then daily`
     return `until ${shortDate(t.endDate)}`
   }
   const groupSubtitle = (items: TaskUI[]): string => {
     if (items.length === 0) return ''
     if (items.every(t => !t.startDate && !t.endDate)) {
-      return '— no dates set, so every task here is available every day'
+      return '— no dates set, so these run every day of the challenge'
+    }
+    if (items.every(t => t.startDate && (runsToEnd(t) || !t.endDate))) {
+      return '— unlocks on its start date, then runs daily to the end'
     }
     if (items.every(t => t.startDate && t.startDate === t.endDate)) {
-      const days = new Set(items.map(t => t.startDate))
-      return days.size === 1
-        ? `— ${shortDate(items[0].startDate)} only`
-        : '— one day each, see the date on every task'
+      return '— single day only, does not carry forward'
     }
     return '— each task runs on its own dates'
   }
