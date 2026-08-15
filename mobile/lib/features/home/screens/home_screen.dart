@@ -57,7 +57,7 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
 
-      final teamMembership = await ProfileService.getTeamMembership(profile['id']);
+      final teamMembership = await ProfileService.getTeamMembership(profile['id'], profile['org_id']);
 
       dynamic firstIfList(dynamic val) {
         if (val == null) return null;

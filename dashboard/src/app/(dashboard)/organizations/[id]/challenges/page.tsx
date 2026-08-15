@@ -518,11 +518,11 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
           <div className="space-y-1.5">
             <Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
             <textarea
-              rows={2}
+              rows={12}
               placeholder="e.g. Take a screenshot of your step tracker showing 10,000+ steps."
               value={desc}
               onChange={e => setDesc(e.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+              className="w-full min-h-[220px] rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-y"
             />
           </div>
 
@@ -628,11 +628,11 @@ function ChallengeModal({ open, onClose, editTarget, orgTimezone = 'Asia/Kolkata
           <div className="space-y-1.5">
             <Label htmlFor="c-desc">Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
             <textarea
-              id="c-desc" rows={2}
+              id="c-desc" rows={4}
               placeholder="What should members achieve in this challenge?"
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-y"
             />
           </div>
 

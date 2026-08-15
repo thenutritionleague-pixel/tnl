@@ -87,7 +87,7 @@ class _TasksScreenState extends State<TasksScreen>
       final profile = await ProfileService.getProfile(authId);
       if (profile == null) { if (mounted) setState(() => _loading = false); return; }
 
-      final teamMembership = await ProfileService.getTeamMembership(profile['id']);
+      final teamMembership = await ProfileService.getTeamMembership(profile['id'], profile['org_id']);
       dynamic firstIfList(dynamic v) => (v is List) ? (v.isNotEmpty ? v.first : null) : v;
       final team = firstIfList(teamMembership?['teams']);
       final teamId = team?['id'] as String?;

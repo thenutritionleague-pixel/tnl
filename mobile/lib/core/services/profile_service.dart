@@ -92,8 +92,12 @@ class ProfileService {
     return publicUrl;
   }
 
-  /// Fetch all points transactions for a user, most recent first.
-  static Future<List<Map<String, dynamic>>> getPointsHistory(String userId) async {
+  /// Fetch a user's points transactions for ONE org, most recent first.
+  ///
+  /// Org-scoped for the same reason as [getTeamMembership]: points_transactions
+  /// carries org_id, so a member of two orgs would otherwise see their previous
+  /// event's history mixed into this one's.
+  static Future<List<Map<String, dynamic>>> getPointsHistory(String userId, String orgId) async {
     final data = await _client
         .from('points_transactions')
         .select('''
@@ -104,20 +108,29 @@ class ProfileService {
           )
         ''')
         .eq('user_id', userId)
+        .eq('org_id', orgId)
         .order('created_at', ascending: false)
         .limit(50);
     return List<Map<String, dynamic>>.from(data);
   }
 
-  /// Get team membership for a profile user.
-  static Future<Map<String, dynamic>?> getTeamMembership(String profileId) async {
+  /// Get team membership for a profile user, within a specific org.
+  ///
+  /// The org filter is REQUIRED. A member can belong to a team in more than one
+  /// org (team_members is unique on (org_id, user_id), i.e. one row *per org*),
+  /// which is the case for anyone who played a past city event and also joined
+  /// National. Without the filter this returns 2 rows and `maybeSingle()` throws
+  /// PGRST116, breaking Home, Tasks, Leaderboard, More and Profile for them.
+  static Future<Map<String, dynamic>?> getTeamMembership(String profileId, String orgId) async {
     return await _client
         .from('team_members')
         .select('''
           role,
+          team_id,
           teams!team_members_team_id_fkey(id, name, emoji, color)
         ''')
         .eq('user_id', profileId)
+        .eq('org_id', orgId)
         .maybeSingle();
   }
 

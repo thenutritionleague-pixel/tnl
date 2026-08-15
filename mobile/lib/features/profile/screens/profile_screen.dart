@@ -55,8 +55,8 @@ class _ProfileScreenState extends State<ProfileScreen>
         if (mounted) setState(() => _loading = false);
         return;
       }
-      final team = await ProfileService.getTeamMembership(profile['id']);
-      final history = await ProfileService.getPointsHistory(profile['id']);
+      final team = await ProfileService.getTeamMembership(profile['id'], profile['org_id']);
+      final history = await ProfileService.getPointsHistory(profile['id'], profile['org_id']);
       if (mounted) {
         setState(() {
           _profile = profile;

@@ -469,9 +469,9 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, onSa
 
           <div className="space-y-1.5">
             <Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <textarea rows={2} placeholder="e.g. Upload a screenshot of your step tracker."
+            <textarea rows={12} placeholder="e.g. Upload a screenshot of your step tracker."
               value={desc} onChange={e => setDesc(e.target.value)}
-              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none" />
+              className="w-full min-h-[220px] rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-y" />
           </div>
 
           {/* Proof type — Photo or Video */}

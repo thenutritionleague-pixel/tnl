@@ -39,7 +39,7 @@ class _MoreScreenState extends State<MoreScreen>
       if (profile == null) {
         return;
       }
-      final team = await ProfileService.getTeamMembership(profile['id']);
+      final team = await ProfileService.getTeamMembership(profile['id'], profile['org_id']);
       if (mounted) {
         setState(() {
           _profile = profile;

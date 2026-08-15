@@ -1516,14 +1516,14 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     .select(`
       id, name, description, status, start_date, end_date, manually_closed,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, task_teams(teams(name)))
+      tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, task_teams(teams(name)))
     `)
     .eq('id', challengeId)
     .single()
   if (!ch) return null
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[] }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; proof_type?: 'image' | 'video'; max_video_seconds?: number | null }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
@@ -1546,6 +1546,11 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
       isActive: t.is_active,
       startDate: t.start_date,
       endDate: t.end_date,
+      // Must be carried through: the Edit Task dialog falls back to 'image'
+      // when proofType is missing, so omitting these silently converted a
+      // video task to a photo task on save (and dropped the length limit).
+      proofType: t.proof_type ?? 'image',
+      maxVideoSeconds: t.max_video_seconds ?? null,
     })),
     submissions: count ?? 0,
   }

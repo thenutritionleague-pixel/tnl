@@ -102,7 +102,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       final orgId = profile['org_id'] as String;
 
       // Resolve the user's team first — we need it to filter challenges.
-      final teamMembership = await ProfileService.getTeamMembership(profile['id']);
+      final teamMembership = await ProfileService.getTeamMembership(profile['id'], orgId);
       dynamic firstIfList(dynamic val) {
         if (val == null) return null;
         if (val is List) return val.isNotEmpty ? val.first : null;
