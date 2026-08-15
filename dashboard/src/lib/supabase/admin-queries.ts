@@ -320,8 +320,13 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
     // after a challenge ends. mostRecentStartDate (line ~364) still picks the
     // newest by created_at, which is what the week math needs.
     client.from('challenges').select('id, start_date').eq('org_id', orgId).in('status', ['active', 'completed']).order('created_at', { ascending: false }),
-    client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId),
-    client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId),
+    // Member rosters also cross the 1000-row cap at National scale.
+    fetchAllRows<any>(
+      (from, to) => client.from('team_members').select('user_id, profiles(id, name, avatar_color), teams(id, name, emoji, color)').eq('org_id', orgId).range(from, to),
+    ),
+    fetchAllRows<any>(
+      (from, to) => client.from('org_members').select('user_id, profiles(id, name, avatar_color)').eq('org_id', orgId).range(from, to),
+    ),
     fetchAllRows<{ user_id: string; challenge_id: string | null; submitted_date: string | null; points_awarded: number | null; tasks: { title: string; icon: string; points: number; start_week: number } | null }>(
       (from, to) => client.from('task_submissions')
         .select('user_id, challenge_id, submitted_date, points_awarded, tasks(title, icon, points, start_week)')
@@ -370,14 +375,14 @@ export async function getOrgPointsBreakdown(orgId: string): Promise<{ members: M
   // Build team lookup
   type TmRaw = { user_id: string; profiles: { id: string; name: string; avatar_color: string } | null; teams: { id: string; name: string; emoji: string; color: string } | null }
   const teamMap: Record<string, { id: string; name: string; emoji: string; color: string }> = {}
-  for (const tm of (teamMembersRes.data ?? []) as unknown as TmRaw[]) {
+  for (const tm of (teamMembersRes as unknown as TmRaw[])) {
     if (tm.profiles?.id && tm.teams) teamMap[tm.profiles.id] = tm.teams
   }
 
   // Build member map from org_members
   type OmRaw = { user_id: string; profiles: { id: string; name: string; avatar_color: string } | null }
   const memberMap: Record<string, MemberStatAdmin> = {}
-  for (const om of (orgMembersRes.data ?? []) as unknown as OmRaw[]) {
+  for (const om of (orgMembersRes as unknown as OmRaw[])) {
     const p = om.profiles
     if (!p) continue
     const t = teamMap[p.id]
@@ -603,13 +608,21 @@ export interface InviteEntry {
 
 export async function getInviteWhitelist(orgId: string): Promise<{ invites: InviteEntry[]; teams: Array<{ id: string; name: string }> }> {
   const client = await createAdminClient()
-  const [invitesRes, teamsRes] = await Promise.all([
-    client.from('invite_whitelist').select('id, email, team_id, role, used_at, created_at, teams(name)').eq('org_id', orgId).order('created_at', { ascending: false }),
+  type InviteRow = { id: string; email: string; team_id: string | null; role: string; used_at: string | null; created_at: string; teams: { name: string } | null }
+
+  // National runs >1000 whitelisted members, so this must paginate — an
+  // unbounded select silently stopped at PostgREST's 1000-row cap and the
+  // page reported "1000 awaiting signup" while the table held more.
+  const [invitesRows, teamsRes] = await Promise.all([
+    fetchAllRows<InviteRow>(
+      (from, to) => client.from('invite_whitelist')
+        .select('id, email, team_id, role, used_at, created_at, teams(name)')
+        .eq('org_id', orgId).order('created_at', { ascending: false }).range(from, to),
+    ),
     client.from('teams').select('id, name').eq('org_id', orgId).order('name'),
   ])
 
-  type InviteRow = { id: string; email: string; team_id: string | null; role: string; used_at: string | null; created_at: string; teams: { name: string } | null }
-  const invites: InviteEntry[] = ((invitesRes.data ?? []) as unknown as InviteRow[]).map(i => ({
+  const invites: InviteEntry[] = invitesRows.map(i => ({
     id: i.id,
     email: i.email,
     teamId: i.team_id ?? null,
@@ -740,22 +753,28 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
     .order('id', { ascending: false })
     .range(from, to + 1)
 
-  const [subsRes, teamMemsRes, profilesRes, orgRes] = await Promise.all([
+  // These two are name/team lookup maps for the submissions on this page.
+  // They must cover EVERY member, not the first 1000 — at National (1100+
+  // members) an unbounded select truncated the map and the approvals screen
+  // rendered "Unknown" / "Unassigned" for whoever fell past the cap.
+  const [subsRes, teamMems, profiles, orgRes] = await Promise.all([
     subsQuery,
-    client
-      .from('team_members')
-      .select('user_id, teams!team_id(name)')
-      .eq('org_id', orgId),
-    client
-      .from('profiles')
-      .select('id, name')
-      .eq('org_id', orgId),
+    fetchAllRows<{ user_id: string; teams: { name: string } | null }>(
+      (from, to) => client
+        .from('team_members')
+        .select('user_id, teams!team_id(name)')
+        .eq('org_id', orgId).range(from, to),
+    ),
+    fetchAllRows<{ id: string; name: string }>(
+      (from, to) => client
+        .from('profiles')
+        .select('id, name')
+        .eq('org_id', orgId).range(from, to),
+    ),
     client.from('organizations').select('timezone').eq('id', orgId).single(),
   ])
 
   if (subsRes.error)   console.error('getOrgApprovals subs error:', subsRes.error)
-  if (teamMemsRes.error) console.error('getOrgApprovals teams error:', teamMemsRes.error)
-  if (profilesRes.error) console.error('getOrgApprovals profiles error:', profilesRes.error)
 
   const orgTz: string = (orgRes.data as { timezone: string | null } | null)?.timezone || 'UTC'
   // Format an ISO timestamp as "9:54 PM" in the org's timezone.
@@ -775,11 +794,10 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   const teamMap: Record<string, string>    = {}
   const profileMap: Record<string, string> = {}
 
-  type TeamMemberRow = { user_id: string; teams: { name: string } | null }
-  for (const tm of (teamMemsRes.data ?? []) as unknown as TeamMemberRow[]) {
+  for (const tm of teamMems) {
     teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
   }
-  for (const p of (profilesRes.data ?? []) as { id: string; name: string }[]) {
+  for (const p of profiles) {
     profileMap[p.id] = p.name
   }
 
@@ -1153,17 +1171,23 @@ export interface OrgMemberForAdjust {
 
 export async function getOrgMembersForAdjust(orgId: string): Promise<OrgMemberForAdjust[]> {
   const client = await createAdminClient()
-  const [membersRes, teamMemsRes] = await Promise.all([
-    client.from('org_members').select('user_id, profiles(id, name)').eq('org_id', orgId),
-    client.from('team_members').select('user_id, teams(name)').eq('org_id', orgId),
+  // Both cross 1000 rows at National scale — paginate or the adjust-points
+  // picker silently omits members past the cap.
+  const [members, teamMems] = await Promise.all([
+    fetchAllRows<any>(
+      (from, to) => client.from('org_members').select('user_id, profiles(id, name)').eq('org_id', orgId).range(from, to),
+    ),
+    fetchAllRows<any>(
+      (from, to) => client.from('team_members').select('user_id, teams(name)').eq('org_id', orgId).range(from, to),
+    ),
   ])
 
   const teamMap: Record<string, string> = {}
-  for (const tm of (teamMemsRes.data ?? []) as any[]) {
+  for (const tm of teamMems) {
     teamMap[tm.user_id] = tm.teams?.name ?? 'Unassigned'
   }
 
-  return ((membersRes.data ?? []) as any[])
+  return members
     .filter((m: any) => m.profiles)
     .map((m: any) => ({
       id: m.profiles.id,
