@@ -25,6 +25,9 @@ class _TasksScreenState extends State<TasksScreen>
   String? _profileId;
   String? _orgId;
   String _orgTimezone = 'UTC';
+  /// 'week' for city events (a new task each week), 'day' for National (a new
+  /// task each day). Only affects wording — grouping is by week_number either way.
+  String _periodLabel = 'week';
   int? _selectedWeek; // null = show all
   Timer? _timer;
   Timer? _pendingRefreshTimer;
@@ -43,6 +46,9 @@ class _TasksScreenState extends State<TasksScreen>
     _pendingRefreshTimer?.cancel();
     super.dispose();
   }
+
+  /// 'Week' or 'Day', capitalised for display.
+  String _periodWord() => _periodLabel == 'day' ? 'Day' : 'Week';
 
   void _startCountdown() {
     _updateCountdown();
@@ -96,12 +102,14 @@ class _TasksScreenState extends State<TasksScreen>
 
       final tasks = await TaskService.getActiveTasks(profile['org_id'], teamId);
       final subs = await TaskService.getUserSubmissions(profile['id'], profile['org_id']);
+      final periodLabel = await TaskService.getPeriodLabel(profile['org_id']);
 
       if (mounted) {
         setState(() {
           _profileId = profile['id'];
           _orgId = profile['org_id'];
           _orgTimezone = orgTz;
+          _periodLabel = periodLabel;
           _tasks = tasks;
           _submissions = subs;
           _loading = false;
@@ -268,7 +276,7 @@ class _TasksScreenState extends State<TasksScreen>
                             onTap: () => setState(() => _selectedWeek = null),
                           ),
                           ...weeks.map((w) => _WeekTab(
-                            label: 'Week $w',
+                            label: '${_periodWord()} $w',
                             selected: _selectedWeek == w,
                             onTap: () => setState(() => _selectedWeek = w),
                           )),
@@ -328,6 +336,7 @@ class _TasksScreenState extends State<TasksScreen>
                         children: [
                           _WeekHeader(
                             week: week,
+                            periodWord: _periodWord(),
                             taskCount: weekTasks.length,
                             completedCount: completedCount,
                           ),
@@ -361,9 +370,16 @@ class _TasksScreenState extends State<TasksScreen>
 
 class _WeekHeader extends StatelessWidget {
   final int week;
+  /// 'Week' or 'Day' — city events add a task each week, National each day.
+  final String periodWord;
   final int taskCount;
   final int completedCount;
-  const _WeekHeader({required this.week, required this.taskCount, required this.completedCount});
+  const _WeekHeader({
+    required this.week,
+    required this.periodWord,
+    required this.taskCount,
+    required this.completedCount,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -379,7 +395,7 @@ class _WeekHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              'Since Week $week',
+              'Since $periodWord $week',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,

@@ -74,6 +74,31 @@ class TaskService {
     return List<Map<String, dynamic>>.from(tasks);
   }
 
+  /// How this org's active challenge labels its task groups: 'week' or 'day'.
+  ///
+  /// City events release one new task per week; National releases one per day.
+  /// The unlock mechanism is identical — a task goes live on its start date and
+  /// then runs daily to the end — this only decides the word members see.
+  ///
+  /// Defaults to 'week' on any failure so the display can never break because
+  /// of a label lookup.
+  static Future<String> getPeriodLabel(String orgId) async {
+    try {
+      final rows = await _client
+          .from('challenges')
+          .select('period_label')
+          .eq('org_id', orgId)
+          .eq('status', 'active')
+          .order('created_at', ascending: false)
+          .limit(1);
+      final list = List<Map<String, dynamic>>.from(rows);
+      if (list.isEmpty) return 'week';
+      return (list.first['period_label'] as String?) == 'day' ? 'day' : 'week';
+    } catch (_) {
+      return 'week';
+    }
+  }
+
   /// Get all submissions for a user in active challenges.
   static Future<List<Map<String, dynamic>>> getUserSubmissions(
     String userId,
