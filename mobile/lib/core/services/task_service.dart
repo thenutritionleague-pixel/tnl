@@ -332,23 +332,15 @@ class TaskService {
       // — Bunny Stream transcodes any input to browser-safe MP4 server-side.
       // Bunny bucket accepts up to 500 MB. iPhone 90s .mov typically 60-150 MB.
 
-      // Enforce the task's own length limit on web too. video_compress can't
-      // probe here, so read the duration through video_player, which supports
-      // the blob URL the picker hands us. Without this the per-task
-      // max_video_seconds (60 / 90 / 120 …) was silently ignored on web, which
-      // is the only platform members actually use.
+      // SECURE THE BYTES FIRST — before anything else touches the blob.
       //
-      // Fail OPEN: if the duration can't be determined we let the submission
-      // through. Blocking a genuine member because their browser wouldn't
-      // report metadata is worse than accepting an over-length clip.
-      final probedSeconds = await _probeVideoDurationSeconds(videoFile);
-      if (probedSeconds != null && probedSeconds > maxDurationSeconds + 1) {
-        throw VideoTooLongException(probedSeconds, maxDurationSeconds);
-      }
-
-      // Prefer bytes read at PICK time — on web the blob backing videoFile may
-      // have been evicted by now ("Could not load Blob"). Fall back to a fresh
-      // read only if no preloaded bytes were passed.
+      // Prefer bytes read at PICK time. On web the picker hands us a temporary
+      // blob reference the browser can evict while the member is still on the
+      // screen, which is the "Could not load Blob" failure. Reading at pick
+      // time (task_submission_screen.dart) is what fixes that; here we simply
+      // use those bytes and only fall back to a fresh read if none were passed.
+      //
+      // Nothing above this line may read videoFile — ordering is the guarantee.
       final raw = preloadedBytes ?? await videoFile.readAsBytes();
       if (raw.lengthInBytes > 500 * 1024 * 1024) {
         final mb = (raw.lengthInBytes / (1024 * 1024)).toStringAsFixed(1);
@@ -357,6 +349,22 @@ class TaskService {
         );
       }
       bytes = raw;
+
+      // Only now enforce the task's own length limit. video_compress has no web
+      // implementation, so duration is read through video_player using the blob
+      // URL. Without this the per-task max_video_seconds (60 / 90 / 120 …) was
+      // silently ignored on web — the only platform members actually use.
+      //
+      // Runs AFTER the bytes are in memory so that even if this probe disturbs
+      // or exhausts the blob, the upload still has everything it needs.
+      //
+      // Fail OPEN: if the duration can't be determined we let the submission
+      // through. Blocking a genuine member because their browser wouldn't
+      // report metadata is worse than accepting an over-length clip.
+      final probedSeconds = await _probeVideoDurationSeconds(videoFile);
+      if (probedSeconds != null && probedSeconds > maxDurationSeconds + 1) {
+        throw VideoTooLongException(probedSeconds, maxDurationSeconds);
+      }
       uploadExt = rawExt;
       uploadMime = switch (rawExt) {
         '.mov' || '.m4v' => 'video/quicktime',
