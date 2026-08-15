@@ -43,6 +43,7 @@ class BunnyVideoService {
   /// slower resume; smaller = more overhead but smoother progress + easier
   /// recovery. 2 MB is the sweet spot for typical mobile networks.
   static const _chunkSize = 2 * 1024 * 1024; // 2 MB
+  static const _chunkRetries = 3; // per-chunk attempts before giving up
 
   /// Call the `bunny-upload-init` edge function to reserve a video slot
   /// on Bunny and get signed upload credentials.
@@ -145,39 +146,110 @@ class BunnyVideoService {
     int offset = 0;
     final total = bytes.lengthInBytes;
 
+    // Chunks are retried individually, and on failure we ask the server where it
+    // actually got to (TUS HEAD) and resume from there.
+    //
+    // Without this, ONE dropped chunk threw away the whole upload — and on web
+    // there is no compression, so a phone clip can be 100-200 MB over mobile
+    // data. Losing that at 90% and asking the member to re-record is the worst
+    // failure we can hand them. TUS is a resumable protocol; we now use it.
+    // Safety budget: bounds total work even if the server keeps re-syncing us
+    // to the same place, so a pathological case can never spin forever.
+    int budget = (total ~/ _chunkSize + 2) * _chunkRetries + 10;
+
     while (offset < total) {
+      if (--budget < 0) {
+        throw BunnyUploadFailedException('tus upload stalled at offset $offset of $total');
+      }
+
       final end = (offset + _chunkSize > total) ? total : offset + _chunkSize;
       final chunk = Uint8List.sublistView(bytes, offset, end);
 
-      final patchReq = http.Request('PATCH', patchUri);
-      patchReq.headers.addAll({
-        ...headers,
-        'Tus-Resumable':  '1.0.0',
-        'Upload-Offset':  offset.toString(),
-        'Content-Type':   'application/offset+octet-stream',
-        'Content-Length': chunk.lengthInBytes.toString(),
-      });
-      patchReq.bodyBytes = chunk;
+      int? committed;   // authoritative offset after a successful PATCH
+      Object? lastErr;
+      bool resynced = false;
 
-      final streamed = await patchReq.send();
-      final patchRes = await http.Response.fromStream(streamed);
+      for (int attempt = 0; attempt < _chunkRetries; attempt++) {
+        if (attempt > 0) {
+          await Future.delayed(Duration(seconds: attempt * 2)); // 2s, 4s
+          // Re-sync before re-sending: the server may have committed part or
+          // all of the chunk before the connection dropped. Re-sending from a
+          // stale offset would corrupt the file, so trust the server.
+          final serverOffset = await _headOffset(patchUri, headers);
+          if (serverOffset != null && serverOffset != offset) {
+            offset = serverOffset;
+            resynced = true;
+            break; // rebuild the slice from the authoritative offset
+          }
+        }
+        try {
+          final patchReq = http.Request('PATCH', patchUri);
+          patchReq.headers.addAll({
+            ...headers,
+            'Tus-Resumable':  '1.0.0',
+            'Upload-Offset':  offset.toString(),
+            'Content-Type':   'application/offset+octet-stream',
+            'Content-Length': chunk.lengthInBytes.toString(),
+          });
+          patchReq.bodyBytes = chunk;
 
-      if (patchRes.statusCode != 204) {
-        throw BunnyUploadFailedException(
-          'tus patch failed at offset $offset (${patchRes.statusCode}): ${patchRes.body}',
-        );
+          final streamed = await patchReq.send();
+          final patchRes = await http.Response.fromStream(streamed);
+
+          if (patchRes.statusCode != 204) {
+            lastErr = BunnyUploadFailedException(
+              'tus patch failed at offset $offset (${patchRes.statusCode}): ${patchRes.body}',
+            );
+            continue; // retry this chunk
+          }
+
+          final newOffsetHeader =
+              patchRes.headers['upload-offset'] ?? patchRes.headers['Upload-Offset'];
+          committed = int.tryParse(newOffsetHeader ?? '') ?? end;
+          break; // chunk done
+        } catch (e) {
+          lastErr = e; // network drop → retry
+        }
       }
 
-      // Advance offset from Upload-Offset response header (authoritative)
-      final newOffsetHeader = patchRes.headers['upload-offset'] ?? patchRes.headers['Upload-Offset'];
-      final newOffset = int.tryParse(newOffsetHeader ?? '') ?? end;
-      offset = newOffset;
+      if (resynced) {
+        onProgress?.call(offset / total);
+        continue; // slice recomputed from the server's offset
+      }
+      if (committed == null) {
+        throw lastErr is BunnyUploadFailedException
+            ? lastErr
+            : BunnyUploadFailedException('tus patch failed at offset $offset: $lastErr');
+      }
 
+      offset = committed;
       onProgress?.call(offset / total);
     }
 
     onProgress?.call(1);
     return init.proofUrl;
+  }
+
+  /// Ask the TUS server how many bytes it has actually stored.
+  ///
+  /// After a dropped connection the client cannot know whether the server
+  /// committed the chunk, so resuming from our own offset risks duplicating or
+  /// skipping bytes. HEAD returns the authoritative Upload-Offset.
+  ///
+  /// Returns null if the probe itself fails — the caller then treats the upload
+  /// as unresumable and surfaces the original error rather than guessing.
+  static Future<int?> _headOffset(Uri patchUri, Map<String, String> headers) async {
+    try {
+      final res = await http.head(patchUri, headers: {
+        ...headers,
+        'Tus-Resumable': '1.0.0',
+      }).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200 && res.statusCode != 204) return null;
+      final raw = res.headers['upload-offset'] ?? res.headers['Upload-Offset'];
+      return int.tryParse(raw ?? '');
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Bunny requires these headers on every TUS request. Signature auth
