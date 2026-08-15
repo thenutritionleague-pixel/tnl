@@ -1337,10 +1337,15 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
   const { data: profile } = await client.from('profiles').select('*').eq('id', memberId).single()
   if (!profile) return null
 
+  // Org-scoped: a member can be on a team in more than one org (team_members is
+  // unique per (org_id, user_id)). Without this filter the query returns 2 rows
+  // for anyone who played a previous event, maybeSingle() errors, and the member
+  // detail page renders them as having no team.
   const { data: teamMember } = await client
     .from('team_members')
     .select('role, teams(name)')
     .eq('user_id', memberId)
+    .eq('org_id', orgId)
     .maybeSingle()
 
   // Rank by total_points (includes manual adjustments, not just task submissions).

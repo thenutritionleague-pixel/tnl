@@ -480,10 +480,17 @@ Deno.serve(async (req: Request) => {
       let crossTaskTitle: string | null = null
       const myHash = await computeDHash(bytes)
       if (myHash) {
-        // Compare against ALL the member's recent approved proofs (not just this
-        // task) so the same photo reused for a DIFFERENT task is caught too.
+        // Compare against the member's recent approved proofs in THIS org (not
+        // just this task) so the same photo reused for a DIFFERENT task is
+        // caught too.
+        //
+        // The org filter is essential: a member can play more than one event,
+        // and without it we compare against proofs from a finished event. That
+        // rejects a genuine new submission with "you already submitted this
+        // photo for <task>" naming a task they did months ago in another org.
         const { data: prevHashed } = await supabase.from('task_submissions')
           .select('id, task_id, proof_hash, tasks(title)').eq('user_id', sub.user_id)
+          .eq('org_id', orgId)
           .eq('status', 'approved').not('proof_hash', 'is', null).neq('id', submissionId)
           .order('submitted_at', { ascending: false }).limit(50)
         for (const p of prevHashed ?? []) {
