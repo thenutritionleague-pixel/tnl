@@ -633,43 +633,6 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
   const existingWeeks = [...new Set(challenge.tasks.map(t => t.weekNumber))].sort((a, b) => a - b)
   const weeks = groupByWeek(challenge.tasks)
 
-  // Show a task's real availability. Visibility is driven ONLY by start_date /
-  // end_date (see get_mobile_tasks) — week_number is just a grouping label, so
-  // the header must not claim a cadence the data does not have.
-  const shortDate = (d?: string) => {
-    if (!d) return ''
-    const parsed = new Date(`${d}T00:00:00`)
-    return isNaN(parsed.getTime())
-      ? d
-      : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  }
-  // The normal pattern is a CUMULATIVE unlock: a task goes live on its start
-  // date and then stays available every day until the challenge ends, so the
-  // list members see grows as the event runs. Weekly chapters stagger the start
-  // dates a week apart; National staggers them a day apart. Same mechanism.
-  const runsToEnd = (t: TaskUI) => !!t.endDate && t.endDate === challenge.endDate
-  const taskWindow = (t: TaskUI): string => {
-    if (!t.startDate && !t.endDate) return 'every day'
-    if (t.startDate && t.startDate === t.endDate) return `${shortDate(t.startDate)} only`
-    if (t.startDate && runsToEnd(t)) return `from ${shortDate(t.startDate)}, then daily`
-    if (t.startDate && t.endDate) return `${shortDate(t.startDate)} → ${shortDate(t.endDate)}`
-    if (t.startDate) return `from ${shortDate(t.startDate)}, then daily`
-    return `until ${shortDate(t.endDate)}`
-  }
-  const groupSubtitle = (items: TaskUI[]): string => {
-    if (items.length === 0) return ''
-    if (items.every(t => !t.startDate && !t.endDate)) {
-      return '— no dates set, so these run every day of the challenge'
-    }
-    if (items.every(t => t.startDate && (runsToEnd(t) || !t.endDate))) {
-      return '— unlocks on its start date, then runs daily to the end'
-    }
-    if (items.every(t => t.startDate && t.startDate === t.endDate)) {
-      return '— single day only, does not carry forward'
-    }
-    return '— each task runs on its own dates'
-  }
-
   return (
     <div className="space-y-6">
       {/* Back + Header */}
@@ -758,7 +721,7 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
             <div key={week} className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-muted/40 border-b border-border">
                 <p className="text-xs font-bold text-primary uppercase tracking-wider">
-                  Week {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">{groupSubtitle(items)}</span>
+                  Week {week} <span className="text-muted-foreground font-normal normal-case tracking-normal">— repeats every week from here</span>
                 </p>
               </div>
               <div className="divide-y divide-border">
@@ -769,10 +732,6 @@ export default function ChallengeDetailPage({ params }: { params: Promise<{ id: 
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className={cn('text-sm font-semibold', !task.isActive && 'line-through text-muted-foreground')}>{task.title}</p>
                         <span className="text-[11px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-medium">{task.category}</span>
-                        {/* When this task is actually visible to members */}
-                        <span className="text-[11px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium whitespace-nowrap">
-                          {taskWindow(task)}
-                        </span>
                         {!task.isActive && <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full">inactive</span>}
                       </div>
                       {task.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{task.description}</p>}
