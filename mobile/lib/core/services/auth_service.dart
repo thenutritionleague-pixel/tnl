@@ -21,13 +21,16 @@ class AuthService {
           .maybeSingle();
       if (profile != null) return 'profile';
 
+      // limit(1), not maybeSingle(): an email can be whitelisted in more than
+      // one org, and maybeSingle() throws on multiple rows. We only need to
+      // know whether ANY pending invite exists.
       final invite = await _client
           .from('invite_whitelist')
           .select('id')
           .eq('email', email.trim())
           .isFilter('used_at', null)
-          .maybeSingle();
-      if (invite != null) return 'invite';
+          .limit(1);
+      if ((invite as List).isNotEmpty) return 'invite';
 
       return null;
     }

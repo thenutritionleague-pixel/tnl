@@ -154,12 +154,28 @@ class ProfileService {
     return response as Map<String, dynamic>;
   }
 
-  /// Fetch an invite whitelist entry by email (any status).
+  /// Fetch the invite whitelist entry to use for this email (any status).
+  ///
+  /// A person can be whitelisted in more than one org — invite_whitelist is
+  /// unique on (org_id, email), so anyone who played a previous city event and
+  /// also joined National has TWO rows. `.maybeSingle()` throws on 2 rows
+  /// (postgrest_builder.dart: GET + maybeSingle throws when body.length > 1),
+  /// and on the login path that exception surfaced as "Invalid or expired code",
+  /// locking those members out with a message blaming their OTP.
+  ///
+  /// Pick deterministically instead: the most recently created invite, which is
+  /// the current event. (Do NOT order by used_at — a returning member's old
+  /// invite was consumed months earlier, so "oldest used first" would resolve
+  /// them back to the finished event.)
   static Future<Map<String, dynamic>?> getInvite(String email) async {
-    return await _client
+    final rows = await _client
         .from('invite_whitelist')
         .select('id, org_id, team_id, role, used_at')
         .eq('email', email.trim())
-        .maybeSingle();
+        .order('created_at', ascending: false)
+        .order('id', ascending: false)
+        .limit(1);
+    final list = List<Map<String, dynamic>>.from(rows);
+    return list.isEmpty ? null : list.first;
   }
 }

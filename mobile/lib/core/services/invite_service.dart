@@ -34,17 +34,21 @@ class InviteService {
     }
 
     // ── 2. Check if already invited to a different org ──
-    final otherInvite = await _client
+    // limit(1), not maybeSingle(): someone can hold pending invites in several
+    // orgs, and maybeSingle() throws on multiple rows. One example is enough
+    // for the message.
+    final otherInvites = await _client
         .from('invite_whitelist')
         .select('org_id, organizations(name)')
         .eq('email', cleanEmail)
         .isFilter('used_at', null)
         .neq('org_id', orgId)
-        .maybeSingle();
+        .limit(1);
 
-    if (otherInvite != null) {
+    final otherList = List<Map<String, dynamic>>.from(otherInvites);
+    if (otherList.isNotEmpty) {
       final orgName =
-          (otherInvite['organizations'] as Map?)?['name'] as String? ??
+          (otherList.first['organizations'] as Map?)?['name'] as String? ??
               'another organisation';
       return 'This email already has a pending invite for $orgName.';
     }
