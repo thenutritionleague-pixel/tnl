@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
+import { fetchAllRows } from '@/lib/supabase/fetch-all'
 import { getAdminProfile } from '@/lib/auth'
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
@@ -125,10 +126,15 @@ export async function getTeamRoleStatus(orgId: string): Promise<Record<string, {
     if (!profile) return {}
     const client = await createAdminClient()
 
-    const [{ data: activeMembers }, { data: pendingInvites }, { data: existingEmails }] = await Promise.all([
+    // existingEmails powers the CSV importer's duplicate detection. It must
+    // cover every whitelisted address — truncating at 1000 made the importer
+    // report "no duplicate" for members past the cap and re-add them.
+    const [{ data: activeMembers }, { data: pendingInvites }, existingEmails] = await Promise.all([
       client.from('team_members').select('team_id, role').eq('org_id', orgId).in('role', ['captain', 'vice_captain']),
       client.from('invite_whitelist').select('team_id, role').eq('org_id', orgId).is('used_at', null).in('role', ['captain', 'vice_captain']),
-      client.from('invite_whitelist').select('email').eq('org_id', orgId),
+      fetchAllRows<{ email: string }>(
+        (from, to) => client.from('invite_whitelist').select('email').eq('org_id', orgId).range(from, to),
+      ),
     ])
 
     const result: Record<string, { captain: boolean; vice_captain: boolean }> = {}
@@ -141,7 +147,7 @@ export async function getTeamRoleStatus(orgId: string): Promise<Record<string, {
     for (const r of activeMembers ?? []) setTaken(r.team_id, r.role)
     for (const r of pendingInvites ?? []) setTaken(r.team_id, r.role)
 
-    const emails = (existingEmails ?? []).map((r: any) => (r.email as string).toLowerCase().trim())
+    const emails = existingEmails.map(r => r.email.toLowerCase().trim())
     return { ...result, __existingEmails: emails as any }
   } catch {
     return {}

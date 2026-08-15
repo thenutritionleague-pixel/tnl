@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/fetch_all_rows.dart';
 
 class LeaderboardService {
   static final _client = Supabase.instance.client;
@@ -55,13 +56,22 @@ class LeaderboardService {
   static Future<List<Map<String, dynamic>>> getMemberLeaderboard(
     String orgId,
   ) async {
-    final data = await _client
-        .from('profiles')
-        .select('id, name, avatar_color, avatar_url, total_points, team_members(teams(name, emoji))')
-        .eq('org_id', orgId)
-        .order('total_points', ascending: false);
+    // Paginated: National has 1100+ members, so an unbounded select returned
+    // only the first 1000 rows. Ordered by points descending, that silently cut
+    // the lowest-scoring members off the end — they could never find themselves
+    // on the leaderboard. Secondary sort on id keeps page boundaries stable
+    // when several members are tied on points.
+    final data = await fetchAllRows(
+      (from, to) => _client
+          .from('profiles')
+          .select('id, name, avatar_color, avatar_url, total_points, team_members(teams(name, emoji))')
+          .eq('org_id', orgId)
+          .order('total_points', ascending: false)
+          .order('id', ascending: true)
+          .range(from, to),
+    );
 
-    return (data as List).map<Map<String, dynamic>>((member) {
+    return data.map<Map<String, dynamic>>((member) {
       final teamMembers = member['team_members'] as List?;
       final team = (teamMembers != null && teamMembers.isNotEmpty)
           ? (teamMembers.first['teams'] as Map?)
@@ -83,13 +93,22 @@ class LeaderboardService {
   static Future<Map<String, List<Map<String, dynamic>>>> getTeamMemberPreviews(
     String orgId,
   ) async {
-    final data = await _client
-        .from('team_members')
-        .select('team_id, profiles!inner(name, avatar_color, avatar_url)')
-        .eq('org_id', orgId);
+    // Paginated + explicitly ordered: this covers every team in the org, so at
+    // 1100+ members it crossed the 1000-row cap and some teams rendered with
+    // missing member avatars. The order is required for .range() to page
+    // deterministically.
+    final data = await fetchAllRows(
+      (from, to) => _client
+          .from('team_members')
+          .select('team_id, profiles!inner(name, avatar_color, avatar_url)')
+          .eq('org_id', orgId)
+          .order('team_id', ascending: true)
+          .order('user_id', ascending: true)
+          .range(from, to),
+    );
 
     final Map<String, List<Map<String, dynamic>>> result = {};
-    for (final m in data as List) {
+    for (final m in data) {
       final teamId = m['team_id'] as String;
       final profile = m['profiles'] as Map;
       result.putIfAbsent(teamId, () => []).add({

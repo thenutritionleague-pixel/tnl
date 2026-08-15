@@ -277,15 +277,20 @@ export async function getOrganization(id: string): Promise<OrgDetail | null> {
       .order('created_at', { ascending: true }),
   ])
 
-  // Total org points (all approved submissions)
-  const { data: ptsData } = await supabase
-    .from('task_submissions')
-    .select('points_awarded')
-    .eq('org_id', id)
-    .eq('status', 'approved')
+  // Total org points (all approved submissions).
+  // Must paginate: this sums every approved row in JS, so the unbounded select
+  // capped at 1000 and under-reported the org total by an order of magnitude
+  // once an event passed 1000 approvals.
+  const ptsData = await fetchAllRows<{ points_awarded: number | null }>(
+    (from, to) => supabase
+      .from('task_submissions')
+      .select('points_awarded')
+      .eq('org_id', id)
+      .eq('status', 'approved')
+      .range(from, to),
+  )
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const totalPoints = (ptsData ?? []).reduce((sum: number, s: any) => sum + (s.points_awarded ?? 0), 0)
+  const totalPoints = ptsData.reduce((sum, s) => sum + (s.points_awarded ?? 0), 0)
 
   const activeChallenges = (challengesRes.data ?? [])
     .filter((c: { status: string }) => c.status === 'active')
@@ -362,25 +367,34 @@ export async function getOrgMembers(orgId: string): Promise<OrgMember[]> {
   //    total_points is maintained by the handle_submission_approved trigger
   //    on task_submissions — so reading it directly avoids summing thousands
   //    of submission rows (which would silently truncate at 1000).
-  const { data: profiles, error: pErr } = await supabase
-    .from('profiles')
-    .select('id, name, email, avatar_color, total_points, created_at')
-    .eq('org_id', orgId)
-    .order('created_at', { ascending: true })
+  // All three cross PostgREST's 1000-row cap at National scale (1100+ members),
+  // which silently dropped everyone past row 1000 from the Members page.
+  const profiles = await fetchAllRows<any>(
+    (from, to) => supabase
+      .from('profiles')
+      .select('id, name, email, avatar_color, total_points, created_at')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: true })
+      .range(from, to),
+  )
 
-  if (pErr || !profiles) return []
+  if (!profiles.length) return []
 
   // 2. Fetch Org roles separately
-  const { data: orgRoles } = await supabase
-    .from('org_members')
-    .select('user_id, role, joined_at')
-    .eq('org_id', orgId)
+  const orgRoles = await fetchAllRows<any>(
+    (from, to) => supabase
+      .from('org_members')
+      .select('user_id, role, joined_at')
+      .eq('org_id', orgId).range(from, to),
+  )
 
   // 3. Fetch Team assignments separately
-  const { data: teamAssignments } = await supabase
-    .from('team_members')
-    .select('user_id, role, team_id, teams(id, name)')
-    .eq('org_id', orgId)
+  const teamAssignments = await fetchAllRows<any>(
+    (from, to) => supabase
+      .from('team_members')
+      .select('user_id, role, team_id, teams(id, name)')
+      .eq('org_id', orgId).range(from, to),
+  )
 
   const roleMap: Record<string, { role: string; joinedAt: string }> = {}
   for (const or of (orgRoles ?? []) as any[]) {
@@ -769,15 +783,21 @@ export async function getAvailableMembers(orgId: string): Promise<AvailableMembe
   const supabase = await db()
 
   // Members in org but not in any team for this org
-  const { data: allMembers } = await supabase
-    .from('org_members')
-    .select('profiles(id, name, avatar_color)')
-    .eq('org_id', orgId)
+  // Both cross 1000 rows at National scale — unpaginated, the "available
+  // members" picker silently hid everyone past the cap.
+  const allMembers = await fetchAllRows<any>(
+    (from, to) => supabase
+      .from('org_members')
+      .select('profiles(id, name, avatar_color)')
+      .eq('org_id', orgId).range(from, to),
+  )
 
-  const { data: teamMemberIds } = await supabase
-    .from('team_members')
-    .select('user_id')
-    .eq('org_id', orgId)
+  const teamMemberIds = await fetchAllRows<{ user_id: string }>(
+    (from, to) => supabase
+      .from('team_members')
+      .select('user_id')
+      .eq('org_id', orgId).range(from, to),
+  )
 
   const assignedIds = new Set((teamMemberIds ?? []).map((r: { user_id: string }) => r.user_id))
 
@@ -1110,16 +1130,22 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
 
   const results: ChallengeUI[] = []
 
-  // Get submission counts for all challenges in one go
-  const { data: counts } = await supabase
-    .from('task_submissions')
-    .select('challenge_id')
-    .eq('org_id', orgId)
-
+  // Submission count per challenge. Previously this pulled every submission row
+  // for the org and tallied them in JS, which both capped at 1000 (under-reporting
+  // the count) and moved tens of thousands of rows to count them. An org has only
+  // a handful of challenges, so ask Postgres for an exact count per challenge —
+  // head:true returns the count with no row payload at all.
   const countMap: Record<string, number> = {}
-  counts?.forEach((s: any) => {
-    countMap[s.challenge_id] = (countMap[s.challenge_id] || 0) + 1
-  })
+  await Promise.all(
+    (challenges as unknown as ChRaw[]).map(async ch => {
+      const { count } = await supabase
+        .from('task_submissions')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId)
+        .eq('challenge_id', ch.id)
+      countMap[ch.id] = count ?? 0
+    }),
+  )
 
   for (const ch of challenges as unknown as ChRaw[]) {
     const computed = effectiveStatus(ch.status, ch.start_date, ch.end_date, ch.manually_closed, orgTz)

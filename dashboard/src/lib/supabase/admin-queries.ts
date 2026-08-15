@@ -100,9 +100,14 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
 
   const orgIds = orgs.map(o => o.id)
 
-  const [challengesRes, membersRes, teamsRes] = await Promise.all([
+  // org_members is tallied per-org in JS. Across all orgs this is now >1000
+  // rows (National alone is 1100+), so an unbounded select truncated and the
+  // organizations list under-reported member counts.
+  const [challengesRes, members, teamsRes] = await Promise.all([
     client.from('challenges').select('id, org_id').in('org_id', orgIds),
-    client.from('org_members').select('org_id').in('org_id', orgIds),
+    fetchAllRows<{ org_id: string }>(
+      (from, to) => client.from('org_members').select('org_id').in('org_id', orgIds).range(from, to),
+    ),
     client.from('teams').select('org_id').in('org_id', orgIds),
   ])
 
@@ -114,7 +119,7 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
 
   const memberCounts: Record<string, number> = {}
   const teamCounts: Record<string, number> = {}
-  for (const m of (membersRes.data ?? []) as { org_id: string }[]) {
+  for (const m of members) {
     memberCounts[m.org_id] = (memberCounts[m.org_id] ?? 0) + 1
   }
   for (const t of (teamsRes.data ?? []) as { org_id: string }[]) {
@@ -124,11 +129,16 @@ export async function getDashboardOrgs(): Promise<DashboardOrg[]> {
   const allChallengeIds = Object.values(challengesByOrg).flat()
   const pendingByOrg: Record<string, number> = {}
   if (allChallengeIds.length > 0) {
-    const { data: pending } = await client
-      .from('task_submissions')
-      .select('challenge_id')
-      .in('challenge_id', allChallengeIds)
-      .eq('status', 'pending')
+    // Paginated: this tallies pending rows in JS, so an unbounded select capped
+    // at 1000 and under-reported every org's pending badge once the backlog grew.
+    const pending = await fetchAllRows<{ challenge_id: string }>(
+      (from, to) => client
+        .from('task_submissions')
+        .select('challenge_id')
+        .in('challenge_id', allChallengeIds)
+        .eq('status', 'pending')
+        .range(from, to),
+    )
 
     const challengeToOrg: Record<string, string> = {}
     for (const [orgId, cIds] of Object.entries(challengesByOrg)) {
@@ -877,22 +887,30 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   return { approvals, hasMore }
 }
 
+// Task list for the approvals filter dropdown.
+//
+// This used to read every task_submission row for the org and reduce it to the
+// distinct task_ids — moving tens of thousands of rows to produce a handful of
+// values, and capping at 1000 so a task whose submissions all landed past the
+// cap vanished from the filter. The tasks themselves live in `tasks`, so read
+// them there: a few rows instead of the whole submission history.
 export async function getOrgTaskList(orgId: string): Promise<Array<{ id: string; title: string }>> {
   const client = await createAdminClient()
-  const { data } = await client
-    .from('task_submissions')
-    .select('task_id, tasks!task_id(title)')
+  const { data: challenges } = await client
+    .from('challenges')
+    .select('id')
     .eq('org_id', orgId)
-    .not('task_id', 'is', null)
-  if (!data) return []
-  const seen = new Set<string>()
-  const tasks: Array<{ id: string; title: string }> = []
-  for (const row of data as any[]) {
-    if (!row.task_id || seen.has(row.task_id)) continue
-    seen.add(row.task_id)
-    tasks.push({ id: row.task_id, title: (row.tasks as any)?.title ?? 'Unknown' })
-  }
-  return tasks.sort((a, b) => a.title.localeCompare(b.title))
+  const challengeIds = (challenges ?? []).map((c: { id: string }) => c.id)
+  if (challengeIds.length === 0) return []
+
+  const { data } = await client
+    .from('tasks')
+    .select('id, title')
+    .in('challenge_id', challengeIds)
+
+  return ((data ?? []) as Array<{ id: string; title: string }>)
+    .map(t => ({ id: t.id, title: t.title ?? 'Unknown' }))
+    .sort((a, b) => a.title.localeCompare(b.title))
 }
 
 export interface OrgTaskBreakdown {
@@ -1325,15 +1343,20 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     .eq('user_id', memberId)
     .maybeSingle()
 
-  // Rank by total_points (includes manual adjustments, not just task submissions)
-  const { data: allProfiles } = await client
+  // Rank by total_points (includes manual adjustments, not just task submissions).
+  //
+  // This previously pulled every profile in the org and sorted in JS, which at
+  // National scale (1100+ members) stopped at PostgREST's 1000-row cap — so
+  // anyone outside the first 1000 rows was ranked against a partial field and
+  // got a wrong number. Ask Postgres instead: rank = how many members have
+  // strictly more points, + 1. head:true means no rows are transferred at all.
+  const myPoints = (profile as { total_points?: number } | null)?.total_points ?? 0
+  const { count: ahead } = await client
     .from('profiles')
-    .select('id, total_points')
+    .select('id', { count: 'exact', head: true })
     .eq('org_id', orgId)
-
-  const orderedProfiles = (allProfiles ?? []).sort((a, b) => (b.total_points ?? 0) - (a.total_points ?? 0))
-  let rank = orderedProfiles.findIndex(p => p.id === memberId) + 1
-  if (rank === 0) rank = orderedProfiles.length + 1
+    .gt('total_points', myPoints)
+  const rank = (ahead ?? 0) + 1
 
   const { data: submissions } = await client
     .from('task_submissions')
