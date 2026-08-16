@@ -9,6 +9,37 @@ import { getAdminProfile } from '../auth'
 import { todayInTimezone } from '../date-utils'
 import { fetchAllRows } from './fetch-all'
 
+/**
+ * Authorisation guard for every mutating action in this file.
+ *
+ * This module is `'use server'`, so EVERY exported function is a server action
+ * the browser can invoke directly, and they all use the service-role client
+ * which bypasses RLS. Only the page LAYOUT checked for an admin — and a layout
+ * guards pages, not actions.
+ *
+ * The dashboard login sends an OTP to any address without checking admin_users,
+ * and the middleware only asserts that *some* user is signed in. So a league
+ * member could sign in on the dashboard domain, lift an action id from the
+ * public JS bundle, and call deleteOrg / removeMember / deleteTeam directly.
+ * Verified against production: a member's session reaches the layout, and
+ * /_next/static chunks are downloadable with no auth at all.
+ *
+ * Throws rather than returns, so a caller that forgets to check cannot proceed.
+ */
+const ADMIN_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
+const ORG_BOUND_ROLES = ['org_admin', 'sub_admin']
+
+async function assertAdmin(orgId?: string) {
+  const profile = await getAdminProfile()
+  if (!profile || profile.status !== 'active') throw new Error('Unauthorized')
+  if (!ADMIN_ROLES.includes(profile.role)) throw new Error('Unauthorized')
+  if (orgId && ORG_BOUND_ROLES.includes(profile.role) && profile.org_id !== orgId) {
+    throw new Error('Unauthorized')
+  }
+  return profile
+}
+
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function db() {
@@ -366,14 +397,17 @@ export async function getOrgSettings(id: string): Promise<OrgSettings | null> {
 }
 
 export async function updateOrgSettings(id: string, patch: Partial<{ name: string; country: string; timezone: string; logo_url: string | null }>) {
+  await assertAdmin()
   return (await db()).from('organizations').update(patch).eq('id', id)
 }
 
 export async function setOrgActive(id: string, isActive: boolean) {
+  await assertAdmin()
   return (await db()).from('organizations').update({ is_active: isActive }).eq('id', id)
 }
 
 export async function deleteOrg(id: string) {
+  await assertAdmin()
   return (await db()).from('organizations').delete().eq('id', id)
 }
 
@@ -456,6 +490,7 @@ export async function updateMember(orgId: string, userId: string, data: {
   oldEmail?: string
   avatarColor?: string
 }) {
+  await assertAdmin(orgId)
   const supabase = await db()
 
   // Emails are stored as plain text, and the mobile app lowercases every
@@ -579,6 +614,7 @@ export async function updateMember(orgId: string, userId: string, data: {
 }
 
 export async function removeMember(orgId: string, userId: string) {
+  await assertAdmin(orgId)
   const supabase = await db()
 
   // 1. Capture profile (name, email, auth_id, total_points) BEFORE deletion
@@ -844,6 +880,7 @@ export async function updateTeamTransaction(
 }
 
 export async function updateMemberOrgRole(orgId: string, userId: string, role: string) {
+  await assertAdmin(orgId)
   return (await db()).from('org_members').update({ role }).eq('org_id', orgId).eq('user_id', userId)
 }
 
@@ -942,14 +979,17 @@ export async function getAvailableMembers(orgId: string): Promise<AvailableMembe
 }
 
 export async function createTeam(orgId: string, data: { name: string; emoji: string; color: string }) {
+  await assertAdmin(orgId)
   return (await db()).from('teams').insert({ org_id: orgId, ...data }).select().single()
 }
 
 export async function updateTeam(teamId: string, data: { name: string; emoji: string; color: string }) {
+  await assertAdmin()
   return (await db()).from('teams').update(data).eq('id', teamId)
 }
 
 export async function deleteTeam(teamId: string) {
+  await assertAdmin()
   const client = await db()
   // invite_whitelist.team_id has no ON DELETE CASCADE — null it out first
   await client.from('invite_whitelist').update({ team_id: null }).eq('team_id', teamId)
@@ -957,14 +997,17 @@ export async function deleteTeam(teamId: string) {
 }
 
 export async function addTeamMember(teamId: string, userId: string, orgId: string) {
+  await assertAdmin(orgId)
   return (await db()).from('team_members').insert({ team_id: teamId, user_id: userId, org_id: orgId, role: 'member' })
 }
 
 export async function removeTeamMember(teamId: string, userId: string) {
+  await assertAdmin()
   return (await db()).from('team_members').delete().eq('team_id', teamId).eq('user_id', userId)
 }
 
 export async function updateTeamMemberRole(teamId: string, userId: string, role: 'captain' | 'vice_captain' | 'member') {
+  await assertAdmin()
   const supabase = await db()
   // The enforce_team_role_uniqueness trigger atomically demotes any existing
   // holder of the same role before this row is updated — no separate query needed.
@@ -1322,6 +1365,7 @@ export async function createChallenge(orgId: string, data: {
   name: string; description: string; startDate: string; endDate: string; teamIds: string[]
   periodLabel?: PeriodLabel
 }) {
+  await assertAdmin(orgId)
   const supabase = await db()
   const { data: ch, error } = await supabase
     .from('challenges')
@@ -1339,6 +1383,7 @@ export async function updateChallenge(id: string, data: {
   name: string; description: string; startDate: string; endDate: string; teamIds: string[]
   periodLabel?: PeriodLabel
 }) {
+  await assertAdmin()
   const supabase = await db()
 
   // Recompute the correct status based on the new dates so an admin extending
@@ -1395,16 +1440,19 @@ export async function updateChallenge(id: string, data: {
 }
 
 export async function setChallengeStatus(id: string, status: string, manuallyClosed = false) {
+  await assertAdmin()
   return (await db()).from('challenges').update({ status, manually_closed: manuallyClosed }).eq('id', id)
 }
 
 export async function deleteChallenge(id: string) {
+  await assertAdmin()
   return (await db()).from('challenges').delete().eq('id', id)
 }
 
 export async function addTask(challengeId: string, data: {
   title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
+  await assertAdmin()
   const supabase = await db()
   // Same validation as updateTask: only accept explicit 'image' or 'video'.
   // If neither, fall back to 'image' for INSERTs (a new task has no prior
@@ -1444,6 +1492,7 @@ export async function addTask(challengeId: string, data: {
 export async function updateTask(id: string, data: {
   title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null
 }) {
+  await assertAdmin()
   const supabase = await db()
   // Additive update: only touch columns whose values were explicitly provided.
   // Previously the function unconditionally wrote `proof_type: data.proofType ?? 'image'`
@@ -1487,10 +1536,12 @@ export async function updateTask(id: string, data: {
 }
 
 export async function setTaskActive(id: string, isActive: boolean) {
+  await assertAdmin()
   return (await db()).from('tasks').update({ is_active: isActive }).eq('id', id)
 }
 
 export async function deleteTask(id: string) {
+  await assertAdmin()
   return (await db()).from('tasks').delete().eq('id', id)
 }
 
@@ -1553,6 +1604,7 @@ export async function getFeedPosts(orgId: string): Promise<FeedPost[]> {
 export async function createFeedPost(orgId: string, authorId: string | null, data: {
   type: string; title: string; content: string; challengeId?: string; pinned?: boolean
 }) {
+  await assertAdmin(orgId)
   return (await db()).from('feed_items').insert({
     org_id: orgId,
     author_id: authorId,
@@ -1565,6 +1617,7 @@ export async function createFeedPost(orgId: string, authorId: string | null, dat
 }
 
 export async function updateFeedPost(id: string, data: { title: string; content: string; pinned: boolean; type: string; challengeId?: string }) {
+  await assertAdmin()
   return (await db()).from('feed_items').update({
     title: data.title,
     content: data.content,
@@ -1575,10 +1628,12 @@ export async function updateFeedPost(id: string, data: { title: string; content:
 }
 
 export async function deleteFeedPost(id: string) {
+  await assertAdmin()
   return (await db()).from('feed_items').delete().eq('id', id)
 }
 
 export async function togglePinPost(id: string, pinned: boolean) {
+  await assertAdmin()
   return (await db()).from('feed_items').update({ pinned }).eq('id', id)
 }
 
@@ -1600,10 +1655,12 @@ export async function getOrgPolicies(orgId: string): Promise<PolicyUI[]> {
 }
 
 export async function createPolicy(orgId: string, name: string) {
+  await assertAdmin(orgId)
   return (await db()).from('policies').insert({ org_id: orgId, name, content: '', color_index: 0 }).select().single()
 }
 
 export async function updatePolicy(id: string, data: { name?: string; content?: string; colorIndex?: number }) {
+  await assertAdmin()
   return (await db()).from('policies').update({
     ...(data.name !== undefined && { name: data.name }),
     ...(data.content !== undefined && { content: data.content }),
@@ -1613,6 +1670,7 @@ export async function updatePolicy(id: string, data: { name?: string; content?: 
 }
 
 export async function deletePolicy(id: string) {
+  await assertAdmin()
   return (await db()).from('policies').delete().eq('id', id)
 }
 
