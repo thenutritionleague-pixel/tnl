@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:save": "node scripts/smoke.mjs --save .smoke-baseline",
+    "smoke:diff": "node scripts/smoke.mjs --diff .smoke-baseline"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
