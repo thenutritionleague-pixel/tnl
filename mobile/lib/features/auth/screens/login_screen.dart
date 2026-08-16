@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -26,8 +28,28 @@ class _LoginScreenState extends State<LoginScreen> {
   String _error = '';
   String _emailForOtp = '';
 
+  // Supabase enforces a cooldown between OTP requests for the same address.
+  // Members were tapping "Resend" repeatedly, which cancels the code already
+  // in their inbox AND restarts the cooldown — so the harder they tried, the
+  // more certain it was that whatever code they typed was already dead.
+  // The button is disabled for the duration and counts down instead.
+  static const int _resendCooldownSeconds = 60;
+  int _resendIn = 0;
+  Timer? _resendTimer;
+
+  void _startResendCooldown([int seconds = _resendCooldownSeconds]) {
+    _resendTimer?.cancel();
+    setState(() => _resendIn = seconds);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      setState(() => _resendIn -= 1);
+      if (_resendIn <= 0) t.cancel();
+    });
+  }
+
   @override
   void dispose() {
+    _resendTimer?.cancel();
     _emailController.dispose();
     for (final c in _otpControllers) c.dispose();
     for (final f in _otpFocusNodes) f.dispose();
@@ -57,6 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _step = 2;
         _loading = false;
       });
+      _startResendCooldown();
       Future.delayed(const Duration(milliseconds: 200), () {
         if (mounted) _otpFocusNodes[0].requestFocus();
       });
@@ -79,7 +102,10 @@ class _LoginScreenState extends State<LoginScreen> {
     // Rate limit with a specific wait time
     final secs = RegExp(r'after (\d+) second').firstMatch(raw);
     if (secs != null) {
-      return 'Too many requests — please wait ${secs.group(1)} seconds before trying again.';
+      // Trust the server's number over our own countdown — it is authoritative.
+      final wait = int.tryParse(secs.group(1) ?? '') ?? _resendCooldownSeconds;
+      if (wait > 0) _startResendCooldown(wait);
+      return 'Please wait ${secs.group(1)} seconds before requesting a new code.';
     }
     if (lower.contains('rate limit') || lower.contains('rate-limit')) {
       return 'Too many requests — please wait a minute and try again.';
@@ -489,11 +515,14 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 16),
         Center(
           child: GestureDetector(
-            onTap: _loading ? null : _handleSendOtp,
+            onTap: (_loading || _resendIn > 0) ? null : _handleSendOtp,
             child: Text(
-              'Resend code',
+              _resendIn > 0 ? 'Resend code in ${_resendIn}s' : 'Resend code',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
+                // Visibly dimmer while locked, so it reads as unavailable
+                // rather than broken.
+                color: Colors.white
+                    .withValues(alpha: _resendIn > 0 ? 0.35 : 0.6),
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
