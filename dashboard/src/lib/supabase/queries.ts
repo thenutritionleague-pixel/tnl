@@ -458,8 +458,16 @@ export async function updateMember(orgId: string, userId: string, data: {
 }) {
   const supabase = await db()
 
+  // Emails are stored as plain text, and the mobile app lowercases every
+  // address before calling Supabase Auth. An admin typing "Foo@x.com" here
+  // would save a row the app can never match, and signInWithOtp
+  // (shouldCreateUser: true) would then mint a SECOND account while the
+  // invite is already consumed — leaving the member with no team.
+  const email = data.email.trim().toLowerCase()
+  const oldEmail = data.oldEmail?.trim().toLowerCase()
+
   // 1. Update Profile
-  const profileUpdate: Record<string, string> = { name: data.name, email: data.email }
+  const profileUpdate: Record<string, string> = { name: data.name, email }
   if (data.avatarColor) profileUpdate.avatar_color = data.avatarColor
   const { error: pErr } = await supabase
     .from('profiles')
@@ -467,12 +475,13 @@ export async function updateMember(orgId: string, userId: string, data: {
     .eq('id', userId)
   if (pErr) throw pErr
 
-  // 2. Update Whitelist (consistency for future lookups/audit)
-  if (data.oldEmail) {
+  // 2. Update Whitelist (consistency for future lookups/audit).
+  // Match case-insensitively: rows predating normalisation may differ in case.
+  if (oldEmail) {
     await supabase.from('invite_whitelist')
-      .update({ email: data.email })
+      .update({ email })
       .eq('org_id', orgId)
-      .eq('email', data.oldEmail)
+      .ilike('email', oldEmail)
   }
 
   // 3. Update Team Assignment (Swap logic)

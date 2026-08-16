@@ -42,9 +42,13 @@ export async function finalizeEmailChange(
     .single()
   if (!adminUser) return { error: 'Admin record not found.' }
 
+  // Store lowercase: emails are plain text everywhere and the apps normalise
+  // before calling Supabase Auth, so a capitalised record cannot be matched.
+  const normalizedEmail = newEmail.trim().toLowerCase()
+
   // Update original auth user's email and mark confirmed
   const { error: authError } = await adminClient.auth.admin.updateUserById(originalUserId, {
-    email: newEmail,
+    email: normalizedEmail,
     email_confirm: true,
   })
   if (authError) return { error: authError.message }
@@ -52,7 +56,7 @@ export async function finalizeEmailChange(
   // Update admin_users.email
   const { error: dbError } = await adminClient
     .from('admin_users')
-    .update({ email: newEmail })
+    .update({ email: normalizedEmail })
     .eq('id', adminId)
   if (dbError) return { error: dbError.message }
 
