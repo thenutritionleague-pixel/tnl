@@ -126,7 +126,11 @@ export async function rejectSubmission(
       status: 'rejected',
       rejection_reason: reason || null,
       reviewed_at: new Date().toISOString(),
-      ai_status: null,
+      // ai_status must NOT be nulled. retry_pending_bunny_submissions selects
+      // on `ai_status IS NULL`, so nulling it made the cron re-fire the AI on a
+      // submission a human had just rejected — the AI re-approved it and the
+      // rejection silently disappeared. Mark it as the human verdict instead.
+      ai_status: 'rejected',
       ai_feedback: null,
       ai_confidence: null,
     })
