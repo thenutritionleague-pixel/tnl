@@ -31,10 +31,13 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isAuthPage = request.nextUrl.pathname.startsWith('/login')
-  const isDashboard = request.nextUrl.pathname.startsWith('/') && !isAuthPage
+  const path = request.nextUrl.pathname
+  const isAuthPage = path.startsWith('/login')
+  // Webhooks authenticate with their own bearer secret and carry no session.
+  const isMachineRoute = path.startsWith('/api/')
+  const isDashboard = !isAuthPage && !isMachineRoute
 
-  if (!user && isDashboard && request.nextUrl.pathname !== '/login') {
+  if (!user && isDashboard) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -42,22 +45,30 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  // Org guard: org_admin/sub_admin can only access their own org
-  const orgRouteMatch = request.nextUrl.pathname.match(/^\/organizations\/([^/]+)/)
-  if (orgRouteMatch && orgRouteMatch[1] !== 'new' && user) {
-    const urlOrgId = orgRouteMatch[1]
+  if (user && isDashboard) {
+    // Being signed in is NOT the same as being an admin. Members hold accounts
+    // in the same Supabase project for the member app, so a member can mint a
+    // valid JWT from the auth API and present it here as a cookie — never
+    // touching the login page, which does gate on admin_users. Without this
+    // check such a session reaches every server action in the app.
     const { data: adminUser } = await supabase
       .from('admin_users')
-      .select('role, org_id')
+      .select('role, org_id, status')
       .eq('user_id', user.id)
       .single()
 
-    if (adminUser) {
+    if (!adminUser || adminUser.status !== 'active') {
+      return NextResponse.redirect(new URL('/login?error=unauthorized', request.url))
+    }
+
+    // Org guard: org_admin/sub_admin can only reach their own org.
+    // super_admin / sub_super_admin have org_id = null and may access any org.
+    const orgRouteMatch = path.match(/^\/organizations\/([^/]+)/)
+    if (orgRouteMatch && orgRouteMatch[1] !== 'new') {
       const { role, org_id } = adminUser
-      if ((role === 'org_admin' || role === 'sub_admin') && org_id !== urlOrgId) {
+      if ((role === 'org_admin' || role === 'sub_admin') && org_id !== orgRouteMatch[1]) {
         return NextResponse.redirect(new URL(`/organizations/${org_id}`, request.url))
       }
-      // super_admin / sub_super_admin have org_id = null — bypass, access any org
     }
   }
 
