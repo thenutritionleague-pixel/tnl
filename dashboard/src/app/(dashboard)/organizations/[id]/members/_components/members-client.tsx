@@ -142,7 +142,7 @@ export default function MembersClient({ orgId, initialMembers, initialTeams }: {
     setSaving(true)
     setRoleError(null)
     try {
-      await updateMember(orgId, editTarget.id, {
+      const result = await updateMember(orgId, editTarget.id, {
         name: editName,
         email: editEmail,
         teamId: editTeamId,
@@ -151,6 +151,14 @@ export default function MembersClient({ orgId, initialMembers, initialTeams }: {
         oldEmail: editTarget.email,
         avatarColor: editAvatarColor,
       })
+
+      // An email clash used to fail with nothing shown at all — the admin
+      // pressed Save, the dialog closed, and the change had not applied.
+      if (result && 'error' in result && result.error) {
+        setRoleError(result.error)
+        setSaving(false)
+        return
+      }
 
       const updatedTeamName = allTeams.find(t => t.id === editTeamId)?.name ?? 'Unassigned'
 
@@ -169,6 +177,7 @@ export default function MembersClient({ orgId, initialMembers, initialTeams }: {
       setEditTarget(null)
     } catch (error) {
       console.error('Failed to update member:', error)
+      setRoleError(error instanceof Error ? error.message : 'Could not save this member.')
     } finally {
       setSaving(false)
     }

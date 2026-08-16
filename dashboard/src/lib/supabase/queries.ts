@@ -465,6 +465,46 @@ export async function updateMember(orgId: string, userId: string, data: {
   // invite is already consumed — leaving the member with no team.
   const email = data.email.trim().toLowerCase()
   const oldEmail = data.oldEmail?.trim().toLowerCase()
+  const emailChanged = !!oldEmail && oldEmail !== email
+
+  if (emailChanged) {
+    // Guard: profiles.email has no unique index, so without this an admin can
+    // silently create two profiles sharing an address — two identities for one
+    // person, and no way for the app to tell them apart.
+    const { data: clash } = await supabase
+      .from('profiles')
+      .select('id, name')
+      .ilike('email', email)
+      .neq('id', userId)
+      .maybeSingle()
+    if (clash) {
+      return {
+        success: false as const,
+        error: `${email} already belongs to another member (${clash.name}). `
+             + `Two accounts cannot share an address — remove or merge that member first.`,
+      }
+    }
+
+    // The login credential lives in auth.users, which this function never
+    // touched. Updating only profiles/invite_whitelist changed what the admin
+    // SEES while the member still had to sign in with the old address — the
+    // "I changed it but nothing happened" report.
+    const { data: target } = await supabase
+      .from('profiles').select('auth_id').eq('id', userId).maybeSingle()
+    if (target?.auth_id) {
+      const admin = await createAdminClient()
+      const { error: authErr } = await admin.auth.admin.updateUserById(target.auth_id, {
+        email,
+        email_confirm: true,
+      })
+      if (authErr) {
+        return {
+          success: false as const,
+          error: `Could not change the sign-in address: ${authErr.message}`,
+        }
+      }
+    }
+  }
 
   // 1. Update Profile
   const profileUpdate: Record<string, string> = { name: data.name, email }
