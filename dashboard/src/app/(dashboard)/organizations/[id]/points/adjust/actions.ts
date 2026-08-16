@@ -28,13 +28,16 @@ export async function addManualAdjustment(
 
   const client = await createAdminClient()
 
-  // Verify the target user belongs to this org
+  // Verify the target user belongs to this org.
+  // Check org_members, not profiles.org_id — profiles.org_id is only the
+  // member's ACTIVE org, so a multi-org member offered by the picker (which
+  // reads org_members) would otherwise be rejected here.
   const { data: targetUser } = await client
-    .from('profiles')
-    .select('id')
-    .eq('id', userId)
+    .from('org_members')
+    .select('user_id')
+    .eq('user_id', userId)
     .eq('org_id', orgId)
-    .single()
+    .maybeSingle()
   if (!targetUser) return { error: 'User not found in this organization.' }
 
   const { error } = await client.from('points_transactions').insert({

@@ -25,6 +25,7 @@ const roleLabel: Record<InviteRole, string> = {
 
 interface CsvRow {
   email: string
+  name: string
   teamId: string | null
   teamName: string
   teamFound: boolean
@@ -43,12 +44,16 @@ function parseCsv(text: string, teams: Array<{ id: string; name: string }>): Csv
   const hasHeader = firstLower.includes('email') || !firstLower.includes('@')
   const dataLines = hasHeader ? lines.slice(1) : lines
 
-  let emailIdx = 0, teamIdx = 1, roleIdx = 2
+  let emailIdx = 0, teamIdx = 1, roleIdx = 2, nameIdx = -1
   if (hasHeader) {
     const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase().replace(/"/g, ''))
     const ei = headers.findIndex(h => h.includes('email')); if (ei >= 0) emailIdx = ei
     const ti = headers.findIndex(h => h.includes('team'));  if (ti >= 0) teamIdx = ti
     const ri = headers.findIndex(h => h.includes('role'));  if (ri >= 0) roleIdx = ri
+    // Optional. Without a name the member shows on the leaderboard as their
+    // email prefix, so pick it up whenever the sheet has one.
+    const ni = headers.findIndex(h => h === 'name' || h.includes('full name') || h.includes('member name'))
+    if (ni >= 0) nameIdx = ni
   }
 
   const result: CsvRow[] = []
@@ -56,6 +61,7 @@ function parseCsv(text: string, teams: Array<{ id: string; name: string }>): Csv
     const cols = line.split(delimiter).map(c => c.trim().replace(/^"|"$/g, '').trim())
     const email = (cols[emailIdx] ?? '').toLowerCase().trim()
     if (!email) continue
+    const rawName = nameIdx >= 0 ? (cols[nameIdx]?.trim() ?? '') : ''
     const rawTeam = cols[teamIdx]?.trim() ?? ''
     const rawRole = cols[roleIdx]?.toLowerCase().trim() ?? ''
     const team = teams.find(t => t.name.toLowerCase() === rawTeam.toLowerCase())
@@ -66,6 +72,7 @@ function parseCsv(text: string, teams: Array<{ id: string; name: string }>): Csv
     const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
     result.push({
       email,
+      name: rawName,
       teamId: team?.id ?? null,
       teamName: team?.name ?? (rawTeam || '—'),
       teamFound: !!team || !rawTeam,
@@ -88,6 +95,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
 
   // Single form
   const [singleEmail, setSingleEmail] = useState('')
+  const [singleName, setSingleName] = useState('')
   const [singleTeam, setSingleTeam]   = useState('')
   const [singleRole, setSingleRole]   = useState<InviteRole>('member')
   const [singleError, setSingleError] = useState('')
@@ -215,7 +223,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
     const ready = csvRows.filter(r => r.valid && !r.conflict)
     if (ready.length === 0) return
     setCsvImporting(true)
-    const result = await csvImportToWhitelist(orgId, ready.map(r => ({ email: r.email, teamId: r.teamId, role: r.role })))
+    const result = await csvImportToWhitelist(orgId, ready.map(r => ({ email: r.email, teamId: r.teamId, role: r.role, name: r.name })))
     if (result.error) {
       toast.error(result.error)
     } else {
@@ -261,7 +269,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
     if (!singleTeam) { setSingleError('Select a team.'); return }
     setSaving(true)
     const teamId = singleTeam
-    const result = await addToWhitelist(orgId, email, teamId, singleRole)
+    const result = await addToWhitelist(orgId, email, teamId, singleRole, singleName)
     if (result.error) {
       setSingleError(result.error)
     } else {
@@ -274,6 +282,7 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
         status: 'pending',
       }, ...prev])
       setSingleEmail('')
+      setSingleName('')
     }
     setSaving(false)
   }
@@ -344,8 +353,11 @@ export function InviteClient({ orgId, initialInvites, teams }: Props) {
             <UserPlus className="w-4 h-4 text-primary" />
             <h2 className="font-semibold text-foreground text-sm">Add to Whitelist</h2>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px_160px] gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_180px_160px] gap-3">
             <Input type="email" placeholder="member@email.com" value={singleEmail} onChange={e => { setSingleEmail(e.target.value); setSingleError('') }} onKeyDown={e => e.key === 'Enter' && addSingle()} className="h-9" />
+            {/* Without a name the member appears on the leaderboard as their
+                email prefix (e.g. "vin" instead of "Vin Agrawal"). */}
+            <Input placeholder="Full name (recommended)" value={singleName} onChange={e => setSingleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSingle()} className="h-9" />
             <div className="relative">
               <select value={singleTeam} onChange={e => { setSingleTeam(e.target.value); setSingleError('') }} className={cn('w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer', !singleTeam && 'text-muted-foreground')}>
                 <option value="">Assign to team…</option>

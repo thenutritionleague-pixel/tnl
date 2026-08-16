@@ -49,7 +49,7 @@ async function isRoleTaken(client: any, orgId: string, teamId: string | null, ro
   return !!pendingInvite
 }
 
-export async function addToWhitelist(orgId: string, email: string, teamId: string | null, role: string) {
+export async function addToWhitelist(orgId: string, email: string, teamId: string | null, role: string, name?: string) {
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
@@ -64,11 +64,14 @@ export async function addToWhitelist(orgId: string, email: string, teamId: strin
       return { error: `This team already has a ${normalizedRole === 'captain' ? 'Captain' : 'Vice Captain'}.` }
     }
 
+    // name matters: sync_user_invites seeds the member's profile from it, so
+    // without it they appear on the leaderboard as their email prefix.
     const { data, error } = await client.from('invite_whitelist').insert({
       org_id: orgId,
       email: normalizedEmail,
       team_id: teamId || null,
       role: normalizedRole,
+      name: name?.trim() || null,
       invited_by: profile.id,
     }).select('id').single()
 
@@ -173,7 +176,7 @@ export async function removeFromWhitelist(orgId: string, id: string) {
 
 export async function csvImportToWhitelist(
   orgId: string,
-  rows: Array<{ email: string; teamId: string | null; role: string }>
+  rows: Array<{ email: string; teamId: string | null; role: string; name?: string }>
 ) {
   try {
     const profile = await checkAccess(orgId)
@@ -186,6 +189,7 @@ export async function csvImportToWhitelist(
       email: r.email.toLowerCase().trim(),
       team_id: r.teamId || null,
       role: r.role.toLowerCase().trim(),
+      name: r.name?.trim() || null,
       invited_by: profile.id,
     }))
 

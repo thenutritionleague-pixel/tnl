@@ -540,6 +540,19 @@ export async function removeMember(orgId: string, userId: string) {
     .single()
   if (!profile) return { success: false, error: 'Profile not found' as const }
 
+  // 1b. Does this person play in more than one org? 77 of the National roster
+  // also hold Kanpur/Gurugram history. For them the delete-the-auth-user path
+  // below is catastrophic: it cascades profiles → team_members →
+  // task_submissions → points_transactions across EVERY org, rewriting finished
+  // events' standings. Multi-org members get an org-scoped removal instead.
+  const { data: otherOrgs } = await supabase
+    .from('org_members')
+    .select('org_id')
+    .eq('user_id', userId)
+    .neq('org_id', orgId)
+  const remainingOrgId = (otherOrgs ?? [])[0]?.org_id as string | undefined
+  const isMultiOrg = !!remainingOrgId
+
   // 2. Look up their team — needed to credit transferred points
   const { data: tm } = await supabase
     .from('team_members')
@@ -552,24 +565,39 @@ export async function removeMember(orgId: string, userId: string) {
   // Bunny videos (`bunny://<guid>`) are on a different backend — the daily
   // pg_cron sweep + AI-side cleanup handle orphans there. Only Supabase
   // Storage paths go through storage.remove() below.
-  const { data: subs } = await supabase
+  // For a multi-org member only THIS org's proofs may be deleted — the other
+  // org's submissions stay untouched.
+  let subsQuery = supabase
     .from('task_submissions')
     .select('proof_url')
     .eq('user_id', userId)
+  if (isMultiOrg) subsQuery = subsQuery.eq('org_id', orgId)
+  const { data: subs } = await subsQuery
   const proofPaths = ((subs ?? []) as { proof_url: string | null }[])
     .map(s => s.proof_url)
     .filter((p): p is string => !!p && !p.startsWith('bunny://'))
 
   // 4. Insert team_transactions row IF the user had a team AND non-zero points.
   //    Zero-point removals skip this entry to keep the breakdown clean.
+  //    total_points only tracks the member's ACTIVE org, so for a multi-org
+  //    member it may hold another org's score — credit this org's ledger sum.
+  let transferAmount = profile.total_points ?? 0
+  if (isMultiOrg) {
+    const { data: orgLedger } = await supabase
+      .from('points_transactions').select('amount')
+      .eq('user_id', userId).eq('org_id', orgId)
+    transferAmount = ((orgLedger ?? []) as { amount: number }[])
+      .reduce((sum, r) => sum + (r.amount ?? 0), 0)
+  }
+
   let insertedTransferId: string | null = null
-  if (tm?.team_id && (profile.total_points ?? 0) > 0) {
+  if (tm?.team_id && transferAmount > 0) {
     const { data: ttRow, error: ttErr } = await supabase
       .from('team_transactions')
       .insert({
         team_id: tm.team_id,
         org_id: orgId,
-        amount: profile.total_points,
+        amount: transferAmount,
         reason: `Points inherited from ${profile.name} (left team)`,
         source_user_name: profile.name,
         source_user_email: profile.email,
@@ -590,6 +618,39 @@ export async function removeMember(orgId: string, userId: string) {
   // 6. Existing flow: clear invite whitelist + delete auth user (cascades the rest)
   if (profile.email) {
     await supabase.from('invite_whitelist').delete().eq('org_id', orgId).eq('email', profile.email)
+  }
+
+  // 6b. Multi-org: unenrol from THIS org only. The account, the other org's
+  // profile row, teams, submissions and ledger all survive.
+  if (isMultiOrg) {
+    for (const table of ['task_submissions', 'points_transactions', 'team_members', 'org_members'] as const) {
+      const { error } = await supabase.from(table).delete().eq('user_id', userId).eq('org_id', orgId)
+      if (error) {
+        if (insertedTransferId) {
+          await supabase.from('team_transactions').delete().eq('id', insertedTransferId)
+        }
+        return { success: false, error: `Could not remove from this org: ${error.message}` as const }
+      }
+    }
+
+    // If this was their active org, fall back to the one they still belong to.
+    // total_points tracks the ACTIVE org only (verified against the ledger), so
+    // it has to be recomputed from that org's transactions, not carried over.
+    const { data: profOrg } = await supabase
+      .from('profiles').select('org_id').eq('id', userId).single()
+    if (profOrg?.org_id === orgId) {
+      const { data: ledger } = await supabase
+        .from('points_transactions').select('amount')
+        .eq('user_id', userId).eq('org_id', remainingOrgId)
+      const restored = ((ledger ?? []) as { amount: number }[])
+        .reduce((sum, r) => sum + (r.amount ?? 0), 0)
+      const { error: moveErr } = await supabase.from('profiles')
+        .update({ org_id: remainingOrgId, total_points: restored })
+        .eq('id', userId)
+      if (moveErr) return { success: false, error: `Could not reassign org: ${moveErr.message}` as const }
+    }
+
+    return { success: true }
   }
 
   if (profile.auth_id) {
