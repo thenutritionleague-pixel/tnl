@@ -395,6 +395,12 @@ async function fetchIdentityAnchor(
   orgId: string,
   excludeSubmissionId: string,
 ): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  // Kill switch. From Task 1 onward ~776 members have an anchor, so a prompt
+  // that turns out to over-flag "different" would bury the admins in manual
+  // reviews mid-event. Setting IDENTITY_CHECK=off in the edge function's env
+  // disables it in seconds, with no redeploy and no code change; every other
+  // anti-cheat job keeps running exactly as before.
+  if ((Deno.env.get('IDENTITY_CHECK') ?? 'on').toLowerCase() === 'off') return null
   try {
     const { data } = await supabase
       .from('task_submissions')
