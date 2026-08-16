@@ -38,6 +38,21 @@ class VideoTooLongException implements Exception {
       'Please trim or record a shorter video.';
 }
 
+/// Thrown when the recording is above the resolution Bunny Stream can encode.
+/// Bunny rejects anything beyond 4K with "Incompatible resolution or not a
+/// video stream" — an 8K (7680x4320) phone recording fails there AFTER the
+/// member has waited out a ~180 MB upload, and the failure text blames their
+/// file. Catching it before upload saves the upload and tells them what to do.
+class VideoResolutionTooHighException implements Exception {
+  final int width;
+  final int height;
+  const VideoResolutionTooHighException(this.width, this.height);
+  @override
+  String toString() =>
+      'This video is ${width}x${height}. Please record in 4K or lower — '
+      '1080p works best and uploads fastest — then upload again.';
+}
+
 /// Thrown when video compression fails.
 class VideoCompressionFailedException implements Exception {
   const VideoCompressionFailedException();
@@ -386,9 +401,16 @@ class TaskService {
       // Fail OPEN: if the duration can't be determined we let the submission
       // through. Blocking a genuine member because their browser wouldn't
       // report metadata is worse than accepting an over-length clip.
-      final probedSeconds = await _probeVideoDurationSeconds(videoFile);
+      final probe = await _probeVideo(videoFile);
+      final probedSeconds = probe.seconds;
       if (probedSeconds != null && probedSeconds > maxDurationSeconds + 1) {
         throw VideoTooLongException(probedSeconds, maxDurationSeconds);
+      }
+      // Only block when we positively read the dimensions — the probe fails
+      // open, so an unreadable size must never stop a valid submission.
+      final w = probe.width, h = probe.height;
+      if (w != null && h != null && w * h > 3840 * 2160) {
+        throw VideoResolutionTooHighException(w, h);
       }
       uploadExt = rawExt;
       uploadMime = switch (rawExt) {
@@ -516,16 +538,21 @@ class TaskService {
   /// metadata still loading, blob already revoked). Callers MUST treat null as
   /// "unknown" and allow the submission — never block a member on a probe that
   /// simply failed. Bounded by a timeout so a stuck load can't hang submit.
-  static Future<int?> _probeVideoDurationSeconds(XFile file) async {
+  static Future<({int? seconds, int? width, int? height})> _probeVideo(
+      XFile file) async {
     VideoPlayerController? controller;
     try {
       controller = VideoPlayerController.networkUrl(Uri.parse(file.path));
       await controller.initialize().timeout(const Duration(seconds: 12));
       final d = controller.value.duration;
-      if (d <= Duration.zero) return null;
-      return (d.inMilliseconds / 1000).round();
+      final size = controller.value.size;
+      return (
+        seconds: d <= Duration.zero ? null : (d.inMilliseconds / 1000).round(),
+        width: size.width > 0 ? size.width.round() : null,
+        height: size.height > 0 ? size.height.round() : null,
+      );
     } catch (_) {
-      return null; // fail open
+      return (seconds: null, width: null, height: null); // fail open
     } finally {
       try {
         await controller?.dispose();

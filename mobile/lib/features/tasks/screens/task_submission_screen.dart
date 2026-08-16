@@ -250,6 +250,13 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _done = true; });
         _confettiCtrl.play();
       }
+    } on VideoResolutionTooHighException catch (e) {
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; _videoBytes = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 8)),
+        );
+      }
     } on VideoTooLongException catch (e) {
       if (mounted) {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; _videoBytes = null; });
