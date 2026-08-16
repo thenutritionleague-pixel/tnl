@@ -320,7 +320,10 @@ function DatePicker({
               ))}
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1
-                const thisDate = new Date(viewYear, viewMonth, day)
+                // Built at noon to match minDate (parsed as `<date>T12:00:00`).
+                // At midnight, the start date itself compared as < minDate and
+                // was greyed out, so end date could never equal start date.
+                const thisDate = new Date(viewYear, viewMonth, day, 12)
                 const isToday = thisDate.toDateString() === today.toDateString()
                 const isSelected = selected ? thisDate.toDateString() === selected.toDateString() : false
                 const isDisabled = minDate ? thisDate < minDate : false
