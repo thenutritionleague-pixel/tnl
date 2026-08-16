@@ -20,6 +20,15 @@ function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
 }
 
+/// '2026-08-16' -> '16 Aug 2026'. Parsed as UTC on purpose: a plain
+/// `new Date('2026-08-16')` is midnight UTC, which in a negative-offset
+/// timezone renders as the 15th.
+function fmtDay(iso: string) {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+  })
+}
+
 const WEEKS = [1, 2, 3, 4]
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -80,6 +89,13 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     if (!Number.isFinite(amt) || amt === 0) { setEditError('Enter a non-zero whole number.'); return }
     if (!editReason.trim()) { setEditError('Reason is required.'); return }
     if (!editDate) { setEditError('Event date is required.'); return }
+    if (team?.challengeStart && team?.challengeEnd &&
+        (editDate < team.challengeStart || editDate > team.challengeEnd)) {
+      setEditError(
+        `Date must be between ${fmtDay(team.challengeStart)} and ${fmtDay(team.challengeEnd)} — the challenge dates. Points dated outside that range never appear on the leaderboard.`,
+      )
+      return
+    }
     setEditSubmitting(true)
     const result = await updateTeamTransaction(editTarget.id, orgId, amt, editReason.trim(), editDate)
     setEditSubmitting(false)
@@ -101,6 +117,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     }
     if (!bonusDate) {
       setBonusError('Event date is required.')
+      return
+    }
+    // Outside the challenge window the points are stored but never counted by
+    // team_points_view, so the admin sees "saved" and the leaderboard never
+    // moves. Block it here with the allowed range spelled out.
+    if (team?.challengeStart && team?.challengeEnd &&
+        (bonusDate < team.challengeStart || bonusDate > team.challengeEnd)) {
+      setBonusError(
+        `Date must be between ${fmtDay(team.challengeStart)} and ${fmtDay(team.challengeEnd)} — the challenge dates. Points dated outside that range never appear on the leaderboard.`,
+      )
       return
     }
     setBonusSubmitting(true)
@@ -475,9 +501,17 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 id="bonusDate"
                 type="date"
                 value={bonusDate}
+                min={team.challengeStart ?? undefined}
+                max={team.challengeEnd ?? undefined}
                 onChange={e => setBonusDate(e.target.value)}
                 className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {team.challengeStart && team.challengeEnd && (
+                <p className="text-xs text-muted-foreground">
+                  Pick any day of the challenge — {fmtDay(team.challengeStart)} to {fmtDay(team.challengeEnd)}.
+                  Dates outside this range are not counted on the leaderboard.
+                </p>
+              )}
             </div>
             {bonusError && (
               <p className="text-xs text-destructive">{bonusError}</p>
@@ -533,9 +567,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               <input
                 type="date"
                 value={editDate}
+                min={team.challengeStart ?? undefined}
+                max={team.challengeEnd ?? undefined}
                 onChange={e => setEditDate(e.target.value)}
                 className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
               />
+              {team.challengeStart && team.challengeEnd && (
+                <p className="text-xs text-muted-foreground">
+                  Pick any day of the challenge — {fmtDay(team.challengeStart)} to {fmtDay(team.challengeEnd)}.
+                </p>
+              )}
             </div>
             {editError && <p className="text-xs text-destructive">{editError}</p>}
           </div>

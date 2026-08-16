@@ -124,5 +124,22 @@ from pg_roles r
 where rolname in ('anon', 'authenticated')
   and has_function_privilege(r.rolname, 'public.increment_member_points(uuid,integer)', 'EXECUTE');
 
+\echo '== 11. Awarded points must actually reach a leaderboard =='
+-- team_points_view only counts a team transaction whose transaction_date falls
+-- inside a challenge window. A row dated outside every window inserts cleanly,
+-- appears in the team's history, and is then ignored by every leaderboard — the
+-- admin sees "saved" and the number never moves. 5,000 Early Bird points were
+-- lost this way on 16 Aug 2026 and were only noticed because the total didn't
+-- change. This is the check that would have caught it in seconds.
+select 'team points awarded but never counted' as problem,
+       o.name as org, t.name as team, tt.amount, tt.transaction_date, tt.reason
+from team_transactions tt
+join teams t on t.id = tt.team_id
+join organizations o on o.id = t.org_id
+where not exists (
+  select 1 from challenges c
+  where c.org_id = t.org_id and c.status in ('active', 'completed')
+    and tt.transaction_date between c.start_date and c.end_date);
+
 \echo ''
 \echo 'No rows above = healthy.'

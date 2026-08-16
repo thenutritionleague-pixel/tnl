@@ -164,6 +164,13 @@ export interface TeamDetailUI {
   viceCaptain: string
   members: TeamMemberRowUI[]
   legacyEntries: TeamLegacyEntryUI[]
+  /// Challenge window, so the bonus form can constrain its date picker.
+  /// team_points_view only counts a team transaction whose transaction_date
+  /// falls inside this range — a date outside it is accepted by the insert and
+  /// then silently ignored by every leaderboard. Null when the org has no
+  /// active or completed challenge.
+  challengeStart: string | null
+  challengeEnd: string | null
 }
 
 export interface TaskTier {
@@ -766,6 +773,30 @@ export async function removeMember(orgId: string, userId: string) {
  * Logs the entry in `team_transactions` with kind = 'admin_bonus'.
  * Positive amount = bonus, negative amount = deduction.
  */
+/// Guards the one way a team bonus can be "saved" and still do nothing.
+///
+/// team_points_view only counts a team transaction whose `transaction_date`
+/// falls between a challenge's start and end date. A date outside every window
+/// inserts cleanly, shows in the team's history, and is then ignored by every
+/// leaderboard — the admin gets a success toast and the number never moves.
+/// That is how 5,000 Early Bird points silently vanished on 16 Aug 2026.
+///
+/// Checked against ALL active/completed challenges, not just the current one,
+/// so awarding a bonus against an earlier finished challenge still works.
+/// Returns an error message when the date is unusable, otherwise null.
+async function outsideChallengeWindow(orgId: string, date: string): Promise<string | null> {
+  const { data } = await (await db())
+    .from('challenges')
+    .select('start_date, end_date')
+    .eq('org_id', orgId)
+    .in('status', ['active', 'completed'])
+  const windows = (data ?? []) as { start_date: string; end_date: string }[]
+  if (windows.length === 0) return null            // no challenge to constrain against
+  if (windows.some(c => date >= c.start_date && date <= c.end_date)) return null
+  const ranges = windows.map(c => `${c.start_date} to ${c.end_date}`).join(', ')
+  return `${date} is outside the challenge dates, so these points would never show on the leaderboard. Pick a date within ${ranges}.`
+}
+
 export async function addTeamTransaction(
   teamId: string,
   orgId: string,
@@ -802,6 +833,9 @@ export async function addTeamTransaction(
   if (!team || team.org_id !== orgId) {
     return { success: false, error: 'Team not found in this org.' }
   }
+
+  const outside = await outsideChallengeWindow(orgId, transactionDate ?? new Date().toISOString().slice(0, 10))
+  if (outside) return { success: false, error: outside }
 
   const { data: inserted, error } = await supabase
     .from('team_transactions')
@@ -868,6 +902,9 @@ export async function updateTeamTransaction(
   }
   if (!Number.isInteger(amount) || amount === 0) return { success: false, error: 'Amount must be a non-zero integer.' }
   if (!reason.trim()) return { success: false, error: 'Reason is required.' }
+
+  const outside = await outsideChallengeWindow(orgId, transactionDate)
+  if (outside) return { success: false, error: outside }
 
   const supabase = await db()
   const { error } = await supabase
@@ -1250,6 +1287,8 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     viceCaptain,
     members: memberRows,
     legacyEntries,
+    challengeStart: challenge?.start_date ?? null,
+    challengeEnd: challenge?.end_date ?? null,
   }
 }
 
