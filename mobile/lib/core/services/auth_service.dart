@@ -3,12 +3,21 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class AuthService {
   static final _client = Supabase.instance.client;
 
+  /// Lowercase + trim every address before it reaches Supabase Auth or our
+  /// tables. auth.users.email, profiles.email and invite_whitelist.email are
+  /// all plain text (not citext), so 'Rahul@x.com' and 'rahul@x.com' are two
+  /// different rows. A phone keyboard that capitalises the first letter would
+  /// otherwise mint a SECOND auth user on the next login (shouldCreateUser is
+  /// true) and strand the member with a consumed invite and no team.
+  static String _normalize(String email) => email.trim().toLowerCase();
+
   /// Checks if email exists in profiles or invite_whitelist.
   /// Returns 'profile' | 'invite' | null
   static Future<String?> checkAccess(String email) async {
+    final normalized = _normalize(email);
     try {
       // Use RPC to bypass RLS since unauthenticated users cannot read profiles/invites
-      final res = await _client.rpc('check_email_access', params: {'lookup_email': email.trim()});
+      final res = await _client.rpc('check_email_access', params: {'lookup_email': normalized});
       if (res == 'profile') return 'profile';
       if (res == 'invite') return 'invite';
       return null;
@@ -17,7 +26,7 @@ class AuthService {
       final profile = await _client
           .from('profiles')
           .select('id')
-          .eq('email', email.trim())
+          .eq('email', normalized)
           .maybeSingle();
       if (profile != null) return 'profile';
 
@@ -27,7 +36,7 @@ class AuthService {
       final invite = await _client
           .from('invite_whitelist')
           .select('id')
-          .eq('email', email.trim())
+          .eq('email', normalized)
           .isFilter('used_at', null)
           .limit(1);
       if ((invite as List).isNotEmpty) return 'invite';
@@ -39,7 +48,7 @@ class AuthService {
   /// Sends OTP to email via Supabase (Brevo SMTP).
   static Future<void> sendOtp(String email) async {
     await _client.auth.signInWithOtp(
-      email: email.trim(),
+      email: _normalize(email),
       shouldCreateUser: true,
     );
   }
@@ -52,7 +61,7 @@ class AuthService {
       final testUser = await _client
           .from('profiles')
           .select('is_test')
-          .eq('email', email.trim())
+          .eq('email', _normalize(email))
           .maybeSingle();
       if (testUser != null && testUser['is_test'] == true) {
         // Test bypass: sign in with magic link (re-send OTP technically works
@@ -65,7 +74,7 @@ class AuthService {
     }
 
     return await _client.auth.verifyOTP(
-      email: email.trim(),
+      email: _normalize(email),
       token: token.trim(),
       type: OtpType.email,
     );
@@ -74,13 +83,13 @@ class AuthService {
   /// Initiates an email address change.
   /// Supabase sends a 6-digit OTP to [newEmail] for confirmation.
   static Future<void> sendEmailChangeOtp(String newEmail) async {
-    await _client.auth.updateUser(UserAttributes(email: newEmail.trim()));
+    await _client.auth.updateUser(UserAttributes(email: _normalize(newEmail)));
   }
 
   /// Confirms an email change with the OTP sent to [newEmail].
   static Future<void> verifyEmailChange(String newEmail, String token) async {
     await _client.auth.verifyOTP(
-      email: newEmail.trim(),
+      email: _normalize(newEmail),
       token: token.trim(),
       type: OtpType.emailChange,
     );

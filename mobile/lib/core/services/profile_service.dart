@@ -171,7 +171,7 @@ class ProfileService {
     final rows = await _client
         .from('invite_whitelist')
         .select('id, org_id, team_id, role, used_at')
-        .eq('email', email.trim())
+        .eq('email', email.trim().toLowerCase())
         .order('created_at', ascending: false)
         .order('id', ascending: false)
         .limit(1);

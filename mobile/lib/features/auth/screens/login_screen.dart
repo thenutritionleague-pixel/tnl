@@ -445,6 +445,12 @@ class _LoginScreenState extends State<LoginScreen> {
         TextField(
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,
+          // Some Android keyboards still capitalise the first letter even for
+          // the email keyboard, which produced a 'Shivangani…@gmail.com'
+          // account. Addresses are normalised in AuthService too; this stops
+          // it at the source so the user never sees a capital they didn't type.
+          textCapitalization: TextCapitalization.none,
+          autocorrect: false,
           autofocus: true,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _handleSendOtp(),
