@@ -1,0 +1,550 @@
+'use client'
+
+import { useState, useMemo } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { Plus, MoreHorizontal, Search, UserMinus, Eye, ChevronDown, Pencil, ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  getOrgMembers, removeMember, updateMember, getOrgTeams,
+  type OrgMember, type TeamUI
+} from '@/lib/supabase/queries'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type DisplayRole = 'captain' | 'vice_captain' | 'member'
+
+const roleLabel: Record<DisplayRole, string> = {
+  captain:      'Captain',
+  vice_captain: 'Vice Captain',
+  member:       'Member',
+}
+
+const roleStyle: Record<DisplayRole, string> = {
+  captain:      'bg-amber-100 text-amber-700',
+  vice_captain: 'bg-blue-100 text-blue-700',
+  member:       'bg-muted text-muted-foreground',
+}
+
+const AVATAR_PALETTE = [
+  '#059669', '#3B82F6', '#8B5CF6', '#F59E0B',
+  '#EC4899', '#14B8A6', '#EF4444', '#6366F1',
+  '#F97316', '#06B6D4', '#A855F7', '#10B981',
+]
+
+function initials(name: string) {
+  return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
+}
+
+function displayRole(m: OrgMember): DisplayRole {
+  return (m.teamRole as DisplayRole) ?? 'member'
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export default function MembersClient({ orgId, initialMembers, initialTeams }: {
+  orgId: string
+  initialMembers: OrgMember[]
+  initialTeams: TeamUI[]
+}) {
+  const router = useRouter()
+
+  // Data arrives from the server render, so there is no initial loading state
+  // and no post-hydration round trip.
+  const [isLoading, setIsLoading] = useState(false)
+  const [members, setMembers]     = useState<OrgMember[]>(initialMembers)
+  const [allTeams, setAllTeams] = useState<TeamUI[]>(initialTeams)
+  const [search, setSearch]       = useState('')
+  const [teamFilter, setTeamFilter] = useState('')
+  // Sort by points: 'none' = original order, 'desc' = highest first, 'asc' = lowest first
+  const [pointsSort, setPointsSort] = useState<'none' | 'desc' | 'asc'>('none')
+
+  // Edit Member modal
+  const [editTarget, setEditTarget] = useState<OrgMember | null>(null)
+  const [editName, setEditName]     = useState('')
+  const [editEmail, setEditEmail]   = useState('')
+  const [editTeamId, setEditTeamId] = useState<string | null>(null)
+  const [editRole, setEditRole]     = useState<DisplayRole>('member')
+  const [editOrgRole, setEditOrgRole] = useState<OrgMember['role']>('member')
+  const [editAvatarColor, setEditAvatarColor] = useState('#059669')
+  const [roleError, setRoleError]   = useState<string | null>(null)
+  const [saving, setSaving]         = useState(false)
+
+  // Remove confirm
+  const [removeTarget, setRemoveTarget] = useState<OrgMember | null>(null)
+  const [removing, setRemoving]         = useState(false)
+
+  const teamList = useMemo(
+    () => [...new Set(members.map(m => m.team).filter(t => t !== 'Unassigned'))].sort(),
+    [members],
+  )
+
+  const filtered = useMemo(() => {
+    const matched = members.filter(m => {
+      const matchSearch = m.name.toLowerCase().includes(search.toLowerCase()) ||
+                          m.email.toLowerCase().includes(search.toLowerCase())
+      const matchTeam   = !teamFilter || m.team === teamFilter
+      return matchSearch && matchTeam
+    })
+    if (pointsSort === 'none') return matched
+    const sorted = [...matched].sort((a, b) => (a.points ?? 0) - (b.points ?? 0))
+    return pointsSort === 'desc' ? sorted.reverse() : sorted
+  }, [members, search, teamFilter, pointsSort])
+
+  function togglePointsSort() {
+    setPointsSort(s => s === 'none' ? 'desc' : s === 'desc' ? 'asc' : 'none')
+  }
+
+  function openEdit(m: OrgMember) {
+    setEditTarget(m)
+    setEditName(m.name)
+    setEditEmail(m.email)
+    setEditTeamId(m.teamId)
+    setEditRole(displayRole(m))
+    setEditOrgRole(m.role)
+    setEditAvatarColor(m.avatarColor)
+    setRoleError(null)
+  }
+
+  async function confirmEdit() {
+    if (!editTarget) return
+
+    // ── ROLE CONFLICT VALIDATION ──────────────────
+    if (editRole === 'captain' || editRole === 'vice_captain') {
+      const team = allTeams.find(t => t.id === editTeamId)
+      if (team) {
+        // Find if someone ELSE has this role in this team
+        const conflict = team.members.find(m => m.id !== editTarget.id && m.role === editRole)
+        if (conflict) {
+          setRoleError(`This team already has a ${roleLabel[editRole]} (${conflict.name}).`)
+          return
+        }
+      }
+    }
+
+    setSaving(true)
+    setRoleError(null)
+    try {
+      await updateMember(orgId, editTarget.id, {
+        name: editName,
+        email: editEmail,
+        teamId: editTeamId,
+        teamRole: editRole,
+        orgRole: editOrgRole,
+        oldEmail: editTarget.email,
+        avatarColor: editAvatarColor,
+      })
+
+      const updatedTeamName = allTeams.find(t => t.id === editTeamId)?.name ?? 'Unassigned'
+
+      setMembers(prev => prev.map(m =>
+        m.id === editTarget.id ? {
+          ...m,
+          name: editName,
+          email: editEmail,
+          teamId: editTeamId,
+          team: updatedTeamName,
+          teamRole: editRole,
+          role: editOrgRole,
+          avatarColor: editAvatarColor,
+        } : m
+      ))
+      setEditTarget(null)
+    } catch (error) {
+      console.error('Failed to update member:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget) return
+    setRemoving(true)
+    await removeMember(orgId, removeTarget.id)
+    setMembers(prev => prev.filter(m => m.id !== removeTarget.id))
+    setRemoveTarget(null)
+    setRemoving(false)
+  }
+
+  if (isLoading) return <MembersSkeleton />
+
+  return (
+    <div className="space-y-5">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-heading text-2xl text-foreground">Members</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">{members.length} members in this organization</p>
+        </div>
+        <Link
+          href={`/organizations/${orgId}/invite`}
+          className={cn(buttonVariants({ size: 'sm' }), 'gap-1.5')}
+        >
+          <Plus className="size-3.5" /> Invite Member
+        </Link>
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-48 max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search members..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+        </div>
+
+        <div className="relative">
+          <select
+            value={teamFilter}
+            onChange={e => setTeamFilter(e.target.value)}
+            className={cn(
+              'appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+              'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+              !teamFilter && 'text-muted-foreground',
+            )}
+          >
+            <option value="">All Teams</option>
+            {teamList.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30">
+              <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground">Name</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Email</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground">Team</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground">Role</th>
+              <th className="text-right px-5 py-3 text-xs font-medium text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={togglePointsSort}
+                  className={cn(
+                    'inline-flex items-center gap-1 hover:text-foreground transition-colors',
+                    pointsSort !== 'none' && 'text-foreground',
+                  )}
+                  title={pointsSort === 'desc' ? 'Sorted by highest points — click for lowest' : pointsSort === 'asc' ? 'Sorted by lowest points — click to clear' : 'Click to sort by points'}
+                >
+                  Points
+                  {pointsSort === 'desc' && <ArrowDown className="w-3 h-3" />}
+                  {pointsSort === 'asc'  && <ArrowUp   className="w-3 h-3" />}
+                  {pointsSort === 'none' && <ArrowUpDown className="w-3 h-3 opacity-40" />}
+                </button>
+              </th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Joined</th>
+              <th className="px-5 py-3 w-10" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-5 py-10 text-center text-sm text-muted-foreground">
+                  No members found.
+                </td>
+              </tr>
+            ) : filtered.map(m => {
+              const dr = displayRole(m)
+              return (
+                <tr key={m.id} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+                        style={{ backgroundColor: m.avatarColor }}
+                      >
+                        {initials(m.name)}
+                      </div>
+                      <Link
+                        href={`/organizations/${orgId}/members/${m.id}`}
+                        className="font-medium text-foreground hover:text-primary hover:underline"
+                      >
+                        {m.name}
+                      </Link>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3.5 text-muted-foreground text-xs hidden sm:table-cell">{m.email}</td>
+                  <td className="px-5 py-3.5 text-muted-foreground text-sm">{m.team}</td>
+                  <td className="px-5 py-3.5">
+                    <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', roleStyle[dr])}>
+                      {roleLabel[dr]}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5 text-right font-semibold text-foreground">🥦 {m.points}</td>
+                  <td className="px-5 py-3.5 text-muted-foreground text-xs hidden md:table-cell">{m.joinedAt}</td>
+                  <td className="px-5 py-3.5">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded">
+                        <MoreHorizontal className="size-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" side="bottom" className="min-w-[168px]">
+                        <DropdownMenuItem
+                          onClick={() => router.push(`/organizations/${orgId}/members/${m.id}`)}
+                          className="gap-2 whitespace-nowrap"
+                        >
+                          <Eye className="w-3.5 h-3.5 shrink-0" /> View Member
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEdit(m)} className="gap-2 whitespace-nowrap">
+                          <Pencil className="w-3.5 h-3.5 shrink-0" /> Edit Member
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setRemoveTarget(m)}
+                          variant="destructive"
+                          className="gap-2 whitespace-nowrap"
+                        >
+                          <UserMinus className="w-3.5 h-3.5" /> Remove Member
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Edit role modal */}
+      <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null) }}>
+        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Edit Member</DialogTitle>
+          </DialogHeader>
+
+          {editTarget && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Name</label>
+                <Input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  placeholder="User Name"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Email</label>
+                <Input
+                  value={editEmail}
+                  onChange={e => setEditEmail(e.target.value)}
+                  placeholder="user@example.com"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Avatar Color</label>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold text-white shrink-0"
+                    style={{ backgroundColor: editAvatarColor }}
+                  >
+                    {editTarget ? initials(editName || editTarget.name) : ''}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {AVATAR_PALETTE.map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setEditAvatarColor(c)}
+                        className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110"
+                        style={{
+                          backgroundColor: c,
+                          borderColor: c === editAvatarColor ? 'white' : 'transparent',
+                          outline: c === editAvatarColor ? `2px solid ${c}` : 'none',
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Member Type (Dashboard Role)</label>
+                <div className="relative">
+                  <select
+                    value={editOrgRole}
+                    onChange={e => setEditOrgRole(e.target.value as any)}
+                    className={cn(
+                      'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+                      'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+                    )}
+                  >
+                    <option value="member">General Member</option>
+                    <option value="sub_admin">Sub Admin (Organization level)</option>
+                    <option value="org_admin">Full Admin (Organization level)</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Team</label>
+                  <div className="relative">
+                    <select
+                      value={editTeamId ?? ''}
+                      onChange={e => setEditTeamId(e.target.value || null)}
+                      className={cn(
+                        'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+                        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+                      )}
+                    >
+                      <option value="">Unassigned</option>
+                      {allTeams.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Team Role</label>
+                  <div className="relative">
+                    <select
+                      value={editRole}
+                      onChange={e => setEditRole(e.target.value as DisplayRole)}
+                      className={cn(
+                        'w-full appearance-none h-9 pl-3 pr-8 rounded-lg border border-input bg-background text-sm text-foreground',
+                        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 cursor-pointer',
+                      )}
+                    >
+                      <option value="member">Member</option>
+                      <option value="vice_captain">Vice Captain</option>
+                      <option value="captain">Captain</option>
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+              </div>
+
+              {roleError && (
+                <p className="text-[13px] font-medium text-destructive bg-destructive/5 border border-destructive/20 p-2 rounded-lg">
+                  {roleError}
+                </p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter showCloseButton={false} className="flex-row gap-2 pt-1">
+            <button
+              onClick={() => setEditTarget(null)}
+              className={cn(buttonVariants({ variant: 'outline' }), 'flex-1')}
+            >
+              Cancel
+            </button>
+            <Button
+              onClick={confirmEdit}
+              disabled={saving}
+              className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove confirm */}
+      <Dialog open={!!removeTarget} onOpenChange={v => { if (!v) setRemoveTarget(null) }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Remove {removeTarget?.name}?</DialogTitle>
+            <div className="text-sm text-muted-foreground mt-2 space-y-2">
+              <p>
+                <strong>{removeTarget?.name}</strong> will be permanently removed from the org. Their account and all their proof photos will be deleted.
+              </p>
+              {removeTarget && removeTarget.points > 0 && removeTarget.teamId ? (
+                <p>
+                  Their <strong>{removeTarget.points} 🥦 points</strong> will be transferred to <strong>{removeTarget.team}</strong> as a team inheritance entry, so the team doesn&apos;t lose them.
+                </p>
+              ) : null}
+              <p className="text-destructive">This cannot be undone.</p>
+            </div>
+          </DialogHeader>
+          <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
+            <button
+              onClick={() => setRemoveTarget(null)}
+              className={cn(buttonVariants({ variant: 'outline' }))}
+            >
+              Cancel
+            </button>
+            <Button
+              onClick={confirmRemove}
+              disabled={removing}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {removing ? 'Removing…' : 'Remove'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function MembersSkeleton() {
+  return (
+    <div className="space-y-5 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1.5">
+          <div className="h-8 w-28 bg-muted rounded-md" />
+          <div className="h-4 w-48 bg-muted rounded" />
+        </div>
+        <div className="h-8 w-32 bg-muted rounded-lg" />
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="h-9 flex-1 min-w-48 max-w-xs bg-muted rounded-lg" />
+        <div className="h-9 w-32 bg-muted rounded-lg" />
+      </div>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="flex items-center gap-4 px-5 py-3 border-b border-border bg-muted/30">
+          {[1,2,3,4,5,6].map(i => <div key={i} className="h-3 w-16 bg-muted rounded flex-1" />)}
+          <div className="w-10 shrink-0" />
+        </div>
+        <div className="divide-y divide-border">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-4 px-5 py-3.5">
+              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                <div className="w-7 h-7 bg-muted rounded-full shrink-0" />
+                <div className="h-4 w-32 bg-muted rounded" />
+              </div>
+              <div className="h-3.5 w-32 bg-muted rounded hidden sm:block shrink-0" />
+              <div className="h-3.5 w-20 bg-muted rounded shrink-0" />
+              <div className="h-5 w-16 bg-muted rounded-full shrink-0" />
+              <div className="h-4 w-10 bg-muted rounded shrink-0" />
+              <div className="h-3.5 w-12 bg-muted rounded hidden md:block shrink-0" />
+              <div className="w-6 h-6 bg-muted rounded shrink-0" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
