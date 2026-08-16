@@ -193,8 +193,16 @@ class BunnyVideoService {
           });
           patchReq.bodyBytes = chunk;
 
-          final streamed = await patchReq.send();
-          final patchRes = await http.Response.fromStream(streamed);
+          // A stalled mobile connection (4G handoff, lift, dead spot) leaves
+          // send() hanging forever with no timeout, so the retry loop below
+          // never gets control back and the progress bar freezes mid-upload
+          // — the "stuck at 6%" reports. Time it out so the attempt fails,
+          // _headOffset re-syncs the authoritative offset, and the chunk
+          // resumes. 2 MB needs a generous budget on a slow link, hence 90s.
+          final streamed =
+              await patchReq.send().timeout(const Duration(seconds: 90));
+          final patchRes = await http.Response.fromStream(streamed)
+              .timeout(const Duration(seconds: 30));
 
           if (patchRes.statusCode != 204) {
             lastErr = BunnyUploadFailedException(
