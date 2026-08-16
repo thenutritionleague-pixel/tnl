@@ -30,6 +30,17 @@ async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string
       if (head.ok) return url
     } catch { /* try next resolution */ }
   }
+  // Bunny's transcode can fail (status 5) while the uploaded original is
+  // perfectly intact and downloadable. Without this the reviewer is stuck on
+  // "Video is being processed" forever for a video that is sitting right
+  // there, because every play_* rendition 404s. The edge function already
+  // falls back this way; the dashboard did not.
+  const original = bunnySignPath(`/${guid}/original`, ttlSeconds)
+  try {
+    const head = await fetch(original, { method: 'HEAD' })
+    if (head.ok) return original
+  } catch { /* fall through */ }
+
   return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
 }
 
