@@ -53,6 +53,10 @@ function isTransientError(msg: string): boolean {
 
 const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
 
+// Largest original we will pull into edge-function memory when Bunny's
+// transcode has stalled. Comfortably above a normal 1080p phone clip.
+const FALLBACK_MAX_BYTES = 60 * 1024 * 1024
+
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
   approved:   boolean
@@ -182,6 +186,28 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
     await new Promise(r => setTimeout(r, 2500))
   }
   console.log('[bunny] poll timeout, last status =', lastKnownStatus)
+
+  // PLAN B: Bunny can sit in 'processing' for hours (status 0-3) while the
+  // uploaded ORIGINAL is perfectly downloadable the whole time — five members
+  // were stranded for ~3h on launch night exactly this way. The reviewer
+  // dashboard already falls back to /original; do the same here instead of
+  // leaving a genuine submission unevaluated.
+  //
+  // Size-capped: fetchVideo() pulls the whole file into memory, so a huge
+  // original (an 8K phone recording can be ~184 MB) would exhaust the edge
+  // function. Those stay 'pending' for the rescue sweep to hand to an admin.
+  const fallbackUrl = await bunnyResolvePlayableUrl(guid)
+  if (fallbackUrl) {
+    try {
+      const head = await fetch(fallbackUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      const size = Number(head.headers.get('content-length') ?? '0')
+      if (head.ok && size > 0 && size <= FALLBACK_MAX_BYTES) {
+        console.log('[bunny] transcode stalled; analysing original', size, 'bytes')
+        return { kind: 'ready', url: fallbackUrl }
+      }
+      console.log('[bunny] original too large for fallback:', size)
+    } catch { /* fall through to pending */ }
+  }
   return { kind: 'pending' }
 }
 
