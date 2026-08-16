@@ -110,9 +110,12 @@ having max(r.start_time) is null and j.schedule ~ '^(\*|\*/)'   -- frequent job 
          -- '*/N * * * *' runs every N minutes: allow 3 missed cycles before alarming.
          when j.schedule ~ '^\*/[0-9]+ '
            then ((substring(j.schedule from '^\*/([0-9]+) '))::int * 3) * interval '1 minute'
-         when j.schedule ~ '^\* '        then interval '15 minutes'  -- every minute
-         when j.schedule ~ '^[0-9]+ \*'  then interval '2 hours'     -- hourly
-         else interval '26 hours' end);                             -- daily or weekly
+         when j.schedule ~ '^\* '            then interval '15 minutes'  -- every minute
+         -- 'M */N * * *' runs every N hours: allow 2 missed cycles.
+         when j.schedule ~ '^[0-9]+ \*/[0-9]+ '
+           then ((substring(j.schedule from '^[0-9]+ \*/([0-9]+) '))::int * 2) * interval '1 hour'
+         when j.schedule ~ '^[0-9]+ \* '     then interval '2 hours'     -- hourly
+         else interval '26 hours' end);                                 -- daily or weekly
 
 \echo '== 10. The points RPC must stay closed to the public =='
 -- It was callable by anonymous visitors; the anon key ships in every bundle.
