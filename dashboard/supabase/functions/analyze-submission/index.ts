@@ -60,6 +60,7 @@ type AIResult = {
   issues:     string[]
   feedback:   string
   read?: { value?: number | null; unit?: string | null } | null
+  same_person?: 'same' | 'different' | 'unclear' | null
 }
 type Decision = { status: 'approved' | 'rejected' | 'needs_review'; feedback: string; confidence: number; model?: 'flash' | 'pro' | null }
 type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
@@ -184,9 +185,18 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
   return { kind: 'pending' }
 }
 
-function buildVideoPrompt(taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number): string {
+function buildVideoPrompt(taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number, hasReference = false): string {
   const req = claimedTier ? extractRequiredCount(claimedTier) : null
-  return `You are a fair AI reviewer for a wellness challenge app reviewing a VIDEO. You have TWO jobs.
+  const identityJob = hasReference ? `
+
+JOB 3 — IS THIS THE SAME PERSON?
+The FIRST image is a still from this member's OWN earlier approved submission. The video is their new one.
+Decide whether the person exercising in the video is the same individual as in that image.
+BE CONSERVATIVE. Different clothing, hair, lighting, room, camera angle or distance are NORMAL and are NOT evidence of a different person.
+Answer "different" ONLY when facial features or body type clearly show it is somebody else.
+If the face is not clearly visible in either the image or the video, answer "unclear".
+This never rejects anyone on its own — a human reviews every "different".` : ''
+  return `You are a fair AI reviewer for a wellness challenge app reviewing a VIDEO. You have ${hasReference ? 'THREE' : 'TWO'} jobs.
 
 TASK: "${taskTitle}"${taskDesc ? `\nDESCRIPTION: ${taskDesc}` : ''}
 ${claimedTier ? `CLAIMED TIER: "${claimedTier.label}"${req != null ? ` (target: ${req})` : ''}` : `POINTS: ${taskPoints}`}
@@ -202,8 +212,10 @@ The video is sampled at a low frame rate, so fast reps can fall between frames. 
   • If you cannot clearly see a rep actually happen, do NOT invent it. Never guess a number up or down to match the target.
   • Put your best honest integer in "read.value" and the unit in "read.unit" ("reps" or "seconds"). Use null ONLY if it is genuinely uncountable.
 
+${identityJob}
+
 Respond JSON only:
-{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<rep or second count, or null>,"unit":"reps|seconds|null"}}`
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<rep or second count, or null>,"unit":"reps|seconds|null"}${hasReference ? ',"same_person":"same|different|unclear"' : ''}}`
 }
 
 function buildImagePrompt(taskTitle: string, taskDesc: string, numericTarget: { value: number; unit: string } | null, taskPoints: number): string {
@@ -298,9 +310,13 @@ async function fetchVideo(signedUrl: string): Promise<{ bytes: Uint8Array; mime:
   return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'video/mp4' }
 }
 
-async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt: string, model: string, opts?: GenOpts): Promise<AIResult> {
+async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt: string, model: string, opts?: GenOpts, reference?: { bytes: Uint8Array; mime: string } | null): Promise<AIResult> {
+  // Reference goes FIRST so "the FIRST image" in the prompt is unambiguous.
+  const refPart = reference
+    ? [{ inline_data: { mime_type: reference.mime, data: bytesToBase64(reference.bytes) } }]
+    : []
   if (video.bytes.byteLength <= INLINE_LIMIT) {
-    return geminiGenerate([{ inline_data: { mime_type: video.mime, data: bytesToBase64(video.bytes) } }], prompt, model, opts)
+    return geminiGenerate([...refPart, { inline_data: { mime_type: video.mime, data: bytesToBase64(video.bytes) } }], prompt, model, opts)
   }
   // Large videos: Gemini File API (upload once, poll, generate)
   const initRes = await fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
@@ -334,13 +350,53 @@ async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt:
     state = ((await sr.json()) as { state: string }).state
   }
   if (state !== 'ACTIVE') { deleteFile(); throw new Error(`Video processing did not complete (state: ${state})`) }
-  try { return await geminiGenerate([{ file_data: { mime_type: video.mime, file_uri: fileUri } }], prompt, model, opts) } finally { deleteFile() }
+  try { return await geminiGenerate([...refPart, { file_data: { mime_type: video.mime, file_uri: fileUri } }], prompt, model, opts) } finally { deleteFile() }
+}
+
+/**
+ * A still from the member's FIRST approved video in this org, used to check the
+ * same person keeps showing up.
+ *
+ * Anchored on the FIRST approved submission, not the most recent: if a fake ever
+ * slips through, anchoring on "most recent" would make that fake the new
+ * baseline and every later fake would match it.
+ *
+ * Returns null whenever anything is missing or slow — the identity check is an
+ * enhancement, and must never block or fail a submission.
+ */
+async function fetchIdentityAnchor(
+  userId: string,
+  orgId: string,
+  excludeSubmissionId: string,
+): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  try {
+    const { data } = await supabase
+      .from('task_submissions')
+      .select('id, proof_url')
+      .eq('user_id', userId)
+      .eq('org_id', orgId)
+      .eq('status', 'approved')
+      .like('proof_url', 'bunny://%')
+      .neq('id', excludeSubmissionId)
+      .order('submitted_at', { ascending: true })
+      .limit(1)
+    const row = (data ?? [])[0] as { proof_url: string } | undefined
+    if (!row) return null // first submission — this one becomes the baseline
+    const guid = row.proof_url.replace('bunny://', '')
+    const url = await bunnySignPath(`/${guid}/thumbnail.jpg`)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    return { bytes: new Uint8Array(await res.arrayBuffer()), mime: 'image/jpeg' }
+  } catch (e) {
+    console.warn('[identity] anchor unavailable', e instanceof Error ? e.message : e)
+    return null
+  }
 }
 
 // HYBRID: Flash first (with dynamic thinking); escalate to Pro only when Flash
 // would reject or count low.
-async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number): Promise<Decision> {
-  const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints)
+async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: string, claimedTier: Tier | null, taskPoints: number, reference?: { bytes: Uint8Array; mime: string } | null): Promise<Decision> {
+  const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints, !!reference)
   const video = await fetchVideo(signedUrl)
 
   // AI CANNOT reliably count reps from video (front/depth angles, knees-down,
@@ -348,9 +404,21 @@ async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: strin
   // ADVISORY ONLY and never rejects a genuine member. The AI's job for video is
   // anti-cheat: is this a genuine attempt at the RIGHT exercise?
   //   genuine -> approve   |   fake / wrong activity -> reject (confirmed by Pro)
-  const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
+  const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, reference)
   const fConf = clamp01(flash.confidence ?? 0)
   const flashFlagsFake = flash.approved === false && fConf >= 0.55
+
+  // Identity mismatch NEVER rejects — full-body framing makes faces small and
+  // a wrongly-accused member is far worse than a missed cheat. It routes to a
+  // human instead, whatever the activity verdict was.
+  if (reference && flash.same_person === 'different') {
+    return {
+      status: 'needs_review',
+      feedback: 'The person in this video looks different from this member\'s earlier submissions — please confirm.',
+      confidence: fConf,
+      model: 'flash',
+    }
+  }
 
   // Genuine (or unsure) -> approve on the cheap Flash path. No count gate.
   if (!flashFlagsFake) {
@@ -361,7 +429,7 @@ async function decideVideo(signedUrl: string, taskTitle: string, taskDesc: strin
   // we NEVER reject a genuine video on Flash's word alone.
   let pro: AIResult
   try {
-    pro = await runVideoModel(video, prompt, GEMINI_PRO, { maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
+    pro = await runVideoModel(video, prompt, GEMINI_PRO, { maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, reference)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[video/pro escalation failed]', msg)
@@ -453,8 +521,11 @@ Deno.serve(async (req: Request) => {
           return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
         }
       }
+      // Identity anchor is best-effort: null on first submission, or on any
+      // lookup/fetch problem. Analysis proceeds exactly as before when absent.
+      const identityRef = await fetchIdentityAnchor(sub.user_id, orgId, submissionId)
       try {
-        decision = await decideVideo(videoUrl!, taskTitle, taskDesc, claimedTier, taskPoints)
+        decision = await decideVideo(videoUrl!, taskTitle, taskDesc, claimedTier, taskPoints, identityRef)
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/video]', errMsg)
