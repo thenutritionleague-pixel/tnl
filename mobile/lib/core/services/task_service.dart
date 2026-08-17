@@ -38,6 +38,23 @@ class VideoTooLongException implements Exception {
       'Please trim or record a shorter video.';
 }
 
+/// Thrown when a video is shorter than the task's minimum duration.
+///
+/// Task 0 received a 1.0s and a 1.37s clip for a 20-jumping-jack task and both
+/// were auto-approved: the video AI is anti-cheat only, so nothing was watching
+/// length. The minimum is set per task by an admin (~0.75s per required rep);
+/// when it is unset the check simply does not run.
+class VideoTooShortException implements Exception {
+  final int durationSeconds;
+  final int minSeconds;
+  const VideoTooShortException(this.durationSeconds, this.minSeconds);
+  @override
+  String toString() =>
+      'This video is only ${durationSeconds}s. This task needs at least '
+      '${minSeconds}s so your full set is visible. Please record the whole set '
+      'in one take and upload again.';
+}
+
 /// Thrown when the recording is above the resolution Bunny Stream can encode.
 /// Bunny rejects anything beyond 4K with "Incompatible resolution or not a
 /// video stream" — an 8K (7680x4320) phone recording fails there AFTER the
@@ -121,7 +138,7 @@ class TaskService {
   ) async {
     final data = await _client
         .from('task_submissions')
-        .select('id, task_id, status, submitted_at, submitted_date, points_awarded, rejection_reason')
+        .select('id, task_id, status, ai_status, submitted_at, submitted_date, points_awarded, rejection_reason')
         .eq('user_id', userId)
         .eq('org_id', orgId)
         .order('submitted_at', ascending: false)
@@ -341,6 +358,7 @@ class TaskService {
     required String orgId,
     required XFile videoFile,
     required int maxDurationSeconds,
+    int? minDurationSeconds,
     String? submittedDate,
     String? orgTimezone,
     String? note,
@@ -406,6 +424,14 @@ class TaskService {
       if (probedSeconds != null && probedSeconds > maxDurationSeconds + 1) {
         throw VideoTooLongException(probedSeconds, maxDurationSeconds);
       }
+      // Same fail-open contract as above: only block on a duration we actually
+      // read. The edge function re-checks against Bunny's reported length, so a
+      // probe that fails here is caught server-side rather than let through.
+      if (minDurationSeconds != null &&
+          probedSeconds != null &&
+          probedSeconds < minDurationSeconds) {
+        throw VideoTooShortException(probedSeconds, minDurationSeconds);
+      }
       // Only block when we positively read the dimensions — the probe fails
       // open, so an unreadable size must never stop a valid submission.
       final w = probe.width, h = probe.height;
@@ -428,6 +454,13 @@ class TaskService {
       final srcDurationSec = ((info.duration ?? 0) / 1000).round();
       if (srcDurationSec > maxDurationSeconds + 1) {
         throw VideoTooLongException(srcDurationSec, maxDurationSeconds);
+      }
+      // getMediaInfo returns 0 duration when it cannot read the file, so guard
+      // on > 0 to keep the same fail-open behaviour as the web branch.
+      if (minDurationSeconds != null &&
+          srcDurationSec > 0 &&
+          srcDurationSec < minDurationSeconds) {
+        throw VideoTooShortException(srcDurationSec, minDurationSeconds);
       }
 
       final progressSub = onCompressProgress == null
@@ -658,7 +691,7 @@ class TaskService {
     final data = await _client
         .from('task_submissions')
         .select(
-          'id, task_id, challenge_id, status, submitted_date, submitted_at, rejection_reason, '
+          'id, task_id, challenge_id, status, ai_status, submitted_date, submitted_at, rejection_reason, '
           'points_awarded, task_snapshot, '
           'tasks!task_id(id, title, description, icon, points, points_tiers)',
         )

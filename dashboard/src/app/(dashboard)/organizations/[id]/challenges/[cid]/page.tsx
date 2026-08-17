@@ -298,6 +298,9 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
   const [endDate, setEndDate]     = useState('')
   const [proofType, setProofType] = useState<'image' | 'video'>('image')
   const [maxVideoSeconds, setMaxVideoSeconds] = useState(90)
+  // '' = no minimum. Kept as a string so the field can be genuinely empty;
+  // 0 would read as a real value and disable the rule in a confusing way.
+  const [minVideoSeconds, setMinVideoSeconds] = useState<string>('')
   const [saving, setSaving]     = useState(false)
 
   const icon = CATEGORIES.find(c => c.label === category)?.icon ?? '✅'
@@ -316,6 +319,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       }
       setProofType(editTarget.proofType === 'video' ? 'video' : 'image')
       setMaxVideoSeconds(editTarget.maxVideoSeconds ?? 90)
+      setMinVideoSeconds(editTarget.minVideoSeconds != null ? String(editTarget.minVideoSeconds) : '')
       if (editTarget.pointsTiers && editTarget.pointsTiers.length > 0) {
         setTiered(true); setTiers(editTarget.pointsTiers)
       } else {
@@ -329,6 +333,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       setStartDate(''); setEndDate('')
       setProofType('image')
       setMaxVideoSeconds(90)
+      setMinVideoSeconds('')
     }
   }, [open, editTarget])
 
@@ -358,6 +363,9 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       weekNumber: week, category, icon, teams, startDate, endDate,
       proofType,
       maxVideoSeconds: proofType === 'video' ? maxVideoSeconds : null,
+      minVideoSeconds: proofType === 'video' && minVideoSeconds.trim() !== ''
+        ? Math.max(1, Math.min(maxVideoSeconds, Number(minVideoSeconds)))
+        : null,
     })
     setSaving(false)
   }
@@ -507,20 +515,39 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
               </button>
             </div>
             {proofType === 'video' && (
-              <div className="grid grid-cols-[1fr_120px] gap-3 items-end">
-                <div className="space-y-1.5">
-                  <Label htmlFor="t-vid-secs" className="text-xs">Max duration (seconds)</Label>
-                  <Input
-                    id="t-vid-secs"
-                    type="number"
-                    min={5}
-                    max={180}
-                    value={maxVideoSeconds}
-                    onChange={e => setMaxVideoSeconds(Math.max(5, Math.min(180, Number(e.target.value))))}
-                  />
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="t-vid-secs" className="text-xs">Max duration (seconds)</Label>
+                    <Input
+                      id="t-vid-secs"
+                      type="number"
+                      min={5}
+                      max={180}
+                      value={maxVideoSeconds}
+                      onChange={e => setMaxVideoSeconds(Math.max(5, Math.min(180, Number(e.target.value))))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="t-vid-min" className="text-xs">Min duration (seconds)</Label>
+                    <Input
+                      id="t-vid-min"
+                      type="number"
+                      min={1}
+                      max={maxVideoSeconds}
+                      placeholder="No minimum"
+                      value={minVideoSeconds}
+                      onChange={e => setMinVideoSeconds(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground pb-2">
-                  Videos are compressed to 480p before upload.
+                <p className="text-[11px] text-muted-foreground">
+                  Videos are compressed to 480p before upload. <strong>Min duration</strong> blocks clips too
+                  short to contain the reps &mdash; allow about 0.75s per rep, so <strong>20 reps &rarr; 15s</strong>.
+                  {minVideoSeconds.trim() !== '' && Number(minVideoSeconds) > 0 && (
+                    <> That is {(Number(minVideoSeconds) / 0.75).toFixed(0)} reps at this setting.</>
+                  )}
+                  {' '}Leave blank for no minimum.
                 </p>
               </div>
             )}

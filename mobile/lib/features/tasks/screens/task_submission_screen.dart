@@ -58,6 +58,8 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   String get _proofType => (_taskData['proof_type'] as String?) ?? 'image';
   bool get _isVideoTask => _proofType == 'video';
   int get _maxVideoSeconds => (_taskData['max_video_seconds'] as int?) ?? 90;
+  /// null = this task has no minimum, so the check does not run.
+  int? get _minVideoSeconds => _taskData['min_video_seconds'] as int?;
 
   Future<void> _pickImage(ImageSource source) async {
     // Cap proof photo at 1280×1280 + JPEG quality 82. Plenty for admin review
@@ -221,6 +223,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
           videoFile: _selectedImage!,
           preloadedBytes: _videoBytes,
           maxDurationSeconds: _maxVideoSeconds,
+          minDurationSeconds: _minVideoSeconds,
           submittedDate: _submittedDate,
           orgTimezone: _orgTimezone,
           note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
@@ -262,6 +265,13 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; _videoBytes = null; });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 6)),
+        );
+      }
+    } on VideoTooShortException catch (e) {
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; _selectedImage = null; _imageBytes = null; _videoBytes = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.error, duration: const Duration(seconds: 8)),
         );
       }
     } on VideoCompressionFailedException catch (e) {
@@ -405,7 +415,9 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Your proof photo is waiting for\nadmin approval.',
+                      _isVideoTask
+                          ? 'We\'re checking your video now.\nThis usually takes under a minute.'
+                          : 'We\'re checking your photo now.\nThis usually takes under a minute.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: context.textSecondary,

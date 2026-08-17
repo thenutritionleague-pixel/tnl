@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import {
   CheckCircle2, XCircle, ImageIcon, Loader2,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-  X, Search, Calendar, Sparkles, ListFilter,
+  X, Search, Calendar, Sparkles, ListFilter, Eye,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -300,14 +300,18 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   const [manualOnly, setManualOnly] = useState(false)
   // "AI disagreed" — admin overrode AI verdict (server-side filter).
   const [aiDisagreed, setAiDisagreed] = useState(false)
+  // "Needs attention" — server-side filter for the submissions the AI could not
+  // settle on its own (handed to a human, escalated after a suspected fake, or
+  // decided with little/no confidence). Turns a 1,000-row day into a short queue.
+  const [needsAttention, setNeedsAttention] = useState(false)
 
   const tasks = initialTasks
   const teams = useMemo(() => Array.from(new Set(approvals.map(a => a.teamName))).sort(), [approvals])
 
-  async function loadPage(page: number, status: StatusFilter, date?: string, taskId?: string, searchTerm?: string, disagreed = false) {
+  async function loadPage(page: number, status: StatusFilter, date?: string, taskId?: string, searchTerm?: string, disagreed = false, attention = false) {
     setLoading(true)
     const s = (status === 'pending' || status === 'approved' || status === 'rejected') ? status : undefined
-    const res = await loadApprovalsPage(orgId, page, s, date || undefined, taskId || undefined, searchTerm || undefined, disagreed)
+    const res = await loadApprovalsPage(orgId, page, s, date || undefined, taskId || undefined, searchTerm || undefined, disagreed, attention)
     if (res) {
       setApprovals(res.approvals)
       setHasMore(res.hasMore)
@@ -320,7 +324,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   // Two-character minimum (matches the server-side check) keeps queries cheap.
   useEffect(() => {
     const handle = setTimeout(() => {
-      loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
+      loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, needsAttention)
     }, 300)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -334,30 +338,36 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
 
   function handleStatusChange(s: StatusFilter) {
     setStatusFilter(s)
-    setSearch(''); setTeamFilter('all'); setDateFilter(''); setTaskFilter('all'); setManualOnly(false); setAiDisagreed(false)
+    setSearch(''); setTeamFilter('all'); setDateFilter(''); setTaskFilter('all'); setManualOnly(false); setAiDisagreed(false); setNeedsAttention(false)
     loadPage(0, s)
     refreshCounts()
   }
 
   function handleDateChange(d: string) {
     setDateFilter(d)
-    loadPage(0, statusFilter, d, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
+    loadPage(0, statusFilter, d, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, needsAttention)
   }
 
   function handleTaskChange(t: string) {
     setTaskFilter(t)
-    loadPage(0, statusFilter, dateFilter || undefined, t !== 'all' ? t : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)
+    loadPage(0, statusFilter, dateFilter || undefined, t !== 'all' ? t : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, needsAttention)
+  }
+
+  function handleNeedsAttentionToggle() {
+    const next = !needsAttention
+    setNeedsAttention(next)
+    loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, next)
   }
 
   function handleAiDisagreedToggle() {
     const next = !aiDisagreed
     setAiDisagreed(next)
-    loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, next)
+    loadPage(0, statusFilter, dateFilter || undefined, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, next, needsAttention)
   }
 
   function clearAllFilters() {
-    const needsReload = !!(dateFilter || (taskFilter !== 'all') || aiDisagreed)
-    setSearch(''); setTeamFilter('all'); setManualOnly(false); setDateFilter(''); setTaskFilter('all'); setAiDisagreed(false)
+    const needsReload = !!(dateFilter || (taskFilter !== 'all') || aiDisagreed || needsAttention)
+    setSearch(''); setTeamFilter('all'); setManualOnly(false); setDateFilter(''); setTaskFilter('all'); setAiDisagreed(false); setNeedsAttention(false)
     if (needsReload) loadPage(0, statusFilter)
   }
 
@@ -459,7 +469,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     return true
   }), [approvals, search, teamFilter, manualOnly])
 
-  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter || taskFilter !== 'all' || manualOnly || aiDisagreed)
+  const hasActiveFilter = !!(search || teamFilter !== 'all' || dateFilter || taskFilter !== 'all' || manualOnly || aiDisagreed || needsAttention)
 
   function openReview(a: OrgApproval) {
     setReviewTarget(a)
@@ -656,6 +666,20 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
             </button>
           )}
 
+          {/* Needs attention — the short queue worth an admin's time */}
+          <button
+            type="button"
+            onClick={handleNeedsAttentionToggle}
+            className={cn(
+              'shrink-0 inline-flex items-center gap-1.5 px-3 h-9 rounded-md border text-xs font-medium transition-colors',
+              needsAttention ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-input bg-background text-muted-foreground hover:text-foreground',
+            )}
+            title="Show only submissions the AI could not settle on its own: handed to a human, escalated after a suspected fake, or decided with little/no confidence."
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Needs attention
+          </button>
+
           {/* AI disagreed — server-side filter for admin-overrode-AI cases */}
           <button
             type="button"
@@ -789,14 +813,14 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
           <div className="flex items-center gap-2">
             <button
               disabled={currentPage === 0}
-              onClick={() => loadPage(currentPage - 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)}
+              onClick={() => loadPage(currentPage - 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, needsAttention)}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
             >
               <ChevronLeft className="w-3.5 h-3.5" /> Prev
             </button>
             <button
               disabled={!hasMore}
-              onClick={() => loadPage(currentPage + 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed)}
+              onClick={() => loadPage(currentPage + 1, statusFilter, dateFilter, taskFilter !== 'all' ? taskFilter : undefined, search.trim().length >= 2 ? search.trim() : undefined, aiDisagreed, needsAttention)}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1 disabled:opacity-40')}
             >
               Next <ChevronRight className="w-3.5 h-3.5" />
@@ -868,6 +892,18 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                       <button onClick={() => handleReanalyze(reviewTarget)} disabled={reviewTarget.aiStatus === 'analyzing' || submitting} className="text-xs text-primary hover:underline disabled:opacity-40 shrink-0">Re-analyze</button>
                     </div>
                     {reviewTarget.aiFeedback && <p className="text-xs text-muted-foreground leading-relaxed">{reviewTarget.aiFeedback}</p>}
+                    {/* Why this one is in the "Needs attention" queue, in words
+                        rather than an opaque score, so the admin knows what to
+                        look for before playing the video. */}
+                    {reviewTarget.riskReasons.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {reviewTarget.riskReasons.map(r => (
+                          <span key={r} className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            <Eye className="w-3 h-3" />{r}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

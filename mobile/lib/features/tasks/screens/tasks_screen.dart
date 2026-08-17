@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
+import '../../../core/models/submission_state.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/utils/org_date_utils.dart';
@@ -71,14 +72,20 @@ class _TasksScreenState extends State<TasksScreen>
     } catch (_) {}
   }
 
-  /// Keep polling every 30 s while any today-submission is still pending.
+  /// Keep polling every 30 s while a today-submission is still being CHECKED.
+  ///
+  /// Deliberately not "pending": a submission the AI handed to a human keeps
+  /// status='pending' until an admin acts, which can be hours. Re-arming a 30 s
+  /// timer for that across ~1,000 members is constant needless load for a state
+  /// that will not change on its own.
   void _schedulePendingRefresh() {
     _pendingRefreshTimer?.cancel();
     final todayStr = orgEffectiveTodayStr(_orgTimezone);
-    final hasPending = _submissions.any(
-      (s) => (s['submitted_date'] as String?) == todayStr && s['status'] == 'pending',
-    );
-    if (!hasPending) return;
+    final hasChecking = _submissions.any((s) =>
+        (s['submitted_date'] as String?) == todayStr &&
+        submissionStateFrom(s['status'] as String?, s['ai_status'] as String?)
+            .worthPolling);
+    if (!hasChecking) return;
     _pendingRefreshTimer = Timer(const Duration(seconds: 30), _refreshSubmissions);
   }
 
@@ -128,16 +135,19 @@ class _TasksScreenState extends State<TasksScreen>
   /// Returns today's submission status for a specific task.
   /// Uses the grace-aware effective date so a 00:00–00:14 submission
   /// (stored as yesterday by the DB trigger) is correctly matched.
-  String _submissionStatus(String taskId) {
+  SubmissionState _submissionState(String taskId) {
     final todayStr = orgEffectiveTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();
-    if (todayMatch.isEmpty) return 'not_submitted';
+    if (todayMatch.isEmpty) return SubmissionState.notSubmitted;
     // Sort by submitted_at descending to get the latest one (handles multiple today)
     todayMatch.sort((a, b) =>
         (b['submitted_at'] as String? ?? '').compareTo(a['submitted_at'] as String? ?? ''));
-    return todayMatch.first['status'] as String? ?? 'pending';
+    return submissionStateFrom(
+      todayMatch.first['status'] as String?,
+      todayMatch.first['ai_status'] as String?,
+    );
   }
 
   /// Returns the rejection reason only if TODAY's submission is rejected.
@@ -330,7 +340,7 @@ class _TasksScreenState extends State<TasksScreen>
                   delegate: SliverChildListDelegate([
                     ...sortedWeeks.map((week) {
                       final weekTasks = grouped[week]!;
-                      final completedCount = weekTasks.where((t) => _submissionStatus(t['id']) == 'approved').length;
+                      final completedCount = weekTasks.where((t) => _submissionState(t['id']).countsAsDone).length;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -341,7 +351,7 @@ class _TasksScreenState extends State<TasksScreen>
                             completedCount: completedCount,
                           ),
                           ...weekTasks.map((task) {
-                            final status = _submissionStatus(task['id']);
+                            final status = _submissionState(task['id']);
                             final rejectionReason = _rejectionReason(task['id']);
                             return _TaskCard(
                               task: task,
@@ -456,7 +466,7 @@ class _WeekTab extends StatelessWidget {
 
 class _TaskCard extends StatelessWidget {
   final Map<String, dynamic> task;
-  final String status;
+  final SubmissionState status;
   final String? rejectionReason;
   final String profileId;
   final String orgId;
@@ -473,14 +483,7 @@ class _TaskCard extends StatelessWidget {
     required this.onDone,
   });
 
-  Color get _statusColor {
-    switch (status) {
-      case 'approved': return AppColors.success;
-      case 'pending':  return AppColors.pending;
-      case 'rejected': return AppColors.rejected;
-      default:         return AppColors.primary;
-    }
-  }
+  Color get _statusColor => status.color;
 
   void _openSubmit(BuildContext context) async {
     if (isInSubmissionLockout(orgTimezone)) {
@@ -500,7 +503,7 @@ class _TaskCard extends StatelessWidget {
       'profileId': profileId,
       'orgId': orgId,
       'orgTimezone': orgTimezone,
-      'isResubmit': status == 'rejected',
+      'isResubmit': status == SubmissionState.rejected,
     });
     onDone();
   }
@@ -520,7 +523,7 @@ class _TaskCard extends StatelessWidget {
     final title  = task['title']       as String? ?? '';
     final desc   = task['description'] as String? ?? '';
     final icon   = task['icon']        as String? ?? '📋';
-    final canSubmit = status == 'not_submitted' || status == 'rejected';
+    final canSubmit = status.canSubmit;
     final tiers = task['points_tiers'];
     final tiersList = tiers != null ? List<Map<String, dynamic>>.from(tiers as List) : null;
     final String pointsLabel = (tiersList != null && tiersList.isNotEmpty)
@@ -536,8 +539,8 @@ class _TaskCard extends StatelessWidget {
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: status == 'rejected' ? AppColors.rejected.withValues(alpha: 0.4) : Theme.of(context).colorScheme.outline,
-          width: status == 'rejected' ? 1.5 : 1,
+          color: status == SubmissionState.rejected ? AppColors.rejected.withValues(alpha: 0.4) : Theme.of(context).colorScheme.outline,
+          width: status == SubmissionState.rejected ? 1.5 : 1,
         ),
       ),
       child: Column(
@@ -622,27 +625,17 @@ class _TaskCard extends StatelessWidget {
                 const SizedBox(width: 12),
 
                 // Action / status
-                if (status == 'approved')
+                if (status == SubmissionState.approved ||
+                    status == SubmissionState.checking ||
+                    status == SubmissionState.inReview)
                   Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.check_circle_outline_rounded, color: AppColors.success, size: 16),
-                      SizedBox(width: 4),
+                    children: [
+                      Icon(status.icon, color: status.color, size: 16),
+                      const SizedBox(width: 4),
                       Text(
-                        'Done',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
-                      ),
-                    ],
-                  )
-                else if (status == 'pending')
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.schedule_rounded, color: AppColors.pending, size: 16),
-                      SizedBox(width: 4),
-                      Text(
-                        'Pending',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.pending),
+                        status.label,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: status.color),
                       ),
                     ],
                   )
@@ -654,7 +647,7 @@ class _TaskCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
-                        status == 'rejected' ? 'Resubmit' : 'Submit',
+                        status.label,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -667,7 +660,43 @@ class _TaskCard extends StatelessWidget {
           ),
 
           // ── Rejection reason banner ──────────────────────────────────────
-          if (status == 'rejected') ...[
+          // The whole point of the In Review state: without a sentence here the
+          // member just sees an amber chip and assumes the app is stuck.
+          if (status == SubmissionState.inReview) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              decoration: BoxDecoration(
+                color: AppColors.pending.withValues(alpha: 0.07),
+                border: Border(
+                  top: BorderSide(
+                    color: AppColors.pending.withValues(alpha: 0.2),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.visibility_outlined,
+                      size: 14, color: AppColors.pending),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      status.detail,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: AppColors.pending,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (status == SubmissionState.rejected) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),

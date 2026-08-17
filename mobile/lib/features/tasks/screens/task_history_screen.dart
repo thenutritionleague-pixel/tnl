@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
+import '../../../core/models/submission_state.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/theme/theme_colors.dart';
@@ -106,7 +107,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Your submissions from previous days — approved, pending review, or open for resubmission.',
+                      'Your submissions from previous days \u2014 approved, in review, or open for resubmission.',
                       style: TextStyle(
                         fontSize: 13,
                         color: context.textSecondary,
@@ -200,6 +201,7 @@ class _HistoryCard extends StatelessWidget {
     final task = snap ?? liveTask;
 
     final status = submission['status']         as String? ?? '';
+    final state  = submissionStateFrom(status, submission['ai_status'] as String?);
     final date   = submission['submitted_date'] as String? ?? '';
     final reason = submission['rejection_reason'] as String?;
     final title  = (task['title']       as String?) ?? (liveTask['title']       as String?) ?? '—';
@@ -324,7 +326,7 @@ class _HistoryCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             decoration: BoxDecoration(
-              color: status == 'pending'
+              color: (state == SubmissionState.checking || state == SubmissionState.inReview)
                   ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2D2000) : const Color(0xFFFFF9EC))
                   : status == 'approved'
                       ? (Theme.of(context).brightness == Brightness.dark ? const Color(0xFF102A1F) : const Color(0xFFEAF6F0))
@@ -340,14 +342,21 @@ class _HistoryCard extends StatelessWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      if (status == 'pending') ...[
-                        const Icon(Icons.hourglass_top_rounded,
-                            size: 13, color: Color(0xFFB07D00)),
+                      if (state == SubmissionState.checking ||
+                          state == SubmissionState.inReview) ...[
+                        Icon(
+                            state == SubmissionState.inReview
+                                ? Icons.visibility_outlined
+                                : Icons.hourglass_top_rounded,
+                            size: 13,
+                            color: const Color(0xFFB07D00)),
                         const SizedBox(width: 5),
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Pending review by admin.',
-                            style: TextStyle(
+                            state == SubmissionState.inReview
+                                ? 'In review \u2014 a person is checking this one. Nothing needed from you.'
+                                : 'Checking your submission\u2026',
+                            style: const TextStyle(
                               fontSize: 11.5,
                               color: Color(0xFFB07D00),
                               height: 1.4,

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/services/task_service.dart';
+import '../../../core/models/submission_state.dart';
 import '../../../core/services/leaderboard_service.dart';
 import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
@@ -31,7 +32,7 @@ class _HomeScreenState extends State<HomeScreen>
   String _orgTimezone = 'UTC';
 
   // Precomputed per-load (avoids O(tasks×submissions) on every build)
-  Map<String, String> _submissionStatusCache = {};
+  Map<String, SubmissionState> _submissionStatusCache = {};
   double _cachedProgress = 0.0;
   String _cachedWeekLabel = '';
 
@@ -101,12 +102,15 @@ class _HomeScreenState extends State<HomeScreen>
           if (tid == null || (s['submitted_date'] as String?) != todayStr) continue;
           (byTask[tid] ??= []).add(s);
         }
-        final statusCache = <String, String>{};
+        final statusCache = <String, SubmissionState>{};
         for (final entry in byTask.entries) {
           final sorted = [...entry.value]
             ..sort((a, b) => (b['submitted_at'] as String? ?? '')
                 .compareTo(a['submitted_at'] as String? ?? ''));
-          statusCache[entry.key] = sorted.first['status'] as String? ?? 'pending';
+          statusCache[entry.key] = submissionStateFrom(
+            sorted.first['status'] as String?,
+            sorted.first['ai_status'] as String?,
+          );
         }
         // Precompute progress and week label using org timezone today
         double progress = 0.0;
@@ -148,10 +152,11 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  String _submissionStatus(String taskId) => _submissionStatusCache[taskId] ?? 'none';
+  SubmissionState _submissionStatus(String taskId) =>
+      _submissionStatusCache[taskId] ?? SubmissionState.notSubmitted;
 
   int get _todayApproved =>
-      _tasks.where((t) => _submissionStatusCache[t['id']] == 'approved').length;
+      _tasks.where((t) => (_submissionStatusCache[t['id']] ?? SubmissionState.notSubmitted).countsAsDone).length;
 
   int get _todayDonePct {
     if (_tasks.isEmpty) return 0;
@@ -602,7 +607,7 @@ class _StatTile extends StatelessWidget {
 
 class _ChallengeRow extends StatelessWidget {
   final Map<String, dynamic> task;
-  final String status;
+  final SubmissionState status;
   final bool isLast;
   final String profileId;
   final String orgId;
@@ -621,10 +626,10 @@ class _ChallengeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final canSubmit = status == 'none' || status == 'rejected';
+    final canSubmit = status.canSubmit;
 
     Widget trailing;
-    if (status == 'approved') {
+    if (status == SubmissionState.approved) {
       trailing = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -633,16 +638,17 @@ class _ChallengeRow extends StatelessWidget {
           Text('Done', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.primary)),
         ],
       );
-    } else if (status == 'pending') {
+    } else if (status == SubmissionState.checking ||
+        status == SubmissionState.inReview) {
       trailing = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.schedule_rounded, color: cs.onSurface.withValues(alpha: 0.45), size: 16),
+          Icon(status.icon, color: status.color, size: 16),
           const SizedBox(width: 4),
-          Text('Pending', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface.withValues(alpha: 0.45))),
+          Text(status.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: status.color)),
         ],
       );
-    } else if (status == 'rejected') {
+    } else if (status == SubmissionState.rejected) {
       trailing = Row(
         mainAxisSize: MainAxisSize.min,
         children: [

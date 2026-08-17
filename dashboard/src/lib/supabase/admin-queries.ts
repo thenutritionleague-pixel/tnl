@@ -673,6 +673,7 @@ type SubmissionRow = {
   task_snapshot: TaskSnapshotShape | null
   note: string | null
   ai_status: string | null
+  ai_video_model?: string | null
   ai_feedback: string | null
   ai_confidence: number | null
   user_id: string
@@ -713,12 +714,32 @@ export interface OrgApproval {
   aiStatus: string | null
   aiFeedback: string | null
   aiConfidence: number | null
+  aiVideoModel: string | null
+  /// Why this submission is worth a human look. Empty = nothing unusual.
+  riskReasons: string[]
   previousSubmissions: PreviousSubmission[]  // always present — set to [] if none
 }
 
 const APPROVALS_PAGE_SIZE = 50
 
-export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string, search?: string, aiDisagreed = false): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
+/// Plain-English reasons a submission deserves a human look.
+///
+/// Kept as text rather than a numeric score so an admin can see WHY an item is
+/// near the top instead of trusting an opaque number.
+export function approvalRiskReasons(
+  aiStatus: string | null,
+  aiConfidence: number | null,
+  aiVideoModel: string | null,
+): string[] {
+  const out: string[] = []
+  if (aiStatus === 'needs_review') out.push('AI asked for a human')
+  if (aiVideoModel === 'pro') out.push('Escalated \u2014 first check suspected a fake')
+  if (aiConfidence == null) out.push('No confidence recorded')
+  else if (aiConfidence < 0.6) out.push(`Low confidence (${Math.round(aiConfidence * 100)}%)`)
+  return out
+}
+
+export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending' | 'approved' | 'rejected', date?: string, taskId?: string, search?: string, aiDisagreed = false, needsAttention = false): Promise<{ approvals: OrgApproval[]; hasMore: boolean }> {
   const client = await createAdminClient()
   const from = page * APPROVALS_PAGE_SIZE
   const to   = from + APPROVALS_PAGE_SIZE - 1
@@ -742,7 +763,7 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
 
   let subsQuery = client
     .from('task_submissions')
-    .select('id, task_id, status, submitted_at, submitted_date, reviewed_at, proof_url, rejection_reason, points_awarded, selected_tier_index, task_snapshot, note, ai_status, ai_feedback, ai_confidence, user_id, tasks!task_id(title, description, points, points_tiers)')
+    .select('id, task_id, status, submitted_at, submitted_date, reviewed_at, proof_url, rejection_reason, points_awarded, selected_tier_index, task_snapshot, note, ai_status, ai_feedback, ai_confidence, ai_video_model, user_id, tasks!task_id(title, description, points, points_tiers)')
     .eq('org_id', orgId)
   if (status) subsQuery = subsQuery.eq('status', status)
   if (date) subsQuery = subsQuery.eq('submitted_date', date)
@@ -754,6 +775,16 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   // Both are interesting for QA, so we OR them.
   if (aiDisagreed) {
     subsQuery = subsQuery.or('and(status.eq.approved,ai_status.eq.rejected),and(status.eq.rejected,ai_status.eq.approved)')
+  }
+  // "Needs attention" — the submissions actually worth an admin's eyes, so a
+  // 1,000-member day becomes a short queue instead of a chronological trawl.
+  // Filtered server-side (not sorted client-side) so it stays correct across
+  // pagination. Every signal here is already stored on the row:
+  //   needs_review  -> the AI explicitly handed it to a human
+  //   model = pro   -> Flash suspected a fake and it had to escalate
+  //   confidence <0.6 or null -> nobody stands behind the verdict
+  if (needsAttention) {
+    subsQuery = subsQuery.or('ai_status.eq.needs_review,ai_video_model.eq.pro,ai_confidence.lt.0.6,ai_confidence.is.null')
   }
   // For approved/rejected, sort by reviewed_at so recently-actioned items surface first.
   // For pending/all, sort by submitted_at so oldest-waiting comes first? No — newest first is fine.
@@ -881,6 +912,8 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       aiStatus: s.ai_status ?? null,
       aiFeedback: s.ai_feedback ?? null,
       aiConfidence: s.ai_confidence ?? null,
+      aiVideoModel: s.ai_video_model ?? null,
+      riskReasons: approvalRiskReasons(s.ai_status ?? null, s.ai_confidence ?? null, s.ai_video_model ?? null),
       previousSubmissions: previous,
     })
   }
