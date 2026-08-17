@@ -99,6 +99,33 @@ function extractNumericTarget(title: string, desc: string): { value: number; uni
   return { value, unit }
 }
 
+/// The threshold a TIER actually demands, read from the tier's own text.
+///
+/// A tier carries two different numbers: what you must achieve ("6,000 steps")
+/// and what you earn for it (100 points). The image path used to hand the AI
+/// `tier.points`, so a "6,000 steps → 100 Broccolis" tier told the model "this
+/// requires AT LEAST 100" and a 300-step screenshot qualified. The same
+/// confusion ran the other way on Kanpur's plank task, where "30 secs duration"
+/// worth 50 points demanded "at least 50" and rejected honest 30-second planks.
+///
+/// Units are matched loosely because tier text is short and written by admins.
+/// Returns null when the tier text carries no number at all, in which case the
+/// caller keeps the old points-based behaviour.
+function extractTierThreshold(tier: Tier): { value: number; unit: string } | null {
+  const text = `${tier.label} ${tier.description ?? ''}`
+  const m = text.match(/(\d[\d,]*)\s*\+?\s*(steps?|calories?|kcal|cals?|minutes?|mins?|seconds?|secs?|km|kilometers?)/i)
+  if (!m) return null
+  const value = parseInt(m[1].replace(/,/g, ''), 10)
+  if (!Number.isFinite(value) || value <= 0) return null
+  const u = m[2].toLowerCase()
+  const unit = u.startsWith('step') ? 'steps'
+    : (u.startsWith('cal') || u === 'kcal') ? 'calories'
+    : u.startsWith('min') ? 'minutes'
+    : u.startsWith('sec') ? 'seconds'
+    : 'km'
+  return { value, unit }
+}
+
 async function bunnySignPath(path: string, ttlSeconds = 900): Promise<string> {
   const base = `https://${BUNNY_CDN_HOSTNAME}${path}`
   if (!BUNNY_TOKEN_AUTH) return base
@@ -731,10 +758,14 @@ Deno.serve(async (req: Request) => {
         await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
       }
 
-      // Numeric target: from a formal tier, or extracted from the task text for
-      // flat numeric tasks (STEP "7,500 steps" lives only in the description).
+      // Numeric target, in priority order:
+      //   1. the threshold written in the claimed TIER ("6,000 steps")
+      //   2. the tier's points, only when its text carries no number at all
+      //      (legacy behaviour, kept so old tasks decide exactly as before)
+      //   3. the task text, for flat numeric tasks with no tiers
+      //      (STEP "7,500 steps" lives only in the description)
       const numericTarget: { value: number; unit: string } | null = claimedTier
-        ? { value: claimedTier.points, unit: '' }
+        ? (extractTierThreshold(claimedTier) ?? { value: claimedTier.points, unit: '' })
         : extractNumericTarget(taskTitle, taskDesc)
       const prompt = buildImagePrompt(taskTitle, taskDesc, numericTarget, taskPoints)
       let ai: AIResult
