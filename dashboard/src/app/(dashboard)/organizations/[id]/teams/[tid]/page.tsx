@@ -330,6 +330,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                                 {entry.status === 'missed' && (
                                   <XCircle className="w-4 h-4 text-red-400" />
                                 )}
+                                {entry.status === 'rejected' && (
+                                  <XCircle className="w-4 h-4 text-red-500" />
+                                )}
                                 {entry.status === 'adjustment' && (
                                   <span className="text-sm leading-none">✏️</span>
                                 )}
@@ -348,6 +351,8 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                                 <p className="text-xs text-muted-foreground">{entry.date}</p>
                                 {entry.status === 'missed' ? (
                                   <p className="text-xs font-semibold text-red-500">Missed</p>
+                                ) : entry.status === 'rejected' ? (
+                                  <p className="text-xs font-semibold text-red-500">Not approved</p>
                                 ) : (
                                   <p className={cn(
                                     'text-xs font-semibold',

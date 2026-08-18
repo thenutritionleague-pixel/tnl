@@ -117,7 +117,7 @@ export interface AvailableMember {
   avatarColor: string
 }
 
-export type EntryStatus = 'approved' | 'missed' | 'adjustment'
+export type EntryStatus = 'approved' | 'missed' | 'adjustment' | 'rejected'
 
 export interface WeekEntryUI {
   status: EntryStatus
@@ -1161,6 +1161,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     is_manual: boolean
     created_at: string
     transaction_date: string | null
+    submission_id: string | null
     task_submissions: { submitted_date: string | null; tasks: { title: string; icon: string; points: number } | null } | null
   }
 
@@ -1175,7 +1176,7 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     const txnData = await fetchAllRows<TxnRaw>(
       (from, to) => supabase
         .from('points_transactions')
-        .select('user_id, amount, reason, is_manual, created_at, transaction_date, task_submissions(submitted_date, tasks(title, icon, points))')
+        .select('user_id, amount, reason, is_manual, created_at, transaction_date, submission_id, task_submissions(submitted_date, tasks(title, icon, points))')
         .in('user_id', memberIds)
         .gte('created_at', challenge.start_date)
         .order('created_at', { ascending: true })
@@ -1206,7 +1207,29 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     const txns = txnsByUser[profile.id] ?? []
     const weekGroupMap: Record<number, { totalPoints: number; entries: WeekEntryUI[] }> = {}
 
+    // One submission can leave SEVERAL ledger rows. Revoking an approval writes
+    // a compensating "-10 Approval revoked" beside the original "+10 Task
+    // approved" -- correct for the ledger, since it keeps an audit trail rather
+    // than silently deleting the award, but shown raw it reads as "her points
+    // went minus", which is what an admin asked about on 18 Aug. Re-approving
+    // afterwards adds a THIRD row, so the pair is not always a pair.
+    //
+    // So net the rows per submission and show the outcome that actually stands:
+    //   net > 0  -> approved for that amount
+    //   net == 0 -> not approved, no points
+    const netBySubmission = new Map<string, number>()
     for (const t of txns) {
+      if (!t.submission_id || (t.is_manual ?? false)) continue
+      netBySubmission.set(t.submission_id, (netBySubmission.get(t.submission_id) ?? 0) + ((t.amount as number) ?? 0))
+    }
+    const emittedSubmissions = new Set<string>()
+
+    for (const t of txns) {
+      // Everything about a submission is rendered once, from its net.
+      if (t.submission_id && !(t.is_manual ?? false)) {
+        if (emittedSubmissions.has(t.submission_id)) continue
+        emittedSubmissions.add(t.submission_id)
+      }
       const amount = (t.amount as number) ?? 0
       const isManual = (t.is_manual as boolean) ?? false
       const createdAt = t.created_at ?? ''
@@ -1251,20 +1274,23 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
           points: task?.points ?? 0,
         }
       } else {
-        // Approved task
+        // A real submission: approved, or approved-then-revoked. The net decides.
+        const net = t.submission_id ? (netBySubmission.get(t.submission_id) ?? amount) : amount
         const subDate = sub?.submitted_date ?? ''
         week = weekFor(subDate || createdAt)
         entry = {
-          status: 'approved',
+          status: net > 0 ? 'approved' : 'rejected',
           icon: task?.icon ?? '📋',
           title: task?.title ?? rawReason,
           date: shortDate(subDate || createdAt),
-          points: amount,
+          points: net > 0 ? net : 0,
         }
       }
 
       if (!weekGroupMap[week]) weekGroupMap[week] = { totalPoints: 0, entries: [] }
-      if (entry.status !== 'missed') weekGroupMap[week].totalPoints += amount
+      // entry.points already carries the net for submissions, so adding it keeps
+      // the week total equal to the ledger.
+      if (entry.status !== 'missed') weekGroupMap[week].totalPoints += entry.points
       weekGroupMap[week].entries.push(entry)
     }
 
