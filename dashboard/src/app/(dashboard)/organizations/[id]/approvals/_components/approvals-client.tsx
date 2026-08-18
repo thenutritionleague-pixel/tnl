@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts, loadOrgTaskBreakdown } from '../actions'
+import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts, loadOrgTaskBreakdown } from '../actions'
 import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
@@ -372,8 +372,10 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   }
 
   const modalScrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { if (reviewTarget) modalScrollRef.current?.scrollTo({ top: 0 }) }, [reviewTarget?.id])
+  useEffect(() => { if (reviewTarget) modalScrollRef.current?.scrollTo({ top: 0 }); setConfirmResubmit(false) }, [reviewTarget?.id])
 
+  // Two-step so a mis-click cannot wipe a member's submission and points.
+  const [confirmResubmit, setConfirmResubmit] = useState(false)
   const [aiChecking, setAiChecking]   = useState(false)
   const [prevProofUrl, setPrevProofUrl] = useState<string | null | 'loading' | 'none'>('none')
 
@@ -512,6 +514,22 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     } else {
       toast.success(reviewTarget.status === 'approved' ? 'Submission rejected. Points refunded.' : 'Submission rejected.')
       fadeOutRow(reviewTarget.id)
+      closeReview()
+      refreshCounts()
+    }
+    setSubmitting(false)
+  }
+
+  async function handleAllowResubmit() {
+    if (!reviewTarget) return
+    setSubmitting(true)
+    const result = await allowResubmit(reviewTarget.id, orgId)
+    if (result.error) {
+      toast.error(result.error)
+    } else {
+      toast.success(`Cleared. ${reviewTarget.member} can submit this task again today.`)
+      fadeOutRow(reviewTarget.id)
+      setConfirmResubmit(false)
       closeReview()
       refreshCounts()
     }
@@ -948,7 +966,34 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                 </div>
               </div>
 
-              <div className="px-5 py-4 border-t border-border">
+              <div className="px-5 py-4 border-t border-border space-y-2">
+                {/* Let the member try again today. Day 1 produced several
+                    "picked the wrong tier" requests that otherwise need a
+                    developer to clear the row by hand. */}
+                {confirmResubmit ? (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-3 space-y-2">
+                    <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+                      This deletes {reviewTarget.member}&apos;s submission, its points and the uploaded
+                      proof, so they can submit this task again today. Whatever they submit next decides
+                      the points &mdash; higher or lower. They must resubmit before midnight or they score
+                      nothing for today.
+                    </p>
+                    <div className="flex gap-2">
+                      <button disabled={submitting} onClick={() => setConfirmResubmit(false)}
+                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'flex-1')}>Cancel</button>
+                      <button disabled={submitting} onClick={handleAllowResubmit}
+                        className={cn(buttonVariants({ size: 'sm' }), 'flex-1 bg-amber-600 hover:bg-amber-700')}>
+                        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Yes, clear it'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button disabled={submitting} onClick={() => setConfirmResubmit(true)}
+                    className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'w-full text-muted-foreground hover:text-foreground')}>
+                    Allow resubmit today
+                  </button>
+                )}
+
                 {reviewTarget.status === 'pending' && (
                   <div className="flex gap-2">
                     <button disabled={submitting} onClick={handleReject} className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 border-destructive text-destructive hover:bg-destructive/10')}>

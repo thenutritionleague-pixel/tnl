@@ -233,3 +233,82 @@ export async function getPreviousApprovedProof(
     .createSignedUrl(data.proof_url, 300)
   return signed?.signedUrl ?? null
 }
+
+/**
+ * Clear a member's submission for the day so they can submit again from scratch.
+ *
+ * Day 1 of National produced the case this exists for: a member picked the 6,000
+ * tier at 10:38, then wanted to keep walking and claim 12,000 later. Once a
+ * submission is approved the task shows "Done" and cannot be tapped, so the only
+ * way through was an admin doing it by hand in the database. At ~900 submissions
+ * a day that does not scale.
+ *
+ * This is a FRESH START, not an edit: the submission, its points, its feed posts
+ * and its proof file all go, and whatever they submit next decides the points —
+ * higher or lower. The daily unique index (user, task, date) means the slot must
+ * genuinely be empty before they can submit again.
+ */
+export async function allowResubmit(submissionId: string, orgId: string) {
+  const profile = await getAdminProfile()
+  if (!profile) return { error: 'Unauthorized.' }
+  if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
+  if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return { error: 'Unauthorized.' }
+
+  const client = await createAdminClient()
+
+  const { data: sub } = await client
+    .from('task_submissions')
+    .select('id, user_id, proof_url, challenge_id, reviewed_at, submitted_at')
+    .eq('id', submissionId)
+    .eq('org_id', orgId)
+    .maybeSingle()
+  if (!sub) return { error: 'Submission not found in this org.' }
+
+  // 1. Ledger BEFORE the submission: points_transactions.submission_id has an FK
+  //    to task_submissions with no ON DELETE CASCADE, so the reverse order fails
+  //    with 23503 for any approved submission.
+  const { error: ptErr } = await client
+    .from('points_transactions').delete().eq('submission_id', submissionId)
+  if (ptErr) return { error: `Could not clear points: ${ptErr.message}` }
+
+  // 2. The auto-posts announcing points they no longer hold. feed_items has no
+  //    submission_id column, so these are matched by author + type within a
+  //    short window around the decision.
+  const anchor = sub.reviewed_at ?? sub.submitted_at
+  if (anchor) {
+    const from = new Date(new Date(anchor).getTime() - 60_000).toISOString()
+    const to   = new Date(new Date(anchor).getTime() + 5 * 60_000).toISOString()
+    await client.from('feed_items').delete()
+      .eq('author_id', sub.user_id)
+      .eq('is_auto_generated', true)
+      .in('type', ['submission_approved', 'submission_rejected', 'milestone'])
+      .gte('created_at', from).lte('created_at', to)
+  }
+
+  // 3. The submission itself (cascades task_submission_events).
+  const { error: sErr } = await client
+    .from('task_submissions').delete().eq('id', submissionId).eq('org_id', orgId)
+  if (sErr) return { error: `Could not clear submission: ${sErr.message}` }
+
+  // 4. The proof file. Bunny videos live on another backend and are swept
+  //    separately, so only Supabase Storage paths are removed here.
+  if (sub.proof_url && !sub.proof_url.startsWith('bunny://')) {
+    const { error: stErr } = await client.storage.from('task-proofs').remove([sub.proof_url])
+    if (stErr) console.error('[allowResubmit] proof cleanup failed:', stErr)
+  }
+
+  // 5. total_points is a cached sum, so recompute it from the ledger rather than
+  //    subtracting — that keeps it exactly equal to the transactions, which is
+  //    what invariant 2 asserts.
+  const { data: ledger } = await client
+    .from('points_transactions').select('amount')
+    .eq('user_id', sub.user_id).eq('org_id', orgId)
+  const total = ((ledger ?? []) as { amount: number }[])
+    .reduce((sum, r) => sum + (r.amount ?? 0), 0)
+  const { error: pErr } = await client
+    .from('profiles').update({ total_points: total }).eq('id', sub.user_id)
+  if (pErr) return { error: `Could not recompute points: ${pErr.message}` }
+
+  revalidatePath(`/organizations/${orgId}/approvals`)
+  return { success: true }
+}
