@@ -1347,9 +1347,13 @@ export async function getTeamDetail(teamId: string, orgId: string): Promise<Team
     for (const row of (viewRows ?? []) as { team_id: string; total_points: number }[]) {
       summed[row.team_id] = (summed[row.team_id] ?? 0) + row.total_points
     }
-    const sorted = Object.entries(summed).sort(([, a], [, b]) => b - a)
+    // Dense rank, matching both mobile screens: teams level on points share a
+    // place and the next different score takes the next number (2000/2000/2000
+    // = 1st, 1900/1900 = 2nd, 1800 = 3rd). Counting POSITIONS instead put this
+    // team at 4th while its own members were reading 2nd.
     const myPts = summed[teamId] ?? 0
-    rank = sorted.findIndex(([, pts]) => pts <= myPts) + 1 || 1
+    const higherScores = new Set(Object.values(summed).filter(pts => pts > myPts))
+    rank = higherScores.size + 1
   }
 
   return {

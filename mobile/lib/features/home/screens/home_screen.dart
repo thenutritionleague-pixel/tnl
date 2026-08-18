@@ -163,12 +163,16 @@ class _HomeScreenState extends State<HomeScreen>
     return ((_todayApproved / _tasks.length) * 100).round();
   }
 
-  /// Standard competition rank: 1 + however many teams have strictly MORE points.
+  /// Dense rank: 1 + however many DISTINCT higher scores there are.
   ///
-  /// Previously this was the row's index in the sorted list, which gave tied
-  /// teams different ranks — two teams on 500 points showed as 3rd and 4th, and
-  /// with every team on 0 at the start of an event each member saw an arbitrary
-  /// rank that moved on every refresh. Teams level on points now share a rank.
+  /// Teams level on points share a place, and the next different score takes the
+  /// next number — 2000/2000/2000 are all 1st, 1900/1900 are 2nd, 1800 is 3rd.
+  ///
+  /// This must match _tiedRanks() on the Leaderboard screen. It previously
+  /// counted TEAMS ahead rather than distinct scores, so a team reading "5th" on
+  /// the Leaderboard read "18th" here on the same refresh. With everyone doing
+  /// the same daily task, ties are the norm rather than the exception: 104 of
+  /// 116 teams disagreed between the two screens, the worst by 46 places.
   int get _teamRank {
     if (_teamId == null) return 0;
     final me = _fullTeamLeaderboard.firstWhere(
@@ -177,10 +181,11 @@ class _HomeScreenState extends State<HomeScreen>
     );
     if (me.isEmpty) return 0;
     final myPoints = (me['total_points'] as int?) ?? 0;
-    final ahead = _fullTeamLeaderboard
-        .where((t) => ((t['total_points'] as int?) ?? 0) > myPoints)
-        .length;
-    return ahead + 1;
+    final higherScores = _fullTeamLeaderboard
+        .map((t) => (t['total_points'] as int?) ?? 0)
+        .where((pts) => pts > myPoints)
+        .toSet();
+    return higherScores.length + 1;
   }
 
   int get _teamPoints {
