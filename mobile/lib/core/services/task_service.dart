@@ -147,6 +147,34 @@ class TaskService {
     return List<Map<String, dynamic>>.from(data);
   }
 
+  /// Submissions made by ANYONE on the member's team, for team-scoped tasks.
+  ///
+  /// A team task ("share on social media") is one entry for the whole team, so
+  /// the app has to know whether a TEAMMATE already did it -- getUserSubmissions
+  /// only ever returns the member's own rows. Reads straight off task_submissions
+  /// via the denormalised team_id; the org-scoped RLS SELECT policy already
+  /// allows a member to see their org's submissions.
+  ///
+  /// Returns [] on any failure: a lookup problem must never block submitting.
+  static Future<List<Map<String, dynamic>>> getTeamSubmissions(
+    String teamId,
+    String orgId,
+  ) async {
+    try {
+      final data = await _client
+          .from('task_submissions')
+          .select('id, task_id, user_id, status, submitted_date, profiles:user_id(name)')
+          .eq('team_id', teamId)
+          .eq('org_id', orgId)
+          .neq('status', 'rejected')
+          .order('submitted_at', ascending: false)
+          .limit(200);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Ensure the auth access token is fresh before a write. supabase_flutter
   /// auto-refreshes, but a long upload (60–90s video) can outlive the ~1h access
   /// token, causing the follow-up insert to fail with a 403. Proactively refresh

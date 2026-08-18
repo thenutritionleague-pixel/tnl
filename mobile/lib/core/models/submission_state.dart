@@ -23,6 +23,11 @@ enum SubmissionState {
 
   approved,
   rejected,
+
+  /// A TEAM task a teammate has already submitted. One entry counts for the
+  /// whole team, so this member has nothing to do -- and must not be allowed to
+  /// waste an upload the database would reject anyway.
+  doneByTeammate,
 }
 
 SubmissionState submissionStateFrom(String? status, String? aiStatus) {
@@ -48,6 +53,7 @@ extension SubmissionStateDisplay on SubmissionState {
         SubmissionState.checking => 'Checking',
         SubmissionState.inReview => 'In Review',
         SubmissionState.rejected => 'Resubmit',
+        SubmissionState.doneByTeammate => 'Team done',
         SubmissionState.notSubmitted => 'Submit',
       };
 
@@ -62,6 +68,8 @@ extension SubmissionStateDisplay on SubmissionState {
           'Our AI couldn\'t auto-approve this one, so a person is checking it. '
               'Nothing needed from you — your points land as soon as it\'s approved.',
         SubmissionState.rejected => 'Tap Resubmit to send a new proof.',
+        SubmissionState.doneByTeammate =>
+          'Your team has already submitted this one \u2014 it only needs one entry per team.',
         SubmissionState.notSubmitted => '',
       };
 
@@ -70,6 +78,7 @@ extension SubmissionStateDisplay on SubmissionState {
         SubmissionState.checking => Icons.schedule_rounded,
         SubmissionState.inReview => Icons.visibility_outlined,
         SubmissionState.rejected => Icons.refresh_rounded,
+        SubmissionState.doneByTeammate => Icons.groups_rounded,
         SubmissionState.notSubmitted => Icons.add_rounded,
       };
 
@@ -78,6 +87,7 @@ extension SubmissionStateDisplay on SubmissionState {
         SubmissionState.checking => AppColors.pending,
         SubmissionState.inReview => AppColors.pending,
         SubmissionState.rejected => AppColors.rejected,
+        SubmissionState.doneByTeammate => AppColors.success,
         SubmissionState.notSubmitted => AppColors.primary,
       };
 
@@ -86,7 +96,8 @@ extension SubmissionStateDisplay on SubmissionState {
       this == SubmissionState.notSubmitted || this == SubmissionState.rejected;
 
   /// Whether this counts toward "tasks done" progress.
-  bool get countsAsDone => this == SubmissionState.approved;
+  bool get countsAsDone =>
+      this == SubmissionState.approved || this == SubmissionState.doneByTeammate;
 
   /// Whether it is worth polling for a change.
   ///

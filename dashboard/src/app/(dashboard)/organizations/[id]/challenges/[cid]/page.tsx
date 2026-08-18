@@ -301,6 +301,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
   // '' = no minimum. Kept as a string so the field can be genuinely empty;
   // 0 would read as a real value and disable the rule in a confusing way.
   const [minVideoSeconds, setMinVideoSeconds] = useState<string>('')
+  const [submissionScope, setSubmissionScope] = useState<'member' | 'team'>('member')
   const [saving, setSaving]     = useState(false)
 
   const icon = CATEGORIES.find(c => c.label === category)?.icon ?? '✅'
@@ -320,6 +321,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       setProofType(editTarget.proofType === 'video' ? 'video' : 'image')
       setMaxVideoSeconds(editTarget.maxVideoSeconds ?? 90)
       setMinVideoSeconds(editTarget.minVideoSeconds != null ? String(editTarget.minVideoSeconds) : '')
+      setSubmissionScope(editTarget.submissionScope === 'team' ? 'team' : 'member')
       if (editTarget.pointsTiers && editTarget.pointsTiers.length > 0) {
         setTiered(true); setTiers(editTarget.pointsTiers)
       } else {
@@ -334,6 +336,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       setProofType('image')
       setMaxVideoSeconds(90)
       setMinVideoSeconds('')
+      setSubmissionScope('member')
     }
   }, [open, editTarget])
 
@@ -363,6 +366,7 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
       weekNumber: week, category, icon, teams, startDate, endDate,
       proofType,
       maxVideoSeconds: proofType === 'video' ? maxVideoSeconds : null,
+      submissionScope,
       minVideoSeconds: proofType === 'video' && minVideoSeconds.trim() !== ''
         ? Math.max(1, Math.min(maxVideoSeconds, Number(minVideoSeconds)))
         : null,
@@ -514,6 +518,26 @@ function TaskModal({ open, onClose, editTarget, existingWeeks, teamOptions, peri
                 🎬  Video
               </button>
             </div>
+            {/* Who submits: everyone, or one entry for the whole team. */}
+            <div className="rounded-lg border border-input p-3 space-y-2">
+              <Label className="text-xs">Who submits this task?</Label>
+              <div className="flex rounded-lg border border-input overflow-hidden text-sm">
+                <button type="button" onClick={() => setSubmissionScope('member')}
+                  className={cn('flex-1 px-3 py-2 transition-colors', submissionScope === 'member' ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                  👤  Every member
+                </button>
+                <button type="button" onClick={() => setSubmissionScope('team')}
+                  className={cn('flex-1 px-3 py-2 transition-colors', submissionScope === 'team' ? 'bg-primary text-white font-semibold' : 'bg-background text-muted-foreground hover:bg-muted')}>
+                  👥  One per team
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {submissionScope === 'team'
+                  ? 'Any one member submits on behalf of the team. Once accepted, teammates cannot submit it again, and the points go to the TEAM — no individual score changes.'
+                  : 'Everyone on the team submits their own proof and earns their own points.'}
+              </p>
+            </div>
+
             {proofType === 'video' && (
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-3">

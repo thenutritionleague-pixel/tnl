@@ -23,6 +23,8 @@ class _TasksScreenState extends State<TasksScreen>
   bool _loadError = false;
   List<Map<String, dynamic>> _tasks = [];
   List<Map<String, dynamic>> _submissions = [];
+  // Teammates' submissions, used only for team-scoped tasks.
+  List<Map<String, dynamic>> _teamSubmissions = [];
   String? _profileId;
   String? _orgId;
   String _orgTimezone = 'UTC';
@@ -110,6 +112,12 @@ class _TasksScreenState extends State<TasksScreen>
       final tasks = await TaskService.getActiveTasks(profile['org_id'], teamId);
       final subs = await TaskService.getUserSubmissions(profile['id'], profile['org_id']);
       final periodLabel = await TaskService.getPeriodLabel(profile['org_id']);
+      // Only needed when the challenge actually has a team-scoped task, so the
+      // ordinary day costs no extra query.
+      final hasTeamTask = tasks.any((t) => t['submission_scope'] == 'team');
+      final teamSubs = (hasTeamTask && teamId != null)
+          ? await TaskService.getTeamSubmissions(teamId, profile['org_id'])
+          : <Map<String, dynamic>>[];
 
       if (mounted) {
         setState(() {
@@ -119,6 +127,7 @@ class _TasksScreenState extends State<TasksScreen>
           _periodLabel = periodLabel;
           _tasks = tasks;
           _submissions = subs;
+          _teamSubmissions = teamSubs;
           _loading = false;
           _loadError = false;
         });
@@ -135,12 +144,35 @@ class _TasksScreenState extends State<TasksScreen>
   /// Returns today's submission status for a specific task.
   /// Uses the grace-aware effective date so a 00:00–00:14 submission
   /// (stored as yesterday by the DB trigger) is correctly matched.
-  SubmissionState _submissionState(String taskId) {
+  /// Whether a TEAM-scoped task has already been submitted by anyone on the
+  /// team today. Returns the teammate's name so the card can say who.
+  String? _teammateWhoSubmitted(String taskId) {
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
+    for (final s in _teamSubmissions) {
+      if (s['task_id'] != taskId) continue;
+      if ((s['submitted_date'] as String?) != todayStr) continue;
+      if (s['user_id'] == _profileId) continue; // their own row is handled below
+      final prof = s['profiles'];
+      final name = prof is Map ? prof['name'] as String? : null;
+      return (name == null || name.trim().isEmpty) ? 'A teammate' : name.trim();
+    }
+    return null;
+  }
+
+  SubmissionState _submissionState(String taskId, {bool isTeamTask = false}) {
     final todayStr = orgEffectiveTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
       (s) => s['task_id'] == taskId && (s['submitted_date'] as String?) == todayStr,
     ).toList();
-    if (todayMatch.isEmpty) return SubmissionState.notSubmitted;
+    if (todayMatch.isEmpty) {
+      // Nothing of their own. For a team task a teammate may already have done
+      // it, in which case this member must not be able to try -- the database
+      // would reject it and they would have wasted the upload.
+      if (isTeamTask && _teammateWhoSubmitted(taskId) != null) {
+        return SubmissionState.doneByTeammate;
+      }
+      return SubmissionState.notSubmitted;
+    }
     // Sort by submitted_at descending to get the latest one (handles multiple today)
     todayMatch.sort((a, b) =>
         (b['submitted_at'] as String? ?? '').compareTo(a['submitted_at'] as String? ?? ''));
@@ -340,7 +372,7 @@ class _TasksScreenState extends State<TasksScreen>
                   delegate: SliverChildListDelegate([
                     ...sortedWeeks.map((week) {
                       final weekTasks = grouped[week]!;
-                      final completedCount = weekTasks.where((t) => _submissionState(t['id']).countsAsDone).length;
+                      final completedCount = weekTasks.where((t) => _submissionState(t['id'], isTeamTask: t['submission_scope'] == 'team').countsAsDone).length;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -351,11 +383,13 @@ class _TasksScreenState extends State<TasksScreen>
                             completedCount: completedCount,
                           ),
                           ...weekTasks.map((task) {
-                            final status = _submissionState(task['id']);
+                            final status = _submissionState(task['id'], isTeamTask: task['submission_scope'] == 'team');
+                            final teammate = task['submission_scope'] == 'team' ? _teammateWhoSubmitted(task['id']) : null;
                             final rejectionReason = _rejectionReason(task['id']);
                             return _TaskCard(
                               task: task,
                               status: status,
+                              teammateName: teammate,
                               rejectionReason: rejectionReason,
                               profileId: _profileId ?? '',
                               orgId: _orgId ?? '',
@@ -467,6 +501,7 @@ class _WeekTab extends StatelessWidget {
 class _TaskCard extends StatelessWidget {
   final Map<String, dynamic> task;
   final SubmissionState status;
+  final String? teammateName;
   final String? rejectionReason;
   final String profileId;
   final String orgId;
@@ -476,6 +511,7 @@ class _TaskCard extends StatelessWidget {
   const _TaskCard({
     required this.task,
     required this.status,
+    this.teammateName,
     this.rejectionReason,
     required this.profileId,
     required this.orgId,
@@ -627,7 +663,8 @@ class _TaskCard extends StatelessWidget {
                 // Action / status
                 if (status == SubmissionState.approved ||
                     status == SubmissionState.checking ||
-                    status == SubmissionState.inReview)
+                    status == SubmissionState.inReview ||
+                    status == SubmissionState.doneByTeammate)
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -660,6 +697,34 @@ class _TaskCard extends StatelessWidget {
           ),
 
           // ── Rejection reason banner ──────────────────────────────────────
+          if (status == SubmissionState.doneByTeammate) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.07),
+                border: Border(
+                  top: BorderSide(color: AppColors.success.withValues(alpha: 0.2), width: 1),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.groups_rounded, size: 14, color: AppColors.success),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      teammateName != null
+                          ? '$teammateName submitted this for your team \u2014 it only needs one entry per team.'
+                          : status.detail,
+                      style: const TextStyle(fontSize: 11.5, color: AppColors.success, height: 1.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           // The whole point of the In Review state: without a sentence here the
           // member just sees an amber chip and assumes the app is stuck.
           if (status == SubmissionState.inReview) ...[

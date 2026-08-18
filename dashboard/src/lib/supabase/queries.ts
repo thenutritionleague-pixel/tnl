@@ -195,6 +195,8 @@ export interface TaskUI {
   proofType?: 'image' | 'video'
   maxVideoSeconds?: number | null
   minVideoSeconds?: number | null
+  /// 'member' (default) = everyone submits. 'team' = one entry per team.
+  submissionScope?: 'member' | 'team'
 }
 
 /// How this challenge's task groups are labelled to admins and members.
@@ -1332,7 +1334,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
       .select(`
         id, name, description, status, start_date, end_date, manually_closed, period_label,
         challenge_teams(team_id, teams(name)),
-        tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, min_video_seconds, task_teams(teams(name)))
+        tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, min_video_seconds, submission_scope, task_teams(teams(name)))
       `)
       .eq('org_id', orgId)
       .order('created_at', { ascending: false }),
@@ -1343,7 +1345,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
   if (!challenges) return []
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string; proof_type?: 'image' | 'video'; max_video_seconds?: number | null; min_video_seconds?: number | null }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; start_date?: string; end_date?: string; proof_type?: 'image' | 'video'; max_video_seconds?: number | null; min_video_seconds?: number | null; submission_scope?: 'member' | 'team' }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; period_label?: string; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const results: ChallengeUI[] = []
@@ -1400,6 +1402,7 @@ export async function getOrgChallenges(orgId: string): Promise<ChallengeUI[]> {
         proofType: t.proof_type ?? 'image',
         maxVideoSeconds: t.max_video_seconds ?? null,
         minVideoSeconds: t.min_video_seconds ?? null,
+        submissionScope: t.submission_scope ?? 'member',
       })),
       submissions: countMap[ch.id] ?? 0,
     })
@@ -1497,7 +1500,7 @@ export async function deleteChallenge(id: string) {
 }
 
 export async function addTask(challengeId: string, data: {
-  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null; minVideoSeconds?: number | null
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null; minVideoSeconds?: number | null; submissionScope?: 'member' | 'team'
 }) {
   await assertAdmin()
   const supabase = await db()
@@ -1526,6 +1529,7 @@ export async function addTask(challengeId: string, data: {
     // measured across 769 Task-0 videos the median member takes 1.13s per rep,
     // so 0.75 catches the impossible without punishing fast honest performers.
     min_video_seconds: proofType === 'video' ? (data.minVideoSeconds ?? null) : null,
+    submission_scope: data.submissionScope === 'team' ? 'team' : 'member',
   }).select().single()
 
   if (newTask && data.teams.length > 0) {
@@ -1541,7 +1545,7 @@ export async function addTask(challengeId: string, data: {
 }
 
 export async function updateTask(id: string, data: {
-  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null; minVideoSeconds?: number | null
+  title: string; description: string; points: number; pointsTiers?: TaskTier[]; weekNumber: number; category: string; icon: string; teams: string[]; startDate?: string; endDate?: string; proofType?: 'image' | 'video'; maxVideoSeconds?: number | null; minVideoSeconds?: number | null; submissionScope?: 'member' | 'team'
 }) {
   await assertAdmin()
   const supabase = await db()
@@ -1568,6 +1572,9 @@ export async function updateTask(id: string, data: {
     updates.proof_type = data.proofType
     updates.max_video_seconds = data.proofType === 'video' ? (data.maxVideoSeconds ?? 90) : null
     updates.min_video_seconds = data.proofType === 'video' ? (data.minVideoSeconds ?? null) : null
+  }
+  if (data.submissionScope === 'member' || data.submissionScope === 'team') {
+    updates.submission_scope = data.submissionScope
   }
   await supabase.from('tasks').update(updates).eq('id', id)
 
@@ -1763,14 +1770,14 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
     .select(`
       id, name, description, status, start_date, end_date, manually_closed, period_label,
       challenge_teams(team_id, teams(name)),
-      tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, min_video_seconds, task_teams(teams(name)))
+      tasks(id, title, description, points, points_tiers, start_week, start_date, end_date, category, icon, is_active, proof_type, max_video_seconds, min_video_seconds, submission_scope, task_teams(teams(name)))
     `)
     .eq('id', challengeId)
     .single()
   if (!ch) return null
 
   type CtRaw = { team_id: string; teams: { name: string } | null }
-  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; proof_type?: 'image' | 'video'; max_video_seconds?: number | null; min_video_seconds?: number | null }
+  type TaskRaw = { id: string; title: string; description: string; points: number; points_tiers?: TaskTier[] | null; start_week: number; start_date?: string; end_date?: string; category: string; icon: string; is_active: boolean; task_teams?: { teams: { name: string } | null }[]; proof_type?: 'image' | 'video'; max_video_seconds?: number | null; min_video_seconds?: number | null; submission_scope?: 'member' | 'team' }
   type ChRaw = { id: string; name: string; description: string; status: string; start_date: string; end_date: string; manually_closed: boolean; period_label?: string; challenge_teams: CtRaw[]; tasks: TaskRaw[] }
 
   const raw = ch as unknown as ChRaw
@@ -1800,6 +1807,7 @@ export async function getChallengeById(challengeId: string): Promise<ChallengeUI
       proofType: t.proof_type ?? 'image',
       maxVideoSeconds: t.max_video_seconds ?? null,
       minVideoSeconds: t.min_video_seconds ?? null,
+      submissionScope: t.submission_scope ?? 'member',
     })),
     submissions: count ?? 0,
   }
