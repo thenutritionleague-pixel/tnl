@@ -188,6 +188,17 @@ class _HomeScreenState extends State<HomeScreen>
     return higherScores.length + 1;
   }
 
+  /// Place for a given score under the same rule as _teamRank and the
+  /// Leaderboard screen: 1 + however many DISTINCT higher scores exist.
+  /// Computed against the FULL board, never the preview's top-5 slice.
+  int _denseRankFor(int points) {
+    final higher = _fullTeamLeaderboard
+        .map((t) => (t['total_points'] as int?) ?? 0)
+        .where((pts) => pts > points)
+        .toSet();
+    return higher.length + 1;
+  }
+
   int get _teamPoints {
     if (_teamId == null) return 0;
     final t = _fullTeamLeaderboard.firstWhere((t) => t['team_id'] == _teamId, orElse: () => {});
@@ -515,7 +526,11 @@ class _HomeScreenState extends State<HomeScreen>
                             final isMyTeam = team['team_id'] == _teamId;
                             final isLast = i == _teamLeaderboard.length - 1;
                             return _LeaderboardRow(
-                              rank: i + 1,
+                              // Dense rank, not the row's position. Five teams
+                              // level on 2,150 were numbered 1-2-3-4-5 here
+                              // while the Leaderboard screen correctly showed
+                              // them all 1st.
+                              rank: _denseRankFor((team['total_points'] as int?) ?? 0),
                               emoji: team['emoji'] as String? ?? '🏃',
                               name: team['name'] as String? ?? 'Team',
                               points: (team['total_points'] as int?) ?? 0,
