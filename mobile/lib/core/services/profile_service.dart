@@ -101,7 +101,7 @@ class ProfileService {
     final data = await _client
         .from('points_transactions')
         .select('''
-          id, amount, reason, is_manual, created_at,
+          id, amount, reason, is_manual, created_at, submission_id,
           task_submissions(
             submitted_date,
             tasks(title)

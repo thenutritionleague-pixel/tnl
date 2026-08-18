@@ -280,10 +280,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                   border: Border.all(color: context.borderColor),
                 ),
                 child: Column(
-                  children: _history.asMap().entries.map((entry) {
+                  children: _visibleHistory.asMap().entries.map((entry) {
                     final i = entry.key;
                     final h = entry.value;
-                    final amount = h['amount'] as int? ?? 0;
+                    final amount = _netFor(h);
                     final reason = h['reason'] as String? ?? '';
                     final isManual = h['is_manual'] as bool? ?? false;
 
@@ -292,6 +292,11 @@ class _ProfileScreenState extends State<ProfileScreen>
                     final submittedDate = submission?['submitted_date'] as String?;
 
                     final isMissed = amount == 0 && reason.toLowerCase().startsWith('task missed');
+                    // Approved then rolled back: net 0 on a real submission.
+                    final isRevoked = amount == 0 &&
+                        !isMissed &&
+                        (h['submission_id'] as String?) != null &&
+                        !(h['is_manual'] as bool? ?? false);
                     final label = taskName ?? _formatReason(reason);
 
                     // For missed entries, extract the date from the reason string
@@ -310,7 +315,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     if (isManual) {
                       iconEmoji = '🎁';
                       iconBg = context.primaryMint;
-                    } else if (isMissed) {
+                    } else if (isMissed || isRevoked) {
                       iconEmoji = '❌';
                       iconBg = isDark ? const Color(0xFF3D1515) : const Color(0xFFFEF2F2);
                     } else {
@@ -354,12 +359,15 @@ class _ProfileScreenState extends State<ProfileScreen>
                               isMissed
                                   ? const Text('Missed',
                                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error))
-                                  : Text('+$amount 🥦',
+                                  : isRevoked
+                                  ? const Text('Not approved',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error))
+                                  : Text('${amount < 0 ? '' : '+'}$amount 🥦',
                                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.pointsText)),
                             ],
                           ),
                         ),
-                        if (i < _history.length - 1)
+                        if (i < _visibleHistory.length - 1)
                           const Divider(height: 1, indent: 64, endIndent: 16),
                       ],
                     );
@@ -386,6 +394,48 @@ class _ProfileScreenState extends State<ProfileScreen>
     } catch (_) {
       return '';
     }
+  }
+
+  /// One row per submission, showing the outcome that stands.
+  ///
+  /// Revoking an approval writes a compensating "-10 Approval revoked" beside
+  /// the original "+10 Task approved" rather than deleting it, so the ledger
+  /// keeps an audit trail. Rendered raw that shows the member two entries for
+  /// one task and — because every row was printed as '+$amount' — a reversal
+  /// appeared as "+-10 🥦" in green with a tick, as if they had gained points.
+  ///
+  /// Re-approving adds a THIRD row, so the rows are not always a pair: the net
+  /// is what decides. net > 0 = approved for that amount, net == 0 = not
+  /// approved.
+  Map<String, int> get _netBySubmission {
+    final net = <String, int>{};
+    for (final h in _history) {
+      final sid = h['submission_id'] as String?;
+      if (sid == null || (h['is_manual'] as bool? ?? false)) continue;
+      net[sid] = (net[sid] ?? 0) + (h['amount'] as int? ?? 0);
+    }
+    return net;
+  }
+
+  /// The history with each submission collapsed to its first (newest) row.
+  List<Map<String, dynamic>> get _visibleHistory {
+    final seen = <String>{};
+    final out = <Map<String, dynamic>>[];
+    for (final h in _history) {
+      final sid = h['submission_id'] as String?;
+      if (sid != null && !(h['is_manual'] as bool? ?? false)) {
+        if (seen.contains(sid)) continue;
+        seen.add(sid);
+      }
+      out.add(h);
+    }
+    return out;
+  }
+
+  int _netFor(Map<String, dynamic> h) {
+    final sid = h['submission_id'] as String?;
+    if (sid == null || (h['is_manual'] as bool? ?? false)) return h['amount'] as int? ?? 0;
+    return _netBySubmission[sid] ?? (h['amount'] as int? ?? 0);
   }
 
   String _formatReason(String reason) {
