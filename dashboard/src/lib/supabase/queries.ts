@@ -716,7 +716,13 @@ export async function removeMember(orgId: string, userId: string) {
   // 6b. Multi-org: unenrol from THIS org only. The account, the other org's
   // profile row, teams, submissions and ledger all survive.
   if (isMultiOrg) {
-    for (const table of ['task_submissions', 'points_transactions', 'team_members', 'org_members'] as const) {
+    // ORDER MATTERS: points_transactions.submission_id has an FK to
+    // task_submissions with no ON DELETE CASCADE, so deleting submissions first
+    // aborts with 23503 for anyone who has an APPROVED submission (an approval
+    // writes a points row pointing at it). That made this path fail for exactly
+    // the members most likely to be swapped mid-event. Ledger first, then the
+    // submissions it references.
+    for (const table of ['points_transactions', 'task_submissions', 'team_members', 'org_members'] as const) {
       const { error } = await supabase.from(table).delete().eq('user_id', userId).eq('org_id', orgId)
       if (error) {
         if (insertedTransferId) {
