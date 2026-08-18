@@ -505,6 +505,15 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
 
   async function handleReject() {
     if (!reviewTarget) return
+    // Rolling back an APPROVED submission takes points the member already saw,
+    // so they are owed an explanation. Without one they get "Approval rolled
+    // back by admin.", which tells them nothing — two members are looking at
+    // exactly that. A fresh rejection is different: the AI has usually written
+    // a specific reason already.
+    if (reviewTarget.status === 'approved' && !adminNotes.trim()) {
+      toast.error('Add a reason — the member sees this, and their points are being taken back.')
+      return
+    }
     setSubmitting(true)
     const fallback = reviewTarget.status === 'approved' ? 'Approval rolled back by admin.' : ''
     const reason = adminNotes || fallback

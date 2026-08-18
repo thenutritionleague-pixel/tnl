@@ -104,6 +104,7 @@ class ProfileService {
           id, amount, reason, is_manual, created_at, submission_id,
           task_submissions(
             submitted_date,
+            rejection_reason,
             tasks(title)
           )
         ''')

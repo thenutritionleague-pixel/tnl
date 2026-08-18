@@ -290,6 +290,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                     final submission = h['task_submissions'] as Map?;
                     final taskName = (submission?['tasks'] as Map?)?['title'] as String?;
                     final submittedDate = submission?['submitted_date'] as String?;
+                    // Why it was not approved. Members were told the outcome but
+                    // never the reason here, so a rejection looked arbitrary.
+                    final rejectionReason = (submission?['rejection_reason'] as String?)?.trim();
 
                     final isMissed = amount == 0 && reason.toLowerCase().startsWith('task missed');
                     // Approved then rolled back: net 0 on a real submission.
@@ -353,6 +356,20 @@ class _ProfileScreenState extends State<ProfileScreen>
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis),
                                     Text(date, style: TextStyle(fontSize: 11, color: context.textHint)),
+                                    // A rejection with no explanation reads as
+                                    // arbitrary. The AI writes a specific reason
+                                    // ("shows 3,204 steps, below the 6,000
+                                    // required"); admins can type their own.
+                                    if (isRevoked && rejectionReason != null && rejectionReason.isNotEmpty) ...[
+                                      const SizedBox(height: 3),
+                                      Text(rejectionReason,
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              height: 1.35,
+                                              color: context.textSecondary),
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis),
+                                    ],
                                   ],
                                 ),
                               ),
