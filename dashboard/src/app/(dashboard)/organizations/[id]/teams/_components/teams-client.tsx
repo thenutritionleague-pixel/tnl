@@ -165,17 +165,24 @@ export default function TeamsClient({ orgId, initialTeams, initialPool }: {
   }
 
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // Two genuinely different intents: scrapping the squad, or freeing the name
+  // because the people are moving to another team.
+  const [deleteWithMembers, setDeleteWithMembers] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function confirmDelete() {
     if (!deleteTarget) return
     setDeleteError(null)
-    const { error } = await deleteTeam(deleteTarget.id)
+    setDeleting(true)
+    const { error } = await deleteTeam(deleteTarget.id, deleteWithMembers)
+    setDeleting(false)
     if (error) {
       setDeleteError(error.message)
       return
     }
     setTeams(prev => prev.filter(t => t.id !== deleteTarget.id))
     setDeleteTarget(null)
+    setDeleteWithMembers(false)
   }
 
   // Add member helpers
@@ -580,26 +587,55 @@ export default function TeamsClient({ orgId, initialTeams, initialPool }: {
       </Dialog>
 
       {/* Delete confirm modal */}
-      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) { setDeleteTarget(null); setDeleteError(null) } }}>
-        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+      <Dialog open={!!deleteTarget} onOpenChange={v => { if (!v) { setDeleteTarget(null); setDeleteError(null); setDeleteWithMembers(false) } }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              This will remove the team and unassign all members. Cannot be undone.
+              {deleteTarget?.members?.length
+                ? `This team has ${deleteTarget.members.length} member${deleteTarget.members.length === 1 ? '' : 's'}. What should happen to them?`
+                : 'This team has no members.'}
             </p>
           </DialogHeader>
+
+          {!!deleteTarget?.members?.length && (
+            <div className="space-y-2">
+              <button type="button" onClick={() => setDeleteWithMembers(false)}
+                className={cn('w-full text-left rounded-lg border p-3 transition-colors',
+                  !deleteWithMembers ? 'border-primary bg-primary/5' : 'border-input hover:bg-muted')}>
+                <p className="text-sm font-semibold">Keep the members in the league</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Only the team is deleted. Assign them to another team straight after &mdash;
+                  a member with no team sees an empty app until you do.
+                </p>
+              </button>
+              <button type="button" onClick={() => setDeleteWithMembers(true)}
+                className={cn('w-full text-left rounded-lg border p-3 transition-colors',
+                  deleteWithMembers ? 'border-destructive bg-destructive/5' : 'border-input hover:bg-muted')}>
+                <p className="text-sm font-semibold text-destructive">Remove the members too</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  All {deleteTarget.members.length} are removed from this league along with the team,
+                  and their roster invites are freed. Anyone who also played a previous
+                  edition keeps that history &mdash; only this league is affected.
+                </p>
+              </button>
+            </div>
+          )}
           {deleteError && (
             <p className="text-sm text-destructive">{deleteError}</p>
           )}
           <DialogFooter showCloseButton={false} className="flex-row justify-end gap-2">
             <button
-              onClick={() => { setDeleteTarget(null); setDeleteError(null) }}
+              onClick={() => { setDeleteTarget(null); setDeleteError(null); setDeleteWithMembers(false) }}
+              disabled={deleting}
               className={cn(buttonVariants({ variant: 'outline' }))}
             >
               Cancel
             </button>
-            <Button onClick={confirmDelete} className="bg-destructive text-white hover:bg-destructive/90">
-              Delete Team
+            <Button onClick={confirmDelete} disabled={deleting} className="bg-destructive text-white hover:bg-destructive/90">
+              {deleting
+                ? 'Deleting…'
+                : deleteWithMembers ? `Delete team + ${deleteTarget?.members?.length ?? 0} members` : 'Delete team only'}
             </Button>
           </DialogFooter>
         </DialogContent>

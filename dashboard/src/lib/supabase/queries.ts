@@ -1034,10 +1034,51 @@ export async function updateTeam(teamId: string, data: { name: string; emoji: st
   return (await db()).from('teams').update(data).eq('id', teamId)
 }
 
-export async function deleteTeam(teamId: string) {
+/**
+ * Delete a team, optionally taking its members out of the org with it.
+ *
+ * Deleting the team alone cascades team_members away, which leaves those people
+ * in the org with NO team — and a member without a team sees an empty app: no
+ * tasks, nothing to submit. That is right when the squad is being moved to
+ * another team, and wrong when the whole team is being scrapped, which
+ * previously meant removing ten members by hand first.
+ *
+ * `removeMembers` reuses removeMember() per person rather than deleting rows
+ * directly, so every safeguard it carries still applies — above all that a
+ * member who ALSO played Kanpur/Gurugram is unenrolled from this org only,
+ * never account-deleted, so finished events keep their standings.
+ */
+export async function deleteTeam(teamId: string, removeMembers = false) {
   await assertAdmin()
   const client = await db()
-  // invite_whitelist.team_id has no ON DELETE CASCADE — null it out first
+
+  const { data: team } = await client
+    .from('teams').select('id, org_id, name').eq('id', teamId).maybeSingle()
+  if (!team) return { error: { message: 'Team not found.' } }
+
+  if (removeMembers) {
+    const { data: rows } = await client
+      .from('team_members').select('user_id')
+      .eq('team_id', teamId).eq('org_id', team.org_id)
+    const memberIds = ((rows ?? []) as { user_id: string }[]).map(r => r.user_id)
+
+    // Sequential on purpose: removeMember writes a points transfer and deletes
+    // across four tables, and running them concurrently against the same team
+    // invites lost updates for no real speed gain at team size (max 10).
+    for (const userId of memberIds) {
+      const res = await removeMember(team.org_id, userId)
+      if (!('success' in res) || !res.success) {
+        const why = 'error' in res ? res.error : 'unknown error'
+        return { error: { message: `Stopped after removing some members: ${why}. The team was NOT deleted.` } }
+      }
+    }
+
+    // Roster slots for a team that is going away. removeMember already cleared
+    // the invites of anyone who had signed up; these are the ones who never did.
+    await client.from('invite_whitelist').delete().eq('team_id', teamId).eq('org_id', team.org_id)
+  }
+
+  // invite_whitelist.team_id has no ON DELETE CASCADE — null out whatever is left
   await client.from('invite_whitelist').update({ team_id: null }).eq('team_id', teamId)
   return client.from('teams').delete().eq('id', teamId)
 }
