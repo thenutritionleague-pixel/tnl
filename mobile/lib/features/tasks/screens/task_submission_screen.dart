@@ -207,6 +207,20 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     }
 
     final taskId = _taskData['id'] as String? ?? '';
+    // Never hand an empty string to a uuid column: the member would see a raw
+    // "invalid input syntax for type uuid" from Postgres. If this ever fires,
+    // the task was opened without its id rather than anything the member did.
+    if (taskId.isEmpty) {
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Couldn\'t open this task properly. Please go back to Tasks and try again.'),
+          backgroundColor: AppColors.error,
+          duration: Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
     final rawChallengeId = _taskData['challenge_id'] as String?;
     final challengeId = (rawChallengeId != null && rawChallengeId.isNotEmpty) ? rawChallengeId : null;
 

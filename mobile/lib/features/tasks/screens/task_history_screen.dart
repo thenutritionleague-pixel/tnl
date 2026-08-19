@@ -403,8 +403,16 @@ class _HistoryCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   GestureDetector(
                     onTap: () async {
-                      // Merge challenge_id so task_submission_screen has a valid UUID
+                      // The snapshot is a frozen COPY of the task's display
+                      // fields — it carries no id and no challenge_id. Both have
+                      // to come from the submission row, or the resubmit sends
+                      // an empty string where a uuid is expected and Postgres
+                      // rejects it with 22P02. challenge_id was already merged
+                      // here; task id was missed, and every one of the ~10,600
+                      // snapshots lacks it, so resubmitting from History always
+                      // failed.
                       final taskWithChallenge = Map<String, dynamic>.from(task)
+                        ..['id'] = submission['task_id'] as String? ?? ''
                         ..['challenge_id'] = submission['challenge_id'] as String? ?? '';
                       await context.push('/tasks/submit', extra: {
                         'task': taskWithChallenge,
