@@ -344,6 +344,37 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         );
         context.pop();
       }
+    } on PostgrestException catch (e) {
+      // 23505 = the one-per-day unique index. It means a submission for this
+      // task today already exists and is NOT rejected, so this one is a
+      // duplicate rather than a failure: the member has already had their turn.
+      // Never show them the raw constraint text — one member saw
+      // "duplicate key value violates unique constraint" 24 times in an hour.
+      if (mounted && e.code == '23505') {
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
+        final isTeam = e.message.contains('one_per_team_per_day');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isTeam
+                ? 'Someone on your team has already submitted this one — it only needs one entry per team.'
+                : 'You\'ve already submitted this task today. Pull down on Tasks to refresh and see its status.'),
+            backgroundColor: AppColors.secondary,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+        context.pop();   // back to Tasks, which reloads and shows the true state
+        return;
+      }
+      if (mounted) {
+        setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Couldn\'t save your submission. Please check your connection and try again.'),
+            backgroundColor: AppColors.error,
+            duration: Duration(seconds: 6),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
