@@ -251,6 +251,16 @@ class TaskService {
         return;
       } on AuthException {
         rethrow;
+      } on PostgrestException catch (e) {
+        // 23505 = the one-per-day index. Flipping a rejected row back to
+        // 'pending' collides with any OTHER non-rejected row for the same task
+        // and day, so retrying can never succeed — it just fires the same error
+        // three times (2s, 4s apart) before surfacing raw driver text. This is
+        // the path a resubmit takes, and it is how one member saw
+        // "duplicate key value violates unique constraint" instead of a
+        // sentence. Terminal: hand it straight to the UI, which explains it.
+        if (e.code == '23505') rethrow;
+        lastErr = e;
       } catch (e) {
         lastErr = e;
       }
