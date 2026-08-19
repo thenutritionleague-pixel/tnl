@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, Users, Trophy, Star, Building2,
   Rss, CalendarDays, FileText, Settings, Mail, LogOut, ArrowLeft,
-  ClipboardCheck, ListChecks, UserCheck, UserCog,
+  ClipboardCheck, ListChecks, UserCheck, UserCog, Repeat,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { AdminUser } from '@/types/database.types'
@@ -52,6 +52,7 @@ function orgNavSections(orgId: string) {
         { href: `${base}/approvals`,  label: 'Approvals',  icon: ClipboardCheck },
         { href: `${base}/teams`,      label: 'Teams',      icon: Users         },
         { href: `${base}/members`,    label: 'Members',    icon: UserCheck     },
+        { href: `${base}/swaps`,      label: 'Team Swaps', icon: Repeat        },
         { href: `${base}/admins`,     label: 'Admins',     icon: UserCog       },
         { href: `${base}/invite`,     label: 'Invite',     icon: Mail          },
       ],

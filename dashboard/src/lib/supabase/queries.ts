@@ -1919,3 +1919,56 @@ export async function getChallengeSubs(challengeId: string): Promise<ChallengeSu
     status: s.status as ChallengeSub['status'],
   }))
 }
+
+export type TeamSwapRow = {
+  teamId: string
+  team: string
+  swapsUsed: number
+  swapsPendingLogin: number
+  lastSwapDate: string | null
+  swappedIn: string | null
+  swappedOut: string | null
+  currentMembers: number
+}
+
+/**
+ * Swap history per team, for the "one swap per team" rule.
+ *
+ * Reads the `team_swap_report` view. There is no swap audit table, so the view
+ * reconstructs swaps from the two traces one leaves: removeMember deletes the
+ * leaver's invite_whitelist row, and the replacement is added as a new one
+ * later. Every team's (original batch + added since) sums back to its roster
+ * size, so the count added since IS the number of swaps used.
+ *
+ * `swappedOut` is only populated when the leaver held points, because that name
+ * comes from the legacy_transfer team_transaction. The COUNT is always right;
+ * the outgoing name can be blank for a zero-point member.
+ */
+export async function getTeamSwaps(orgId: string): Promise<TeamSwapRow[]> {
+  const supabase = await db()
+
+  const { data } = await supabase
+    .from('team_swap_report')
+    .select('team_id, team, swaps_used, swaps_pending_login, last_swap_date, swapped_in, swapped_out, current_members')
+    .eq('org_id', orgId)
+
+  if (!data) return []
+
+  return (data as Record<string, unknown>[])
+    .map(r => ({
+      teamId: r.team_id as string,
+      team: (r.team as string) ?? '',
+      swapsUsed: Number(r.swaps_used ?? 0),
+      swapsPendingLogin: Number(r.swaps_pending_login ?? 0),
+      lastSwapDate: (r.last_swap_date as string) ?? null,
+      swappedIn: (r.swapped_in as string) ?? null,
+      swappedOut: (r.swapped_out as string) ?? null,
+      currentMembers: Number(r.current_members ?? 0),
+    }))
+    // Most-swapped first so anything over the limit is at the top; then the
+    // most recent change, which is what an admin checks against a new request.
+    .sort((a, b) =>
+      b.swapsUsed - a.swapsUsed ||
+      (b.lastSwapDate ?? '').localeCompare(a.lastSwapDate ?? '') ||
+      a.team.localeCompare(b.team))
+}
