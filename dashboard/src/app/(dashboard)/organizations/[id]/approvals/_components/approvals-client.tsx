@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, getPreviousApprovedProof, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, type DuplicateMatch } from '../actions'
+import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, type DuplicateMatch } from '../actions'
 import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
@@ -377,14 +377,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   // Two-step so a mis-click cannot wipe a member's submission and points.
   const [confirmResubmit, setConfirmResubmit] = useState(false)
   const [aiChecking, setAiChecking]   = useState(false)
-  const [prevProofUrl, setPrevProofUrl] = useState<string | null | 'loading' | 'none'>('none')
   const [dupMatch, setDupMatch] = useState<DuplicateMatch | 'loading' | null>(null)
-
-  async function loadPrevProof(a: OrgApproval) {
-    setPrevProofUrl('loading')
-    const url = await getPreviousApprovedProof(a.userId, a.taskId, a.id)
-    setPrevProofUrl(url ?? null)
-  }
 
   // Evidence for a duplicate flag. Loaded on demand rather than with the queue:
   // it downloads both images to compare bytes, which is far too expensive to do
@@ -497,7 +490,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
       setPointsOverride('')
     }
   }
-  function closeReview() { setReviewTarget(null); setPrevProofUrl('none'); setDupMatch(null) }
+  function closeReview() { setReviewTarget(null); setDupMatch(null) }
 
   async function handleApprove() {
     if (!reviewTarget) return
@@ -991,18 +984,6 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           </figure>
                         </div>
                       </>
-                    )}
-                  </div>
-                )}
-
-                {reviewTarget.aiStatus === 'rejected' && (
-                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 flex items-center justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">Compare with member&apos;s last approved submission</p>
-                    {prevProofUrl === 'none' && <button type="button" onClick={() => loadPrevProof(reviewTarget)} className="text-xs text-primary hover:underline shrink-0">Load previous</button>}
-                    {prevProofUrl === 'loading' && <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</span>}
-                    {prevProofUrl === null && <span className="text-xs text-muted-foreground shrink-0">No previous submission found</span>}
-                    {prevProofUrl && prevProofUrl !== 'loading' && prevProofUrl !== 'none' && prevProofUrl !== null && (
-                      <a href={prevProofUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline shrink-0">Open previous proof ↗</a>
                     )}
                   </div>
                 )}
