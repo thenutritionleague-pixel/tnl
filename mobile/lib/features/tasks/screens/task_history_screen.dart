@@ -203,6 +203,23 @@ class _HistoryCard extends StatelessWidget {
     final status = submission['status']         as String? ?? '';
     final state  = submissionStateFrom(status, submission['ai_status'] as String?);
     final date   = submission['submitted_date'] as String? ?? '';
+
+    // How long a member has to fix a rejected day.
+    //
+    // Counted from when they were TOLD, not when they submitted. Reviews can run
+    // hours or days behind -- one took 27 hours during the 20 Aug backlog -- and
+    // a member should never lose their chance because the queue was slow. They
+    // get the rest of the day they were rejected, plus all of the next one.
+    //
+    // Without any limit a member could sit on four rejected days and fill them
+    // all from fresh photos on the final evening, which is a different problem.
+    final reviewedAtRaw = submission['reviewed_at'] as String?;
+    final reviewedAt = reviewedAtRaw == null ? null : DateTime.tryParse(reviewedAtRaw)?.toLocal();
+    final resubmitWindowOpen = reviewedAt == null
+        ? true // never reviewed -> nothing to lose by allowing it
+        : DateTime.now().difference(
+            DateTime(reviewedAt.year, reviewedAt.month, reviewedAt.day),
+          ).inDays <= 1;
     final reason = submission['rejection_reason'] as String?;
     final title  = (task['title']       as String?) ?? (liveTask['title']       as String?) ?? '—';
     final desc   = (task['description'] as String?) ?? (liveTask['description'] as String?) ?? '';
@@ -383,9 +400,13 @@ class _HistoryCard extends StatelessWidget {
                       ] else ...[
                         Expanded(
                           child: Text(
-                            hasRejectionReason
-                                ? 'Note: $reason'
-                                : 'Tap Resubmit to send a new photo.',
+                            status == 'rejected' && !resubmitWindowOpen
+                                ? (hasRejectionReason
+                                    ? 'Note: $reason\nThis day is now closed \u2014 resubmissions were open until the day after it was reviewed.'
+                                    : 'This day is now closed \u2014 resubmissions were open until the day after it was reviewed.')
+                                : hasRejectionReason
+                                    ? 'Note: $reason'
+                                    : 'Tap Resubmit to send a new photo.',
                             style: TextStyle(
                               fontSize: 11.5,
                               color: hasRejectionReason
@@ -399,7 +420,7 @@ class _HistoryCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (status == 'rejected') ...[
+                if (status == 'rejected' && resubmitWindowOpen) ...[
                   const SizedBox(width: 10),
                   GestureDetector(
                     onTap: () async {

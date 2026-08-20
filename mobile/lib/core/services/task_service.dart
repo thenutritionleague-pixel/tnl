@@ -748,7 +748,10 @@ class TaskService {
         .from('task_submissions')
         .select(
           'id, task_id, challenge_id, status, ai_status, submitted_date, submitted_at, rejection_reason, '
-          'points_awarded, task_snapshot, '
+          // reviewed_at drives the resubmit window: a member gets until the end
+          // of the day AFTER they were told, so a slow review never costs them
+          // the chance to fix it.
+          'points_awarded, task_snapshot, reviewed_at, '
           'tasks!task_id(id, title, description, icon, points, points_tiers)',
         )
         .eq('user_id', userId)

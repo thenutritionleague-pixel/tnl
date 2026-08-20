@@ -52,6 +52,15 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   /// Original submitted_date from Task History — null means use today.
   String? get _submittedDate => widget.task['submittedDate'] as String?;
 
+  /// '2026-08-19' -> '19 Aug'. Parsed as UTC so a plain date never renders as
+  /// the previous day in a negative-offset timezone.
+  String _prettyDay(String iso) {
+    final d = DateTime.tryParse('${iso}T00:00:00Z');
+    if (d == null) return iso;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${d.day} ${months[d.month - 1]}';
+  }
+
   bool get _isLocked => isInSubmissionLockout(_orgTimezone);
 
   /// 'image' | 'video' — from the task config (defaults to image).
@@ -559,6 +568,43 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Resubmitting from History files the proof under the ORIGINAL day,
+            // not today. A member sent tonight's step screenshot into yesterday's
+            // slot without realising, so she was credited for yesterday and still
+            // had nothing for today. Say which day this counts for, before she
+            // picks the photo.
+            if (_isResubmit && _submittedDate != null &&
+                _submittedDate != orgEffectiveTodayStr(_orgTimezone)) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.pending.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.pending.withValues(alpha: 0.5)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.event_rounded, color: AppColors.pending, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'This counts for ${_prettyDay(_submittedDate!)}, not today. '
+                        'Today\'s task is on the Tasks screen.',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                          color: context.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             // ── Task header card ──────────────────────────────────────────
             Container(
               padding: const EdgeInsets.all(16),
