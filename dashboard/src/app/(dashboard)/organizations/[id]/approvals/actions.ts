@@ -312,3 +312,88 @@ export async function allowResubmit(submissionId: string, orgId: string) {
   revalidatePath(`/organizations/${orgId}/approvals`)
   return { success: true }
 }
+
+export type DuplicateMatch = {
+  /** Signed URL of the proof being reviewed. */
+  currentUrl: string
+  /** Signed URL of the earlier APPROVED proof it matched. */
+  previousUrl: string
+  previousDate: string
+  /** true when the two files are byte-for-byte the same, not merely similar. */
+  identical: boolean
+  currentBytes: number
+  previousBytes: number
+}
+
+/**
+ * The evidence behind a "this photo looks very similar" flag.
+ *
+ * The flag alone is unusable: it tells an admin two photos resemble each other
+ * but not WHICH photo, so the only options were to trust it blindly or approve
+ * blindly. On 20 Aug that produced 18 flagged submissions nobody could action,
+ * while members waited and support messages piled up.
+ *
+ * This returns both images plus the one fact that settles it outright: whether
+ * the files are byte-identical. Two photos of the same meal taken seconds apart
+ * still differ in thousands of bytes, so an exact match is a re-upload, not a
+ * coincidence — all 18 on 20 Aug were exact, including a 2.3 MB file.
+ *
+ * Matching is by proof_hash (what the AI actually compared), scoped to the same
+ * member, task and org, so it names the exact submission that triggered the flag
+ * rather than guessing at "most recent".
+ */
+export async function getDuplicateMatch(submissionId: string): Promise<DuplicateMatch | null> {
+  const profile = await getAdminProfile()
+  if (!profile) return null
+  const client = await createAdminClient()
+
+  const { data: cur } = await client
+    .from('task_submissions')
+    .select('user_id, task_id, org_id, proof_url, proof_hash')
+    .eq('id', submissionId)
+    .maybeSingle()
+  if (!cur?.proof_hash || !cur.proof_url) return null
+
+  const { data: prev } = await client
+    .from('task_submissions')
+    .select('proof_url, submitted_date')
+    .eq('user_id', cur.user_id)
+    .eq('task_id', cur.task_id)
+    .eq('org_id', cur.org_id)
+    .eq('status', 'approved')
+    .eq('proof_hash', cur.proof_hash)
+    .neq('id', submissionId)
+    .order('submitted_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (!prev?.proof_url) return null
+
+  const sign = async (path: string) => {
+    const { data } = await client.storage.from('task-proofs').createSignedUrl(path, 900)
+    return data?.signedUrl ?? null
+  }
+  const [currentUrl, previousUrl] = await Promise.all([sign(cur.proof_url), sign(prev.proof_url)])
+  if (!currentUrl || !previousUrl) return null
+
+  // Hash the actual bytes. proof_hash is a perceptual hash, which can in
+  // principle collide; a SHA of the file cannot. This is what lets the UI say
+  // "identical file" instead of "looks similar".
+  const digest = async (url: string): Promise<{ hash: string; bytes: number } | null> => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return null
+      const buf = new Uint8Array(await res.arrayBuffer())
+      return { hash: createHash('sha256').update(buf).digest('hex'), bytes: buf.byteLength }
+    } catch { return null }
+  }
+  const [a, b] = await Promise.all([digest(currentUrl), digest(previousUrl)])
+
+  return {
+    currentUrl,
+    previousUrl,
+    previousDate: prev.submitted_date as string,
+    identical: !!a && !!b && a.hash === b.hash,
+    currentBytes: a?.bytes ?? 0,
+    previousBytes: b?.bytes ?? 0,
+  }
+}
