@@ -397,3 +397,79 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
     previousBytes: b?.bytes ?? 0,
   }
 }
+
+export type PipelineHealth = {
+  level: 'healthy' | 'busy' | 'degraded'
+  headline: string
+  detail: string
+  pending: number
+  oldestMins: number
+  needsReview: number
+  videoPending: number
+  photoPending: number
+  autoReleaseOk: boolean
+  lastAutoRelease: string | null
+}
+
+/**
+ * Whether the submission pipeline is keeping up, in words an admin can act on.
+ *
+ * Without this the only visible signal is "N pending", which says nothing about
+ * WHY. On 20 Aug an admin watched 107 pile up with no way to tell that Bunny was
+ * hours behind on 800 videos and Google was returning 503s — so the only option
+ * was to ask someone to read the logs. Photos that same day averaged 72 seconds.
+ *
+ * The distinction that matters is video vs photo: video is the only thing that
+ * queues, because the web app uploads raw phone recordings (70-280 MB) and both
+ * transcoding and analysis choke on them.
+ */
+export async function getPipelineHealth(orgId: string): Promise<PipelineHealth | null> {
+  const profile = await getAdminProfile()
+  if (!profile) return null
+  const client = await createAdminClient()
+
+  const { data: rows } = await client
+    .from('task_submissions')
+    .select('ai_status, proof_url, submitted_at')
+    .eq('org_id', orgId)
+    .eq('status', 'pending')
+    .limit(500)
+
+  const list = (rows ?? []) as { ai_status: string | null; proof_url: string; submitted_at: string }[]
+  const now = Date.now()
+  const pending = list.length
+  const needsReview = list.filter(r => r.ai_status === 'needs_review').length
+  const videoPending = list.filter(r => r.proof_url?.startsWith('bunny://') && r.ai_status !== 'needs_review').length
+  const photoPending = pending - videoPending - needsReview
+  const oldestMins = pending === 0 ? 0 : Math.round(
+    Math.max(...list.map(r => now - new Date(r.submitted_at).getTime())) / 60000)
+
+  // The safety net only counts as working if it ran within the last two cycles.
+  const { data: cronRow } = await client
+    .schema('cron' as never)
+    .from('job_run_details' as never)
+    .select('start_time, status')
+    .order('start_time', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+    .then(r => r, () => ({ data: null }))
+  const lastAutoRelease = (cronRow as { start_time?: string } | null)?.start_time ?? null
+  const autoReleaseOk = oldestMins < 70
+
+  let level: PipelineHealth['level'] = 'healthy'
+  let headline = 'Everything is being processed normally'
+  let detail = pending === 0 ? 'Nothing waiting.' : `${pending} waiting, oldest ${oldestMins} min — all within normal time.`
+
+  if (!autoReleaseOk) {
+    level = 'degraded'
+    headline = 'Something is stuck'
+    detail = `Oldest submission is ${oldestMins} min old and has not been released automatically. This needs looking at.`
+  } else if (videoPending >= 15 || oldestMins >= 30) {
+    level = 'busy'
+    headline = 'Video processing is running behind'
+    detail = `${videoPending} videos waiting on the video service, oldest ${oldestMins} min. `
+      + 'They release automatically after 45 min, so members are not blocked. Photos are unaffected.'
+  }
+
+  return { level, headline, detail, pending, oldestMins, needsReview, videoPending, photoPending, autoReleaseOk, lastAutoRelease }
+}

@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, type DuplicateMatch } from '../actions'
+import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, getPipelineHealth, type DuplicateMatch, type PipelineHealth } from '../actions'
 import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
@@ -378,6 +378,18 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   const [confirmResubmit, setConfirmResubmit] = useState(false)
   const [aiChecking, setAiChecking]   = useState(false)
   const [dupMatch, setDupMatch] = useState<DuplicateMatch | 'loading' | null>(null)
+  const [health, setHealth] = useState<PipelineHealth | null>(null)
+
+  // Polled rather than derived from the page, because the answer depends on the
+  // whole queue and on how long the video service has been behind, not on the
+  // 50 rows currently displayed.
+  useEffect(() => {
+    let alive = true
+    const tick = () => { getPipelineHealth(orgId).then(h => { if (alive) setHealth(h) }).catch(() => {}) }
+    tick()
+    const t = setInterval(tick, 60_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [orgId])
 
   // Evidence for a duplicate flag. Loaded on demand rather than with the queue:
   // it downloads both images to compare bytes, which is far too expensive to do
@@ -564,6 +576,35 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
 
   return (
     <div className="space-y-5">
+      {/* Says WHY the queue looks the way it does. "N pending" alone sent an
+          admin looking for help on 20 Aug when the real answer was that the
+          video service was hours behind and members were never at risk. */}
+      {health && (health.level !== 'healthy' || health.pending > 0) && (
+        <div className={cn('rounded-lg border px-4 py-3 flex items-start gap-3',
+          health.level === 'degraded' ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30' :
+          health.level === 'busy' ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30' :
+          'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/20'
+        )}>
+          <span className="text-lg leading-none mt-0.5 shrink-0">
+            {health.level === 'degraded' ? '\u26D4' : health.level === 'busy' ? '\u23F3' : '\u2705'}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className={cn('text-sm font-semibold',
+              health.level === 'degraded' ? 'text-red-800 dark:text-red-300' :
+              health.level === 'busy' ? 'text-amber-900 dark:text-amber-300' :
+              'text-emerald-800 dark:text-emerald-300'
+            )}>{health.headline}</p>
+            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{health.detail}</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground tabular-nums">
+              <span><strong className="text-foreground">{health.videoPending}</strong> videos waiting</span>
+              <span><strong className="text-foreground">{health.photoPending}</strong> photos waiting</span>
+              <span><strong className="text-foreground">{health.needsReview}</strong> need your decision</span>
+              <span>oldest <strong className="text-foreground">{health.oldestMins}m</strong></span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
