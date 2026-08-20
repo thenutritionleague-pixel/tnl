@@ -41,7 +41,10 @@ const VIDEO_MAX_OUTPUT_TOKENS = 4096
 // retry-stuck-ai-submissions cron re-fires it a couple minutes later (rate
 // windows reset every minute). Bounded by age so a permanently-failing row still
 // reaches admin review as a last resort instead of looping forever.
-const RETRY_MAX_AGE_MS = 20 * 60 * 1000
+// Matches the 6h window the retry crons use. At 20 minutes a Gemini 503 -- which
+// is Google capacity, not our quota, and clears on its own -- stopped retrying
+// and dumped the raw provider JSON on an admin.
+const RETRY_MAX_AGE_MS = 6 * 60 * 60 * 1000
 function isTransientError(msg: string): boolean {
   const m = (msg || '').toLowerCase()
   return m.includes('429') || m.includes('rate limit') || m.includes('rate_limit')
@@ -66,6 +69,9 @@ type AIResult = {
   read?: { value?: number | null; unit?: string | null } | null
   same_person?: 'same' | 'different' | 'unclear' | null
   authenticity?: 'self_recorded' | 'downloaded' | 'screen_recording' | 'unclear' | null
+  // Why the model said approved=false. Only 'wrong_activity' and 'not_genuine'
+  // are grounds to reject outright; everything else goes to a human.
+  reject_kind?: 'wrong_activity' | 'not_genuine' | 'count_short' | 'audio_only' | 'other' | null
 }
 type Decision = { status: 'approved' | 'rejected' | 'needs_review'; feedback: string; confidence: number; model?: 'flash' | 'pro' | null }
 type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
@@ -196,7 +202,13 @@ function hamming(aHex: string, bHex: string): number {
 async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
   if (!BUNNY_LIBRARY_ID || !BUNNY_API_KEY || !BUNNY_CDN_HOSTNAME) return { kind: 'failed', reason: 'Bunny credentials missing on the server.' }
   const statusUrl = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${guid}`
-  const deadline = Date.now() + 40_000
+  // Was 40s. Every attempt spent that polling BEFORE falling back to the
+  // original, and the whole run has to finish inside the edge function's 150s
+  // budget -- 40s poll + a 60MB download + Gemini routinely blew it, leaving the
+  // row stuck in 'analyzing'. Bunny's original is downloadable the instant the
+  // upload lands, so a short poll then straight to Plan B is both faster and
+  // far more likely to complete.
+  const deadline = Date.now() + 8_000
   let lastKnownStatus = -1
   while (Date.now() < deadline) {
     try {
@@ -302,8 +314,16 @@ ${identityJob}
 
 Always give an honest "confidence" between 0 and 1 for your verdict. Never omit it and never send 0 unless you truly have no basis at all — a missing or zero confidence sends the member to a human queue.
 
+If approved=false, classify WHY in "reject_kind":
+  wrong_activity  = they are doing a different exercise, or barely exercising at all
+  not_genuine     = downloaded, screen-recorded, edited or otherwise not their own attempt
+  count_short     = the exercise is correct and genuine, you just counted fewer reps than the tier needs
+  audio_only      = the exercise is correct, genuine AND the reps look complete; your ONLY complaint is that you could not hear them counting out loud
+  other           = anything else
+Be honest here. Missing or inaudible counting on its own is audio_only, never count_short.
+
 Respond JSON only:
-{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<rep or second count, or null>,"unit":"reps|seconds|null"},"authenticity":"self_recorded|downloaded|screen_recording|unclear"${hasReference ? ',"same_person":"same|different|unclear"' : ''}}`
+{"approved":true|false,"confidence":0.0-1.0,"issues":["short"],"feedback":"ONLY if approved=false: 1 sentence why (wrong activity / fake). Empty otherwise.","read":{"value":<rep or second count, or null>,"unit":"reps|seconds|null"},"authenticity":"self_recorded|downloaded|screen_recording|unclear","reject_kind":"wrong_activity|not_genuine|count_short|audio_only|other"${hasReference ? ',"same_person":"same|different|unclear"' : ''}}`
 }
 
 function buildImagePrompt(taskTitle: string, taskDesc: string, numericTarget: { value: number; unit: string } | null, taskPoints: number): string {
@@ -574,7 +594,37 @@ async function decideVideo(
   }
   const pConf = clamp01(pro.confidence ?? 0)
   if (pro.approved === false && pConf >= 0.55) {
-    return { status: 'rejected', feedback: pro.feedback || 'This video does not clearly show you performing the required exercise. Please re-record showing the full exercise.', confidence: pConf, model: 'pro' }
+    // A rejection only stands when the video is genuinely wrong -- a different
+    // exercise, or not the member's own recording. Anything else goes to a
+    // human instead of straight to the member.
+    //
+    // On 20 Aug the burpee task produced 8 AI rejections and admins overturned
+    // 7 of them. Every overturned one was a counting complaint ("only 9 of the
+    // required 10", "no audible rep counting"). That is the model arguing about
+    // a number it cannot measure: video is sampled at ~1fps in portrait framing,
+    // which is exactly why the count is documented as advisory above. The one
+    // rejection that survived was a member walking instead of doing burpees.
+    //
+    // So: keep the model's judgement, but let it only REJECT for the reasons it
+    // is reliable on. A short count or inaudible counting becomes a review,
+    // where an admin can see the video and decide.
+    const groundsToReject = pro.reject_kind === 'wrong_activity' || pro.reject_kind === 'not_genuine'
+    if (groundsToReject) {
+      return { status: 'rejected', feedback: pro.feedback || 'This video does not clearly show you performing the required exercise. Please re-record showing the full exercise.', confidence: pConf, model: 'pro' }
+    }
+    // Silence is not cheating. Members did the reps and simply forgot to count
+    // aloud, or their phone mic picked up nothing. Failing them for that
+    // punishes the recording, not the effort, so approve.
+    if (pro.reject_kind === 'audio_only') {
+      return { status: 'approved', feedback: '', confidence: pConf, model: 'pro' }
+    }
+    return {
+      status: 'needs_review',
+      // The member must not be told a rep number the AI cannot stand behind.
+      feedback: 'Our automated check could not fully confirm this one, so a person is reviewing it.',
+      confidence: pConf,
+      model: 'pro',
+    }
   }
 
   // Pro disagrees with Flash. We reach here ONLY because Flash already suspected
@@ -639,7 +689,13 @@ Deno.serve(async (req: Request) => {
         await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Reviewer busy — retrying automatically.' }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'retry', error: errMsg }), { status: 200 })
       }
-      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: reviewFeedback }).eq('id', submissionId)
+      // reviewFeedback used to carry the provider's raw error, so an admin saw
+      // a wall of Gemini JSON. Keep the detail in the logs; show a sentence.
+      const humane = isTransientError(errMsg)
+        ? 'The AI service was busy for too long on this one. The proof is fine — please review it manually.'
+        : 'The AI could not analyse this proof automatically. Please review it manually.'
+      console.error('[analyze-submission/needs_review]', reviewFeedback)
+      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: humane }).eq('id', submissionId)
       return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
     }
 

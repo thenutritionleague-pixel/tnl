@@ -1,0 +1,18 @@
+-- Applied to production 20 Aug 2026 via MCP (already live).
+--
+-- Every video recovery path gave up 30 minutes after submission:
+--   retry_pending_bunny_submissions  -- only retried while submitted_at > now()-30min
+--   retry_stuck_ai_submissions       -- same window, so it also stopped un-sticking
+--                                       rows left in 'analyzing' by a timed-out run
+--   rescue_stalled_bunny_submissions -- at 30 min, parked the row on an admin
+--
+-- Once ai_status is 'needs_review' the edge function refuses to re-claim the row
+-- (it claims on `ai_status IS NULL`), so nothing ever looked at it again. On
+-- 20 Aug, with 383 videos on the burpee task, Bunny transcoded slower than the
+-- window and 41 submissions fell off the cliff -- 4 at 12:00, 6 at 13:00, 31 at
+-- 14:00 -- each landing in the admin queue permanently.
+--
+-- The videos were never broken: one checked at 172 minutes old transcoded fine
+-- and analysed normally. They just needed longer than the cliff allowed.
+--
+-- See migration body applied in fix; windows widened 30 min -> 6 hours.
