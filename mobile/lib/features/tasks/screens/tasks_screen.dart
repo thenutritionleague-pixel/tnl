@@ -159,6 +159,29 @@ class _TasksScreenState extends State<TasksScreen>
     return null;
   }
 
+  /// Past days the member can still fix: a rejected submission with nothing
+  /// successful for that same task and day.
+  ///
+  /// Today is excluded because the task card already shows "Resubmit" for it.
+  /// Members kept missing the small History chip in the header, so 57 members
+  /// were sitting on 61 recoverable submissions without knowing -- points they
+  /// had already done the work for.
+  int get _fixableCount {
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
+    final byDay = <String, List<Map<String, dynamic>>>{};
+    for (final s in _submissions) {
+      final d = s['submitted_date'] as String?;
+      if (d == null || d == todayStr) continue;
+      byDay.putIfAbsent('${s['task_id']}|$d', () => []).add(s);
+    }
+    var n = 0;
+    for (final rows in byDay.values) {
+      final settled = rows.any((r) => r['status'] != 'rejected');
+      if (!settled && rows.any((r) => r['status'] == 'rejected')) n++;
+    }
+    return n;
+  }
+
   SubmissionState _submissionState(String taskId, {bool isTeamTask = false}) {
     final todayStr = orgEffectiveTodayStr(_orgTimezone);
     final todayMatch = _submissions.where(
@@ -261,22 +284,44 @@ class _TasksScreenState extends State<TasksScreen>
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                             decoration: BoxDecoration(
-                              color: AppColors.primary.withValues(alpha: 0.1),
+                              // Turns red while something is fixable, so the chip
+                              // reads as an alert rather than a quiet link.
+                              color: (_fixableCount > 0 ? AppColors.rejected : AppColors.primary)
+                                  .withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
-                              children: const [
-                                Icon(Icons.history_rounded, size: 14, color: AppColors.primary),
-                                SizedBox(width: 4),
+                              children: [
+                                Icon(Icons.history_rounded, size: 14,
+                                    color: _fixableCount > 0 ? AppColors.rejected : AppColors.primary),
+                                const SizedBox(width: 4),
                                 Text(
                                   'History',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: AppColors.primary,
+                                    color: _fixableCount > 0 ? AppColors.rejected : AppColors.primary,
                                   ),
                                 ),
+                                if (_fixableCount > 0) ...[
+                                  const SizedBox(width: 5),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.rejected,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      '$_fixableCount',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -305,6 +350,56 @@ class _TasksScreenState extends State<TasksScreen>
                         ],
                       ),
                     ),
+
+                    // Sits between the deadline and the task list, where the eye
+                    // already goes, because the History chip in the header was
+                    // being missed. Stays until every past day is settled.
+                    if (_fixableCount > 0) ...[
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: () => context.push('/tasks/history'),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: AppColors.rejected.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppColors.rejected.withValues(alpha: 0.45)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.refresh_rounded, color: AppColors.rejected, size: 18),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _fixableCount == 1
+                                          ? '1 task needs a new photo'
+                                          : '$_fixableCount tasks need a new photo',
+                                      style: const TextStyle(
+                                        color: AppColors.rejected,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'You can still earn these Broccolis \u2014 tap to fix',
+                                      style: TextStyle(
+                                        color: context.textSecondary,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right_rounded, color: AppColors.rejected, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 14),
 
                     // Week filter tabs
