@@ -217,6 +217,32 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           _breakdownCache[userId] = breakdown;
           _challengeStartDate ??= startDate;
           _loadingIds.remove(userId);
+
+          // Reconcile the member's chip with the breakdown just fetched.
+          //
+          // The two numbers come from different reads at different moments: the
+          // chip is profiles.total_points, captured when the screen loaded, while
+          // this breakdown is points_transactions read seconds ago. Any approval
+          // in between makes them disagree -- a member saw 810 on the chip and
+          // 1010 in the panel underneath it, four minutes after her last task was
+          // approved, and reasonably assumed points had gone missing.
+          //
+          // The breakdown is the fresher read, so it wins.
+          // Only rows that actually MOVED points. A 'missed' row carries the
+          // task's potential value (200 for a task never done), so including it
+          // would inflate the chip rather than correct it.
+          final fresh = breakdown.values
+              .expand((rows) => rows)
+              .where((r) => r['status'] != 'missed')
+              .fold<int>(0, (sum, r) => sum + ((r['points'] as int?) ?? 0));
+          for (final list in _teamMembersCache.values) {
+            for (final m in list) {
+              if (m['id'] == userId) {
+                m['total_points'] = fresh;
+                m['challenge_points'] = fresh;
+              }
+            }
+          }
         });
       }
     } catch (_) {
