@@ -378,10 +378,23 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
     } catch (e) {
       if (mounted) {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
+        // Never print the driver's exception. A member saw
+        // "ClientException: Failed to fetch, uri=https://video.bunnycdn.com/tusupload"
+        // — which names our video host, tells them nothing they can act on, and
+        // reads like the app broke. Their file is still selected, so the only
+        // useful instruction is to try again.
+        final msg = e.toString().toLowerCase();
+        final looksLikeNetwork = msg.contains('failed to fetch') ||
+            msg.contains('socket') || msg.contains('timeout') ||
+            msg.contains('timed out') || msg.contains('connection') ||
+            msg.contains('network');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Upload failed: $e'),
+            content: Text(looksLikeNetwork
+                ? 'Upload interrupted — your connection dropped. Your video is still selected, just tap Submit Proof again.'
+                : 'Couldn\'t upload your proof. Please tap Submit Proof to try again.'),
             backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 6),
           ),
         );
       }

@@ -117,15 +117,46 @@ class BunnyVideoService {
     final metadata = _metadata(mimeType: mimeType, title: title ?? 'proof-video');
 
     // ── Step 1: POST /tusupload → get Location for chunked PATCH ──
-    final createRes = await http.post(
-      Uri.parse(init.tusEndpoint),
-      headers: {
-        ...headers,
-        'Tus-Resumable':   '1.0.0',
-        'Upload-Length':   bytes.lengthInBytes.toString(),
-        'Upload-Metadata': metadata,
-      },
-    );
+    //
+    // This single request had no retry and no timeout while every chunk PATCH
+    // below has both. One blip on a mobile link — a 4G handoff, a lift, a dead
+    // spot — therefore killed the whole upload before a single byte moved, and
+    // surfaced as a raw "ClientException: Failed to fetch". The member had
+    // picked their video and waited, and got that instead. Same protection as
+    // the chunk loop: bounded attempts, backoff, and a timeout so a hung socket
+    // hands control back instead of freezing.
+    http.Response? createRes;
+    Object? createErr;
+    for (int attempt = 0; attempt < _chunkRetries; attempt++) {
+      if (attempt > 0) {
+        await Future.delayed(Duration(seconds: attempt * 2)); // 2s, 4s
+      }
+      try {
+        createRes = await http.post(
+          Uri.parse(init.tusEndpoint),
+          headers: {
+            ...headers,
+            'Tus-Resumable':   '1.0.0',
+            'Upload-Length':   bytes.lengthInBytes.toString(),
+            'Upload-Metadata': metadata,
+          },
+        ).timeout(const Duration(seconds: 30));
+        // 4xx is Bunny rejecting the request itself; retrying cannot help.
+        if (createRes.statusCode == 201 ||
+            (createRes.statusCode >= 400 && createRes.statusCode < 500)) {
+          break;
+        }
+        createErr = BunnyUploadFailedException(
+          'tus create failed (${createRes.statusCode}): ${createRes.body}',
+        );
+      } catch (e) {
+        createErr = e; // network drop / timeout → retry
+        createRes = null;
+      }
+    }
+    if (createRes == null) {
+      throw BunnyUploadFailedException('tus create failed: $createErr');
+    }
     if (createRes.statusCode != 201) {
       throw BunnyUploadFailedException(
         'tus create failed (${createRes.statusCode}): ${createRes.body}',
