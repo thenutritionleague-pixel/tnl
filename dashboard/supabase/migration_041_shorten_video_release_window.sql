@@ -1,0 +1,21 @@
+-- Applied to production 20 Aug 2026 via MCP (already live).
+--
+-- 45 minutes was chosen to give the AI every chance before giving up. In
+-- practice the videos that CAN be analysed resolve in well under two minutes
+-- (photos average 72 seconds), and the ones that cannot are waiting on a
+-- transcode hours behind, so the extra 20 minutes bought nothing except a longer
+-- queue and members asking why nothing was happening.
+--
+-- 25 minutes, checked every 5 minutes instead of 10. Dropped the visible backlog
+-- from 40 to 19 immediately.
+--
+-- The cost, stated plainly: a video released this way is approved without an AI
+-- check. That was already true at 45 minutes; this widens the window. It is the
+-- right trade only while the pipeline is degraded. Once web uploads are
+-- compressed and transcodes finish in seconds this job should stop firing at
+-- all -- if it keeps firing, the underlying problem was never fixed.
+--
+-- Root cause for the record: mobile/lib/core/services/task_service.dart uploads
+-- video RAW on web ("video_compress has no web implementation"), so members send
+-- 70-280 MB phone recordings. Native compresses to ~480p. Everyone uses the web
+-- app.

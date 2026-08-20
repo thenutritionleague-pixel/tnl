@@ -732,6 +732,10 @@ export function approvalRiskReasons(
   aiVideoModel: string | null,
 ): string[] {
   const out: string[] = []
+  // Nothing has been decided yet, so there is no verdict to be suspicious of.
+  // Showing "No confidence recorded" beside "AI Analyzing..." read as a warning
+  // about the member when it only meant the analysis had not finished.
+  if (aiStatus == null || aiStatus === 'analyzing') return out
   if (aiStatus === 'needs_review') out.push('AI asked for a human')
   if (aiVideoModel === 'pro') out.push('Escalated \u2014 first check suspected a fake')
   if (aiConfidence == null) out.push('No confidence recorded')

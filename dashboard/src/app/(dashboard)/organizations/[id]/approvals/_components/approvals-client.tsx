@@ -957,7 +957,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           reviewTarget.aiStatus === 'analyzing' ? 'text-muted-foreground' :
                           'text-amber-700 dark:text-amber-400'
                         )}>
-                          {reviewTarget.aiStatus === 'analyzing' ? 'AI Analyzing…' : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved' : reviewTarget.aiStatus === 'rejected' ? '✗ AI Rejected' : '⚠ AI: Needs Review'}
+                          {reviewTarget.aiStatus === 'analyzing' ? 'Waiting for the video service…' : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved' : reviewTarget.aiStatus === 'rejected' ? '✗ AI Rejected' : '⚠ AI: Needs Review'}
                         </span>
                         {reviewTarget.aiConfidence != null && reviewTarget.aiStatus !== 'analyzing' && (
                           <span className="text-xs text-muted-foreground">{Math.round(reviewTarget.aiConfidence * 100)}% confidence</span>
