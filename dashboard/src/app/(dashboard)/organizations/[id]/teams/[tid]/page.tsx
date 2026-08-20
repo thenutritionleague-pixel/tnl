@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { getTeamDetail, addTeamTransaction, deleteTeamTransaction, updateTeamTransaction, type TeamDetailUI, type TeamLegacyEntryUI } from '@/lib/supabase/queries'
+import { getTeamDetail, addTeamTransaction, deleteTeamTransaction, updateTeamTransaction, getInheritedPointsBreakdown, type TeamDetailUI, type TeamLegacyEntryUI, type InheritedPointsLine } from '@/lib/supabase/queries'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +48,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   const [bonusSubmitting, setBonusSubmitting] = useState(false)
   const [bonusError, setBonusError] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  // Receipts for an inherited total, loaded on demand. Keyed by entry id so two
+  // transfers on one team stay independent.
+  const [breakdown, setBreakdown] = useState<Record<string, InheritedPointsLine[] | 'loading'>>({})
+
+  async function loadBreakdown(entry: TeamLegacyEntryUI) {
+    if (!entry.sourceName) return
+    setBreakdown(b => ({ ...b, [entry.id]: 'loading' }))
+    const lines = await getInheritedPointsBreakdown(orgId, entry.sourceName)
+    setBreakdown(b => ({ ...b, [entry.id]: lines }))
+  }
 
   // Edit team transaction state
   const [editTarget, setEditTarget] = useState<TeamLegacyEntryUI | null>(null)
@@ -412,8 +422,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               })()
               const isLegacy = entry.kind === 'legacy_transfer'
               const isPositive = entry.amount >= 0
+              const lines = breakdown[entry.id]
               return (
-                <div key={entry.id} className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20">
+                <div key={entry.id}>
+                <div className="flex items-center gap-3 px-5 py-3 hover:bg-muted/20">
                   <div className={cn(
                     'w-8 h-8 rounded-full flex items-center justify-center shrink-0',
                     isLegacy ? 'bg-muted/60 text-muted-foreground' : 'bg-emerald-100 text-emerald-700',
@@ -455,6 +467,53 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                </div>
+                {/* A transfer shows only a total, and a team that disputes it
+                    has nothing to check. The departed member's profile and
+                    ledger are deleted, but their approval feed survives, so this
+                    reconstructs how the total was reached. */}
+                {isLegacy && entry.sourceName && (
+                  <div className="px-5 pb-3 -mt-1">
+                    {!lines && (
+                      <button type="button" onClick={() => loadBreakdown(entry)}
+                        className="text-xs text-primary hover:underline">
+                        Show how this was earned
+                      </button>
+                    )}
+                    {lines === 'loading' && (
+                      <span className="text-xs text-muted-foreground">Loading…</span>
+                    )}
+                    {Array.isArray(lines) && (
+                      lines.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">
+                          No approved tasks recorded for {entry.sourceName}.
+                        </p>
+                      ) : (
+                        <div className="rounded-md border border-border bg-muted/30 divide-y divide-border">
+                          {lines.map((l, i) => (
+                            <div key={i} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                              <span className="text-xs text-foreground truncate">{l.task}</span>
+                              <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                                {fmtDay(l.when.slice(0, 10))}
+                              </span>
+                              <span className="text-xs font-semibold text-emerald-600 shrink-0 tabular-nums">
+                                +{l.points} 🥦
+                              </span>
+                            </div>
+                          ))}
+                          <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-muted/50">
+                            <span className="text-xs font-semibold text-foreground">
+                              {entry.sourceName} earned
+                            </span>
+                            <span className="text-xs font-bold text-foreground tabular-nums">
+                              {lines.reduce((n, l) => n + l.points, 0)} 🥦
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
                 </div>
               )
             })}

@@ -1972,3 +1972,47 @@ export async function getTeamSwaps(orgId: string): Promise<TeamSwapRow[]> {
       (b.lastSwapDate ?? '').localeCompare(a.lastSwapDate ?? '') ||
       a.team.localeCompare(b.team))
 }
+
+export type InheritedPointsLine = {
+  task: string
+  points: number
+  when: string
+}
+
+/**
+ * What a departed member actually earned, task by task.
+ *
+ * A legacy transfer shows only a total ("Points inherited from X — 200"), and a
+ * team that disagrees with that number has nothing to check it against. On
+ * 20 Aug Right Biters insisted a member left with 500; answering them meant
+ * going to the database, because the member's profile, submissions and ledger
+ * are all deleted by design when they are removed.
+ *
+ * feed_items survive that deletion — every approval writes one — so they are the
+ * only durable record of how the total was reached. Reading them back turns
+ * "trust us" into a receipt anyone can see.
+ *
+ * Matched on the name stored on the transfer, since the member's id is gone.
+ * Same-name members in one org would blur together; that is acceptable for a
+ * read-only explanation and never affects any score.
+ */
+export async function getInheritedPointsBreakdown(
+  orgId: string,
+  sourceName: string,
+): Promise<InheritedPointsLine[]> {
+  const supabase = await db()
+  const { data } = await supabase
+    .from('feed_items')
+    .select('title, content, created_at')
+    .eq('org_id', orgId)
+    .eq('type', 'submission_approved')
+    .ilike('title', `${sourceName} completed %`)
+    .order('created_at', { ascending: true })
+
+  return ((data ?? []) as { title: string; content: string; created_at: string }[])
+    .map(r => {
+      const task = r.title.replace(`${sourceName} completed `, '').trim()
+      const points = parseInt((r.content.match(/([+-]?\d+)/) ?? ['0'])[0], 10) || 0
+      return { task, points, when: r.created_at }
+    })
+}
