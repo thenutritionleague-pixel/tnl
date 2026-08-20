@@ -895,17 +895,30 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---- Shared write ----
+    //
+    // An admin can decide a submission WHILE this analysis is running: the row is
+    // claimed at the start (ai_status null -> 'analyzing'), but the verdict lands
+    // up to 150s later. Without a guard the AI would overwrite that decision --
+    // approving something a human had just rejected, points and all. Re-checking
+    // status here means the last word belongs to the person, not the model.
+    const { data: stillPending } = await supabase
+      .from('task_submissions').select('status').eq('id', submissionId).single()
+    if (stillPending && stillPending.status !== 'pending') {
+      console.log('[analyze-submission] decided by a human while analysing; leaving it alone', submissionId)
+      return new Response(JSON.stringify({ skipped: 'already_decided' }), { status: 200 })
+    }
+
     const aiStatus = decision.status
     const feedback = decision.feedback
-    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence, ai_video_model: decision.model ?? null }).eq('id', submissionId)
+    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence, ai_video_model: decision.model ?? null }).eq('id', submissionId).eq('status', 'pending')
 
     if (aiStatus === 'approved') {
       const finalPoints = claimedTier?.points ?? taskPoints
-      await supabase.from('task_submissions').update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() }).eq('id', submissionId)
+      await supabase.from('task_submissions').update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() }).eq('id', submissionId).eq('status', 'pending')
       await supabase.from('feed_items').insert({ org_id: orgId, type: 'submission_approved', title: `${memberName} completed ${taskTitle}`, content: `+${finalPoints} 🥦 broccoli points earned`, is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null })
     }
     if (aiStatus === 'rejected') {
-      await supabase.from('task_submissions').update({ status: 'rejected', rejection_reason: feedback || 'Rejected by AI review.', reviewed_at: new Date().toISOString() }).eq('id', submissionId)
+      await supabase.from('task_submissions').update({ status: 'rejected', rejection_reason: feedback || 'Rejected by AI review.', reviewed_at: new Date().toISOString() }).eq('id', submissionId).eq('status', 'pending')
       await supabase.from('feed_items').insert({ org_id: orgId, type: 'submission_rejected', title: `Your ${taskTitle} submission was not approved`, content: feedback || 'Please resubmit with a clear proof.', is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null })
     }
 

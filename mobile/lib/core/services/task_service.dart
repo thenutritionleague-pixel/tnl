@@ -512,27 +512,45 @@ class TaskService {
           includeAudio: true,
           deleteOrigin: false,
         );
+      } catch (e) {
+        // Never let a compression problem cost a member their submission.
+        compressed = null;
+        // ignore: avoid_print
+        print('[video] compression failed, falling back to original: $e');
       } finally {
         progressSub?.unsubscribe();
       }
 
+      // Compression is an OPTIMISATION, not a requirement. It used to throw
+      // VideoCompressionFailedException here, which blocked the member outright
+      // -- they had done the exercise, filmed it, waited, and were then told to
+      // try again with nothing they could actually change. The upload works
+      // perfectly well with the original; it is just larger.
       final outPath = compressed?.path;
       if (outPath == null) {
-        throw const VideoCompressionFailedException();
+        bytes = await videoFile.readAsBytes();
+      } else {
+        final compressedFile = File(outPath);
+        final compressedBytes = await compressedFile.readAsBytes();
+        // Trust the compressed file only if it actually came out smaller and
+        // non-empty. A truncated or failed encode can produce a valid path.
+        final originalBytes = await videoFile.readAsBytes();
+        bytes = (compressedBytes.isNotEmpty &&
+                 compressedBytes.lengthInBytes < originalBytes.lengthInBytes)
+            ? compressedBytes
+            : originalBytes;
+        // Best-effort cleanup of the compressed temp file
+        try { await compressedFile.delete(); } catch (_) {}
       }
 
-      final compressedFile = File(outPath);
-      bytes = await compressedFile.readAsBytes();
-
-      // Final safety net — compressed 90s video should be well under 50MB.
-      if (bytes.lengthInBytes > 50 * 1024 * 1024) {
+      // Size guard applies to whatever we are actually uploading. Only blocks
+      // when the file is genuinely too big for the pipeline to handle -- at
+      // which point re-recording IS the fix, so the message is actionable.
+      if (bytes.lengthInBytes > 200 * 1024 * 1024) {
         throw Exception(
-          'Compressed video is still too large (>50 MB). Please record a shorter or simpler video.',
+          'This video is too large to upload (over 200 MB). Please record a shorter clip and try again.',
         );
       }
-
-      // Best-effort cleanup of the compressed temp file
-      try { await compressedFile.delete(); } catch (_) {}
 
       uploadExt = '.mp4';
       uploadMime = 'video/mp4';
