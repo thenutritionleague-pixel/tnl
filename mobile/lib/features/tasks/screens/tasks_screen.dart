@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/services/task_service.dart';
 import '../../../core/models/submission_state.dart';
@@ -186,6 +187,19 @@ class _TasksScreenState extends State<TasksScreen>
       if (!settled && rows.any((r) => r['status'] == 'rejected')) n++;
     }
     return n;
+  }
+
+  /// The member's own still-undecided submission for this task today, if any.
+  /// Needed to offer "Replace photo" -- the server will only swap a pending row.
+  String? _pendingSubmissionId(String taskId) {
+    final todayStr = orgEffectiveTodayStr(_orgTimezone);
+    for (final s in _submissions) {
+      if (s['task_id'] != taskId) continue;
+      if ((s['submitted_date'] as String?) != todayStr) continue;
+      if (s['status'] != 'pending') continue;
+      return s['id'] as String?;
+    }
+    return null;
   }
 
   SubmissionState _submissionState(String taskId, {bool isTeamTask = false}) {
@@ -492,6 +506,7 @@ class _TasksScreenState extends State<TasksScreen>
                               status: status,
                               teammateName: teammate,
                               rejectionReason: rejectionReason,
+                              pendingSubmissionId: _pendingSubmissionId(task['id']),
                               profileId: _profileId ?? '',
                               orgId: _orgId ?? '',
                               orgTimezone: _orgTimezone,
@@ -604,6 +619,7 @@ class _TaskCard extends StatelessWidget {
   final SubmissionState status;
   final String? teammateName;
   final String? rejectionReason;
+  final String? pendingSubmissionId;
   final String profileId;
   final String orgId;
   final String orgTimezone;
@@ -614,6 +630,7 @@ class _TaskCard extends StatelessWidget {
     required this.status,
     this.teammateName,
     this.rejectionReason,
+    this.pendingSubmissionId,
     required this.profileId,
     required this.orgId,
     required this.orgTimezone,
@@ -621,6 +638,98 @@ class _TaskCard extends StatelessWidget {
   });
 
   Color get _statusColor => status.color;
+
+  /// Swap the photo on a submission the AI has not decided yet.
+  ///
+  /// The upload happens before anything is changed, so a failed pick or a dropped
+  /// connection leaves the original submission exactly as it was. Every rule --
+  /// own row, still pending, today only, twice at most -- is enforced by the
+  /// server, and its message is what the member sees when one is hit.
+  Future<void> _replacePhoto(BuildContext context) async {
+    final id = pendingSubmissionId;
+    if (id == null) return;
+
+    final picked = await showModalBottomSheet<XFile?>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 18, 20, 4),
+              child: Text('Replace your photo',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                'Your new photo replaces the one you sent. Nothing is lost if you cancel.',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Take a photo'),
+              onTap: () async => Navigator.pop(sheetCtx,
+                  await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 85)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () async => Navigator.pop(sheetCtx,
+                  await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85)),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await TaskService.replaceSubmissionImage(
+        submissionId: id,
+        taskId: task['id'] as String,
+        userId: profileId,
+        imageFile: picked,
+      );
+      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+      messenger.showSnackBar(const SnackBar(
+        content: Text('Photo replaced — we\u2019re checking the new one.',
+            style: TextStyle(color: AppColors.surface, fontWeight: FontWeight.w600)),
+        backgroundColor: AppColors.success,
+        behavior: SnackBarBehavior.floating,
+      ));
+      onDone();
+    } catch (e) {
+      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+      // The server's own wording is the clearest thing to show: "already
+      // reviewed", "only today's", "replaced twice today".
+      final msg = e is PostgrestException
+          ? e.message
+          : e is UnsupportedImageFormatException
+              ? e.toString()
+              : 'Could not replace the photo. Please check your connection and try again.';
+      messenger.showSnackBar(SnackBar(
+        content: Text(msg,
+            style: const TextStyle(color: AppColors.surface, fontWeight: FontWeight.w600)),
+        backgroundColor: AppColors.rejected,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 5),
+      ));
+    }
+  }
 
   void _openSubmit(BuildContext context) async {
     if (isInSubmissionLockout(orgTimezone)) {
@@ -828,7 +937,13 @@ class _TaskCard extends StatelessWidget {
 
           // The whole point of the In Review state: without a sentence here the
           // member just sees an amber chip and assumes the app is stuck.
-          if (status == SubmissionState.inReview) ...[
+          //
+          // Checking shares this banner so the "Replace it" link is there in the
+          // moment it is actually needed -- the seconds right after sending, when
+          // the member realises they picked the wrong photo. Each state supplies
+          // its own wording through status.detail and status.icon.
+          if (status == SubmissionState.inReview ||
+              status == SubmissionState.checking) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
@@ -844,17 +959,48 @@ class _TaskCard extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.visibility_outlined,
-                      size: 14, color: AppColors.pending),
+                  Icon(status.icon, size: 14, color: AppColors.pending),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text(
-                      status.detail,
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        color: AppColors.pending,
-                        height: 1.45,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          status.detail,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.pending,
+                            height: 1.45,
+                          ),
+                        ),
+                        // Wrong photo? Fix it here rather than waiting for a
+                        // rejection or messaging an admin. Only offered while the
+                        // submission is genuinely still undecided.
+                        if (pendingSubmissionId != null &&
+                            task['proof_type'] != 'video') ...[
+                          const SizedBox(height: 6),
+                          GestureDetector(
+                            onTap: () => _replacePhoto(context),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.swap_horiz_rounded,
+                                    size: 14, color: AppColors.primary),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Sent the wrong photo? Replace it',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.primary,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],

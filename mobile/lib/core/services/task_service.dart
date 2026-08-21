@@ -382,6 +382,65 @@ class TaskService {
     });
   }
 
+  /// Replace the photo on a submission that has not been decided yet.
+  ///
+  /// The member picked the wrong image and would otherwise have to wait for a
+  /// rejection or ask an admin. Bounded server-side to the safe case: their own
+  /// row, still pending, today only, twice at most.
+  ///
+  /// ORDER IS DELIBERATE. The new file is uploaded FIRST and the swap only
+  /// happens once it is safely stored, so a failed or interrupted upload leaves
+  /// the original submission completely untouched -- the member simply tries
+  /// again. Everything after the upload is one database transaction.
+  ///
+  /// The old row is deleted rather than edited, which is what protects against
+  /// an AI verdict about the OLD photo landing on the NEW one: the analysis
+  /// writes with .eq('id', <old id>), and once that row is gone the write
+  /// matches nothing.
+  ///
+  /// Throws [UnsupportedImageFormatException] for HEIC, or a [PostgrestException]
+  /// carrying the server's own message when a rule is broken (already reviewed,
+  /// not today, replaced twice).
+  static Future<String> replaceSubmissionImage({
+    required String submissionId,
+    required String taskId,
+    required String userId,
+    required XFile imageFile,
+  }) async {
+    final session = _client.auth.currentSession;
+    if (session == null) {
+      throw AuthException('Session expired \u2014 please log in again.');
+    }
+
+    final bytes = await imageFile.readAsBytes();
+    final rawExt = p.extension(imageFile.name).toLowerCase();
+    if (_isHeic(rawExt, bytes)) {
+      throw const UnsupportedImageFormatException('HEIC');
+    }
+
+    final safeExt = _safeExtensionFromBytes(bytes, rawExt);
+    final fileName =
+        'proofs/$userId/${taskId}_${DateTime.now().millisecondsSinceEpoch}$safeExt';
+
+    // Step 1 -- store the new proof. Nothing has changed for the member yet.
+    await _client.storage.from('task-proofs').uploadBinary(
+          fileName,
+          bytes,
+          fileOptions: FileOptions(
+            upsert: false,
+            contentType: _mimeType(safeExt),
+            cacheControl: '31536000',
+          ),
+        );
+
+    // Step 2 -- swap, atomically. Returns the new submission id.
+    final newId = await _client.rpc('replace_own_submission', params: {
+      'p_old_submission_id': submissionId,
+      'p_new_proof_url': fileName,
+    });
+    return newId as String;
+  }
+
   /// Submit a video proof. Picks any input format (mp4/mov/webm/mkv/3gp),
   /// validates duration against the task's max, compresses to 480p H.264 .mp4,
   /// uploads, and writes/updates the submission row.
