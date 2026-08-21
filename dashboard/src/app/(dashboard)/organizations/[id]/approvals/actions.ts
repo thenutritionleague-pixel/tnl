@@ -441,8 +441,14 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   const needsReview = list.filter(r => r.ai_status === 'needs_review').length
   const videoPending = list.filter(r => r.proof_url?.startsWith('bunny://') && r.ai_status !== 'needs_review').length
   const photoPending = pending - videoPending - needsReview
-  const oldestMins = pending === 0 ? 0 : Math.round(
-    Math.max(...list.map(r => now - new Date(r.submitted_at).getTime())) / 60000)
+  // Age is measured ONLY over submissions the pipeline still owes an answer on.
+  // A needs_review row is waiting on a PERSON and has no time limit by design,
+  // so counting it here reported "something is stuck" over a 202-minute review
+  // item while the pipeline itself was completely healthy -- a red alarm about
+  // the system when the real message was "14 decisions are waiting for you".
+  const awaitingPipeline = list.filter(r => r.ai_status !== 'needs_review')
+  const oldestMins = awaitingPipeline.length === 0 ? 0 : Math.round(
+    Math.max(...awaitingPipeline.map(r => now - new Date(r.submitted_at).getTime())) / 60000)
 
   // The safety net only counts as working if it ran within the last two cycles.
   const { data: cronRow } = await client
@@ -463,7 +469,13 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   if (!autoReleaseOk) {
     level = 'degraded'
     headline = 'Something is stuck'
-    detail = `Oldest submission is ${oldestMins} min old and has not been released automatically. This needs looking at.`
+    detail = `A submission has been waiting ${oldestMins} min with no AI result and was not released automatically. This needs looking at.`
+  } else if (needsReview > 0 && videoPending < 15 && oldestMins < 30) {
+    // Not a fault -- the pipeline is keeping up and these are simply decisions
+    // only a person can make. Say that plainly instead of raising an alarm.
+    level = 'healthy'
+    headline = `${needsReview} submission${needsReview === 1 ? '' : 's'} waiting on your decision`
+    detail = 'The pipeline is keeping up. These are flags the AI would not decide on its own.'
   } else if (videoPending >= 15 || oldestMins >= 30) {
     level = 'busy'
     headline = 'Video processing is running behind'
