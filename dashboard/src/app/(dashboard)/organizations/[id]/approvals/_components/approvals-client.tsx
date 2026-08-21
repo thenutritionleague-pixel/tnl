@@ -1006,7 +1006,18 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           reviewTarget.aiStatus === 'analyzing' ? 'text-muted-foreground' :
                           'text-amber-700 dark:text-amber-400'
                         )}>
-                          {reviewTarget.aiStatus === 'analyzing' ? 'Waiting for the video service…' : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved' : reviewTarget.aiStatus === 'rejected' ? '✗ AI Rejected' : '⚠ AI: Needs Review'}
+                          {/* rejectSubmission() sets ai_status='rejected' (it must not
+                              null it, or the retry cron re-fires the AI on a decision a
+                              human just made) and clears ai_feedback/ai_confidence. That
+                              made an ADMIN's own rejection read back as "AI Rejected /
+                              No confidence recorded". Cleared AI fields plus a stored
+                              reason is the signature of a human verdict. */}
+                          {reviewTarget.aiStatus === 'analyzing' ? 'Waiting for the video service…'
+                            : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved'
+                            : reviewTarget.aiStatus === 'rejected'
+                              ? (reviewTarget.aiFeedback == null && reviewTarget.aiConfidence == null && reviewTarget.rejectionReason
+                                  ? '✗ Rejected by admin' : '✗ AI Rejected')
+                              : '⚠ AI: Needs Review'}
                         </span>
                         {reviewTarget.aiConfidence != null && reviewTarget.aiStatus !== 'analyzing' && (
                           <span className="text-xs text-muted-foreground">{Math.round(reviewTarget.aiConfidence * 100)}% confidence</span>
@@ -1015,6 +1026,15 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                       <button onClick={() => handleReanalyze(reviewTarget)} disabled={reviewTarget.aiStatus === 'analyzing' || submitting} className="text-xs text-primary hover:underline disabled:opacity-40 shrink-0">Re-analyze</button>
                     </div>
                     {reviewTarget.aiFeedback && <p className="text-xs text-muted-foreground leading-relaxed">{reviewTarget.aiFeedback}</p>}
+                    {/* The admin's own words. Saved in rejection_reason and sent to the
+                        member, but never displayed back here -- so a reason typed at
+                        rejection looked like it had vanished. */}
+                    {!reviewTarget.aiFeedback && reviewTarget.status === 'rejected' && reviewTarget.rejectionReason && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        <span className="font-medium text-foreground">Reason sent to member: </span>
+                        {reviewTarget.rejectionReason}
+                      </p>
+                    )}
                     {/* Why this one is in the "Needs attention" queue, in words
                         rather than an opaque score, so the admin knows what to
                         look for before playing the video. */}

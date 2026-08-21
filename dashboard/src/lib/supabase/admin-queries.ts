@@ -744,6 +744,11 @@ export function approvalRiskReasons(
   // flagging it made a green "AI Approved" row look suspect.
   const autoApproved = /^(Auto-approved|Approved automatically)/i.test(aiFeedback ?? '')
   if (autoApproved) return out
+  // A HUMAN rejection. rejectSubmission() sets ai_status='rejected' and clears
+  // ai_feedback and ai_confidence, so an admin's own decision came back wearing
+  // "No confidence recorded" -- a warning about a submission the admin had just
+  // judged themselves. There is no AI verdict here to be suspicious of.
+  if (aiStatus === 'rejected' && aiConfidence == null && aiFeedback == null) return out
   if (aiStatus === 'needs_review') out.push('AI asked for a human')
   if (aiVideoModel === 'pro') out.push('Escalated \u2014 first check suspected a fake')
   if (aiConfidence == null) out.push('No confidence recorded')
