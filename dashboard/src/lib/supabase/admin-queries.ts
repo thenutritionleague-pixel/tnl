@@ -730,12 +730,18 @@ export function approvalRiskReasons(
   aiStatus: string | null,
   aiConfidence: number | null,
   aiVideoModel: string | null,
+  aiFeedback: string | null = null,
 ): string[] {
   const out: string[] = []
   // Nothing has been decided yet, so there is no verdict to be suspicious of.
   // Showing "No confidence recorded" beside "AI Analyzing..." read as a warning
   // about the member when it only meant the analysis had not finished.
   if (aiStatus == null || aiStatus === 'analyzing') return out
+  // Auto-approved because the pipeline could not finish in time. No AI ran, so
+  // "no confidence recorded" is simply the expected state, not a warning sign --
+  // flagging it made a green "AI Approved" row look suspect.
+  const autoApproved = /^(Auto-approved|Approved automatically)/i.test(aiFeedback ?? '')
+  if (autoApproved) return out
   if (aiStatus === 'needs_review') out.push('AI asked for a human')
   if (aiVideoModel === 'pro') out.push('Escalated \u2014 first check suspected a fake')
   if (aiConfidence == null) out.push('No confidence recorded')
@@ -917,7 +923,7 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
       aiFeedback: s.ai_feedback ?? null,
       aiConfidence: s.ai_confidence ?? null,
       aiVideoModel: s.ai_video_model ?? null,
-      riskReasons: approvalRiskReasons(s.ai_status ?? null, s.ai_confidence ?? null, s.ai_video_model ?? null),
+      riskReasons: approvalRiskReasons(s.ai_status ?? null, s.ai_confidence ?? null, s.ai_video_model ?? null, s.ai_feedback ?? null),
       previousSubmissions: previous,
     })
   }

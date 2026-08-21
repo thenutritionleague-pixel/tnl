@@ -1,0 +1,14 @@
+-- Applied to production 21 Aug 2026 via MCP (already live).
+--
+-- "Video still processing — will retry." and "Reviewer busy — retrying
+-- automatically." are TRANSIENT markers the analyzer writes while a submission
+-- is mid-flight. They were never meant to outlive the decision.
+--
+-- The repair in migrations 040/042 preserved existing ai_feedback, so when a row
+-- was auto-released or repaired while carrying one of those markers, the marker
+-- survived. An admin then sees a green "AI Approved" header above the words
+-- "Reviewer busy — retrying automatically" — self-contradictory, and it reads as
+-- a fault in a submission that is perfectly fine.
+--
+-- 69 rows were in that state. This rewrites them and stops the repair from
+-- carrying a transient marker forward again.
