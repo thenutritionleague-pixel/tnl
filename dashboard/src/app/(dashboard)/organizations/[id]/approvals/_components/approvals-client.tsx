@@ -950,9 +950,13 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground shrink-0 mt-0.5" />
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground">Not checked by AI yet</p>
+                      {/* Only VIDEO waits on the transcoder. Saying "video service"
+                          on a photo is simply wrong -- photos average 72 seconds and
+                          never touch Bunny at all. */}
                       <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                        Waiting on the video service. It is approved automatically if this
-                        takes too long, so nothing is stuck &mdash; you can also decide it now.
+                        {reviewTarget.proofUrl?.startsWith('bunny://')
+                          ? 'Waiting on the video service. It is approved automatically if this takes too long, so nothing is stuck \u2014 you can also decide it now.'
+                          : 'The AI check has not run yet. This usually takes under a minute \u2014 you can also decide it now.'}
                       </p>
                     </div>
                   </div>
