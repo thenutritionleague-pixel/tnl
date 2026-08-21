@@ -1494,3 +1494,108 @@ export async function getMemberDetail(orgId: string, memberId: string): Promise<
     })),
   }
 }
+
+// ── Duplicate proofs ───────────────────────────────────────────────────────────
+
+export interface DuplicateEntry {
+  submissionId: string
+  member: string
+  memberId: string
+  team: string
+  submittedDate: string
+  status: string
+  pointsAwarded: number | null
+  proofUrl: string | null
+  fileBytes: number | null
+}
+
+export interface DuplicateGroup {
+  hash: string
+  taskTitle: string
+  /** true when the same photo appears under MORE THAN ONE member. */
+  sharedBetweenMembers: boolean
+  /** true when every file in the group is byte-identical, not merely similar. */
+  identicalFiles: boolean
+  entries: DuplicateEntry[]
+}
+
+/**
+ * Members who submitted the same photo more than once.
+ *
+ * Two filters keep this list trustworthy, both learned from the live data:
+ *
+ * 1. Hashes with fewer than 8 of 64 bits set are DROPPED. A dHash compares
+ *    adjacent pixel brightness, so a step-counter screenshot -- mostly flat
+ *    white -- produces almost no set bits, and every such screenshot collides
+ *    with every other. 82 groups and one all-zero hash covering 20 unrelated
+ *    members came from exactly this. They are not duplicates.
+ *
+ * 2. File sizes are reported so "identical file" can be distinguished from
+ *    "similar-looking". Only the former is proof of a re-upload; a member
+ *    photographing the same lunch on two days legitimately produces the latter.
+ *
+ * Rejected submissions are excluded -- those are already dealt with.
+ */
+export async function getDuplicateGroups(orgId: string): Promise<DuplicateGroup[]> {
+  const client = await createAdminClient()
+
+  // Grouped in Postgres, not here. Doing it in JS meant SELECTing every hashed
+  // submission -- and PostgREST caps a response at 1000 rows whatever .limit()
+  // says, so it silently looked at 1000 of 7420 and found almost nothing. The
+  // RPC returns only rows that are part of a duplicate set, and applies the
+  // >= 8 bits filter that keeps flat white step screenshots out.
+  const { data, error } = await client.rpc('get_duplicate_proof_groups', { p_org_id: orgId })
+  if (error || !data) return []
+
+  type Row = {
+    proof_hash: string; task_title: string; submission_id: string; user_id: string
+    member_name: string; team_name: string; submitted_date: string; status: string
+    points_awarded: number | null; proof_url: string | null; file_bytes: number | null
+  }
+
+  const buckets = new Map<string, Row[]>()
+  for (const r of data as Row[]) {
+    const key = `${r.proof_hash}|${r.task_title}`
+    const list = buckets.get(key)
+    if (list) list.push(r); else buckets.set(key, [r])
+  }
+
+  const groups: DuplicateGroup[] = [...buckets.entries()].map(([key, rows]) => {
+    const [hash, taskTitle] = key.split('|')
+    const entries: DuplicateEntry[] = rows.map(r => ({
+      submissionId: r.submission_id,
+      member: r.member_name,
+      memberId: r.user_id,
+      team: r.team_name,
+      submittedDate: r.submitted_date,
+      status: r.status,
+      pointsAwarded: r.points_awarded,
+      proofUrl: r.proof_url,
+      fileBytes: r.file_bytes == null ? null : Number(r.file_bytes),
+    }))
+    const sizes = entries.map(e => e.fileBytes).filter((n): n is number => n != null)
+    return {
+      hash,
+      taskTitle,
+      sharedBetweenMembers: new Set(entries.map(e => e.memberId)).size > 1,
+      identicalFiles: sizes.length === entries.length && new Set(sizes).size === 1,
+      entries,
+    }
+  })
+
+  // Shared-between-members first: one photo under two names is the serious case.
+  return groups.sort((a, b) =>
+    Number(b.sharedBetweenMembers) - Number(a.sharedBetweenMembers) ||
+    b.entries.length - a.entries.length)
+}
+
+/** Signed URLs for a group's proofs, fetched on demand so the list stays cheap. */
+export async function signProofUrls(paths: string[]): Promise<Record<string, string>> {
+  const client = await createAdminClient()
+  const out: Record<string, string> = {}
+  await Promise.all(paths.map(async p => {
+    const { data } = await client.storage.from('task-proofs').createSignedUrl(p, 900)
+    if (data?.signedUrl) out[p] = data.signedUrl
+  }))
+  return out
+}
