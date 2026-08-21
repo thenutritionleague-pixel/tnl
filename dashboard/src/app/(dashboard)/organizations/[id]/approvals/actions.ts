@@ -329,6 +329,33 @@ export type DuplicateMatch = {
   identical: boolean
   currentBytes: number
   previousBytes: number
+  /**
+   * Hamming distance between the two perceptual hashes, 0-64.
+   * 0 means the same image; the AI only flags at 8 or below. Showing it lets a
+   * reviewer tell "identical file" from "a similar-looking lunch on another day",
+   * which for a task members repeat daily is the whole judgement.
+   */
+  distance: number
+}
+
+/**
+ * Bits that differ between two 64-bit hex dHashes.
+ *
+ * Done a hex digit at a time rather than with BigInt: this file is compiled for
+ * the dashboard's TS target, which predates BigInt literals, and a 16-entry
+ * popcount table is both portable and faster than shifting a BigInt 64 times.
+ */
+const NIBBLE_BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+function hammingHex(a: string, b: string): number {
+  if (a.length !== b.length) return 64
+  let n = 0
+  for (let i = 0; i < a.length; i++) {
+    const x = parseInt(a[i], 16)
+    const y = parseInt(b[i], 16)
+    if (Number.isNaN(x) || Number.isNaN(y)) return 64
+    n += NIBBLE_BITS[(x ^ y) & 15]
+  }
+  return n
 }
 
 /**
@@ -360,18 +387,36 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
     .maybeSingle()
   if (!cur?.proof_hash || !cur.proof_url) return null
 
-  const { data: prev } = await client
+  // Find the CLOSEST earlier photo, not an exactly-equal hash.
+  //
+  // This used to require .eq('proof_hash', ...). That only ever matched a
+  // pixel-identical re-upload -- but those are now auto-rejected before a human
+  // sees them, so every row still reaching this panel is a NEAR match (1-8 bits)
+  // with, by definition, a different hash. The query found nothing, the function
+  // returned null, and "Compare photos" appeared to do nothing at all.
+  const { data: candidates } = await client
     .from('task_submissions')
-    .select('proof_url, submitted_date')
+    .select('proof_url, submitted_date, proof_hash')
     .eq('user_id', cur.user_id)
     .eq('task_id', cur.task_id)
     .eq('org_id', cur.org_id)
     .eq('status', 'approved')
-    .eq('proof_hash', cur.proof_hash)
+    .not('proof_hash', 'is', null)
     .neq('id', submissionId)
     .order('submitted_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    .limit(50)
+
+  let prev: { proof_url: string; submitted_date: string } | null = null
+  let bestDistance = 65
+  for (const c of (candidates ?? []) as { proof_url: string | null; submitted_date: string; proof_hash: string }[]) {
+    if (!c.proof_url) continue
+    let d: number
+    try { d = hammingHex(cur.proof_hash, c.proof_hash) } catch { continue }
+    if (d < bestDistance) {
+      bestDistance = d
+      prev = { proof_url: c.proof_url, submitted_date: c.submitted_date }
+    }
+  }
   if (!prev?.proof_url) return null
 
   const sign = async (path: string) => {
@@ -401,6 +446,7 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
     identical: !!a && !!b && a.hash === b.hash,
     currentBytes: a?.bytes ?? 0,
     previousBytes: b?.bytes ?? 0,
+    distance: bestDistance,
   }
 }
 

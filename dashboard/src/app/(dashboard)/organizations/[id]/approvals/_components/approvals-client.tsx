@@ -378,7 +378,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   // Two-step so a mis-click cannot wipe a member's submission and points.
   const [confirmResubmit, setConfirmResubmit] = useState(false)
   const [aiChecking, setAiChecking]   = useState(false)
-  const [dupMatch, setDupMatch] = useState<DuplicateMatch | 'loading' | null>(null)
+  const [dupMatch, setDupMatch] = useState<DuplicateMatch | 'loading' | 'none' | null>(null)
   const [health, setHealth] = useState<PipelineHealth | null>(null)
   const [idRefs, setIdRefs] = useState<IdentityReference[] | 'loading' | null>(null)
 
@@ -407,7 +407,10 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   async function loadDuplicate(a: OrgApproval) {
     setDupMatch('loading')
     const m = await getDuplicateMatch(a.id)
-    setDupMatch(m ?? null)
+    // 'none' rather than null: null is also the "not looked yet" state, so
+    // reusing it put the button straight back and the click appeared to do
+    // nothing at all. Say plainly that there was nothing to compare.
+    setDupMatch(m ?? 'none')
   }
 
   // Poll the DB until AI analysis finishes. Analysis runs in the background
@@ -1091,9 +1094,12 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                       {dupMatch === 'loading' && (
                         <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Comparing…</span>
                       )}
+                      {dupMatch === 'none' && (
+                        <span className="text-xs text-muted-foreground shrink-0">No earlier photo to compare</span>
+                      )}
                     </div>
 
-                    {dupMatch && dupMatch !== 'loading' && (
+                    {dupMatch && dupMatch !== 'loading' && dupMatch !== 'none' && (
                       <>
                         {/* The verdict first: an exact byte match settles it, and
                             saying so plainly stops an admin second-guessing a
@@ -1103,7 +1109,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           : 'text-xs font-semibold text-amber-800 dark:text-amber-300'}>
                           {dupMatch.identical
                             ? `Exactly the same file as ${dupMatch.previousDate} (${dupMatch.currentBytes.toLocaleString()} bytes, identical) — this is a re-upload, not a new photo.`
-                            : `Looks similar but the files differ (${dupMatch.currentBytes.toLocaleString()} vs ${dupMatch.previousBytes.toLocaleString()} bytes). Check both before deciding.`}
+                            : `A different file from ${dupMatch.previousDate} — ${dupMatch.distance} of 64 bits differ (${dupMatch.currentBytes.toLocaleString()} vs ${dupMatch.previousBytes.toLocaleString()} bytes). On a task members repeat daily, a similar-looking photo is usually a genuine new one. Check both before deciding.`}
                         </p>
                         <div className="grid grid-cols-2 gap-2">
                           <figure className="space-y-1">
