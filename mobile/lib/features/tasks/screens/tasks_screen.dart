@@ -144,14 +144,20 @@ class _TasksScreenState extends State<TasksScreen>
   /// Returns today's submission status for a specific task.
   /// Uses the grace-aware effective date so a 00:00–00:14 submission
   /// (stored as yesterday by the DB trigger) is correctly matched.
-  /// Whether a TEAM-scoped task has already been submitted by anyone on the
-  /// team today. Returns the teammate's name so the card can say who.
-  String? _teammateWhoSubmitted(String taskId) {
-    final todayStr = orgEffectiveTodayStr(_orgTimezone);
+  /// Whether a TEAM-scoped task has already been done by this team -- on ANY
+  /// day, not just today. Returns the name to show, or 'You' when it was this
+  /// member's own earlier entry.
+  ///
+  /// The date filter that used to be here matched the old database rule of one
+  /// team entry per team per DAY. A team task is now completed once for the
+  /// whole task, however many days it stays open, so a teammate's entry from
+  /// yesterday still means this member must not submit. Without this the card
+  /// showed "Submit" the next morning, the member picked a photo, uploaded it,
+  /// and the database threw it out -- a wasted upload and a confusing error.
+  String? _teamEntryFor(String taskId) {
     for (final s in _teamSubmissions) {
       if (s['task_id'] != taskId) continue;
-      if ((s['submitted_date'] as String?) != todayStr) continue;
-      if (s['user_id'] == _profileId) continue; // their own row is handled below
+      if (s['user_id'] == _profileId) return 'You';
       final prof = s['profiles'];
       final name = prof is Map ? prof['name'] as String? : null;
       return (name == null || name.trim().isEmpty) ? 'A teammate' : name.trim();
@@ -191,7 +197,7 @@ class _TasksScreenState extends State<TasksScreen>
       // Nothing of their own. For a team task a teammate may already have done
       // it, in which case this member must not be able to try -- the database
       // would reject it and they would have wasted the upload.
-      if (isTeamTask && _teammateWhoSubmitted(taskId) != null) {
+      if (isTeamTask && _teamEntryFor(taskId) != null) {
         return SubmissionState.doneByTeammate;
       }
       return SubmissionState.notSubmitted;
@@ -479,7 +485,7 @@ class _TasksScreenState extends State<TasksScreen>
                           ),
                           ...weekTasks.map((task) {
                             final status = _submissionState(task['id'], isTeamTask: task['submission_scope'] == 'team');
-                            final teammate = task['submission_scope'] == 'team' ? _teammateWhoSubmitted(task['id']) : null;
+                            final teammate = task['submission_scope'] == 'team' ? _teamEntryFor(task['id']) : null;
                             final rejectionReason = _rejectionReason(task['id']);
                             return _TaskCard(
                               task: task,
