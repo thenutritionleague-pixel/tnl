@@ -819,6 +819,12 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                   className={cn(
                     'grid items-center px-4 py-3 transition-all duration-300',
                     fading ? 'opacity-0 -translate-y-1 pointer-events-none' : 'hover:bg-muted/30',
+                    // A submission the AI has ASKED a human about looks identical
+                    // in this list to one merely waiting on the video service.
+                    // Only one of them wants attention, so give it a left edge
+                    // that can be picked out while scrolling.
+                    a.status === 'pending' && a.aiStatus === 'needs_review' &&
+                      'border-l-2 border-l-amber-500 bg-amber-50/40 dark:bg-amber-950/20',
                   )}
                   style={{ gridTemplateColumns: '2fr 3fr 110px 110px 80px' }}
                 >
@@ -855,6 +861,14 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                   {/* Status */}
                   <div className="flex flex-col gap-1 items-start">
                     <StatusBadge status={a.status} />
+                    {a.status === 'pending' && a.aiStatus === 'needs_review' && (
+                      <span
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500 text-white"
+                        title="The AI could not decide this one — it needs your judgement"
+                      >
+                        Needs you
+                      </span>
+                    )}
                     {a.status === 'approved' && a.aiStatus !== 'approved' && (
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200" title="Admin approved manually">Manual</span>
                     )}
