@@ -39,3 +39,18 @@ comment on table integrity_alerts is
 -- Function body is applied live; see git history for the full definition.
 -- Scheduled every 15 minutes:
 --   select cron.schedule('integrity-monitor','*/15 * * * *','select public.run_integrity_checks()');
+
+-- FIX (22 Aug, same night): check 3 must only consider FINISHED runs.
+--
+-- pg_cron writes the job_run_details row at START, with end_time NULL. The
+-- monitor therefore saw its own in-flight execution as a non-succeeded run and
+-- reported "cron failing: integrity-monitor" every 15 minutes -- a monitor whose
+-- only alert was about itself, which would have trained everyone to ignore it.
+--
+-- Adding "and x.end_time is not null" to the lateral makes it read the last
+-- COMPLETED run of each job. Found by actually looking at the one open alert
+-- rather than assuming a clean board.
+--
+--   join lateral (select * from cron.job_run_details x
+--                  where x.jobid = j.jobid and x.end_time is not null
+--                  order by start_time desc limit 1) d on true
