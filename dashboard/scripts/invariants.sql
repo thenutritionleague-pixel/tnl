@@ -141,5 +141,96 @@ where not exists (
   where c.org_id = t.org_id and c.status in ('active', 'completed')
     and tt.transaction_date between c.start_date and c.end_date);
 
+\echo '== 12. Manual MEMBER adjustments must also reach a leaderboard =='
+-- Check 11 covers team_transactions. The identical trap exists one table over:
+-- team_points_view only counts points_transactions with is_manual = true whose
+-- date falls inside a challenge window, so an admin adjustment made after the
+-- event closes is silently discarded. Found on 21 Aug 2026 in the finished
+-- Kanpur event: Rohit Jain +150 and a -50 correction for Heya Tandon, both made
+-- on 31 May, one day after the window shut. Both look saved. Neither counts.
+select 'manual member points awarded but never counted' as problem,
+       o.name as org, p.name as member, pt.amount,
+       coalesce(pt.transaction_date, pt.created_at::date) as dated, pt.reason
+from points_transactions pt
+join profiles p on p.id = pt.user_id
+join organizations o on o.id = pt.org_id
+where pt.is_manual = true
+  and not exists (
+    select 1 from challenges c
+    where c.org_id = pt.org_id and c.status in ('active', 'completed')
+      and coalesce(pt.transaction_date, pt.created_at::date)
+          between c.start_date and c.end_date);
+
+\echo '== 13. A team total must equal the sum of its parts =='
+-- The check that was missing on 21 Aug 2026, when team tasks were counted twice
+-- for six hours and the top of the National board was wrong by 1,000 points.
+-- Every earlier check asked "is each component right?" -- none asked whether the
+-- published total still equals those components added up. That is the only
+-- question a member actually asks, so it is the one worth asserting.
+select 'team total != sum of its parts' as problem,
+       o.name as org, t.name as team, mv.total_points as shown,
+       parts.expected, mv.total_points - parts.expected as drift
+from teams t
+join organizations o on o.id = t.org_id
+join team_points_mv mv on mv.team_id = t.id
+cross join lateral (
+  select
+    (select coalesce(sum(coalesce(s.points_awarded, tk.points, 0)), 0)
+       from task_submissions s
+       join team_members tm on tm.user_id = s.user_id and tm.org_id = s.org_id
+       join tasks tk on tk.id = s.task_id
+      where s.status = 'approved' and tm.team_id = t.id
+        and coalesce(s.is_team_task, false) = false)
+  + (select coalesce(sum(tt.amount), 0)
+       from team_transactions tt
+       join challenges c on c.org_id = t.org_id
+      where tt.team_id = t.id
+        and coalesce(tt.transaction_date, tt.created_at::date)
+            between c.start_date and coalesce(c.end_date, '2100-01-01'::date))
+  + (select coalesce(sum(pt.amount), 0)
+       from points_transactions pt
+       join team_members tm on tm.user_id = pt.user_id and tm.org_id = pt.org_id
+       join challenges c on c.org_id = t.org_id
+      where tm.team_id = t.id and pt.is_manual
+        and coalesce(pt.transaction_date, pt.created_at::date)
+            between c.start_date and coalesce(c.end_date, '2100-01-01'::date))
+  as expected
+) parts
+where mv.total_points <> parts.expected;
+
+\echo '== 14. Every path that computes a team total must agree =='
+-- There are two: team_points_view (the leaderboard row) and get_team_weekly_pts
+-- (the expanded per-week panel in the app). On 21 Aug 2026 the first was fixed
+-- and the second was not, so a member saw 15,040 in the row and 16,040 in the
+-- panel directly beneath it. Whenever two code paths answer the same question,
+-- assert that they answer it identically.
+select 'row total != expanded weekly total' as problem,
+       o.name as org, t.name as team,
+       v.total_points as row_total, w.weekly_total,
+       v.total_points - w.weekly_total as drift
+from teams t
+join organizations o on o.id = t.org_id
+join challenges c on c.org_id = t.org_id and c.status = 'active'
+join team_points_view v on v.team_id = t.id and v.challenge_id = c.id
+cross join lateral (
+  select coalesce(sum(x.total_points), 0) as weekly_total
+  from get_team_weekly_pts(t.id, t.org_id, c.id) x
+) w
+where v.total_points <> w.weekly_total;
+
+\echo '== 15. Scheduled jobs must not be failing =='
+-- A cron that errors is invisible: pg_cron records the failure and moves on. On
+-- 21 Aug 2026 recover_orphan_submissions -- the safety net for "submitted but
+-- missing" -- had been aborting on a uniqueness violation, so no orphan was
+-- being recovered at all, and nothing surfaced it.
+select 'cron job last run failed' as problem, j.jobname, d.start_time,
+       left(d.return_message, 200) as message
+from cron.job j
+join lateral (
+  select * from cron.job_run_details d
+  where d.jobid = j.jobid order by d.start_time desc limit 1
+) d on true
+where j.active and d.status <> 'succeeded';
+
 \echo ''
 \echo 'No rows above = healthy.'
