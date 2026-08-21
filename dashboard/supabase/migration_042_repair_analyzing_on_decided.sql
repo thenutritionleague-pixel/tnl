@@ -1,0 +1,10 @@
+-- Applied to production 21 Aug 2026 via MCP (already live).
+--
+-- The v59 status guard returns BEFORE writing ai_status, so a row an admin
+-- decided mid-analysis is left reading 'analyzing' forever. Harmless -- it is out
+-- of every queue -- but the review modal then shows "Waiting for the video
+-- service" on a submission settled hours ago.
+--
+-- Extends the existing repair to cover 'analyzing' as well as NULL, and to set
+-- the right terminal value for a rejection. Only ever touches rows that already
+-- carry a decision (reviewed_at set), never a pending one.

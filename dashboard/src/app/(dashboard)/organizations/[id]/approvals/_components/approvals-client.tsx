@@ -941,6 +941,23 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                   <ProofViewer proofUrl={reviewTarget.proofUrl} />
                 </div>
 
+                {/* No verdict yet. Rendering nothing here left an admin staring
+                    at a video with no explanation and no way to tell whether the
+                    AI had passed it, failed it, or never looked -- the answer is
+                    always the third one, so say it. */}
+                {!reviewTarget.aiStatus && (
+                  <div className="rounded-lg px-4 py-3 border border-border bg-muted/40 flex items-start gap-2.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground">Not checked by AI yet</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                        Waiting on the video service. It is approved automatically if this
+                        takes too long, so nothing is stuck &mdash; you can also decide it now.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {reviewTarget.aiStatus && (
                   <div className={cn('rounded-lg px-4 py-3 space-y-2 border',
                     reviewTarget.aiStatus === 'approved' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800' :
