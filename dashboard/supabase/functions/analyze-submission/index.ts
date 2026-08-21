@@ -367,7 +367,9 @@ WHAT THE IMAGE SHOULD ROUGHLY SHOW (derive from the task):
 APPROVE when the image is plausibly the right KIND of proof (and, if numeric, meets the tier). Benefit of the doubt.
 REJECT when clearly unrelated (random selfie for a food task, a landscape for a step task), clearly AI/stock, OR a clearly-legible number below the tier.
 
-FOOD TASKS — BE VERY LENIENT: example foods are EXAMPLES not a whitelist; corn/sprouts/soup/smoothie/chilla/curd all fine; poor lighting/angle/half-eaten/takeaway/selfie-with-food → APPROVE. Do NOT nitpick ingredients or "healthy enough".
+FOOD TASKS — BE VERY LENIENT: example foods are EXAMPLES not a whitelist; corn/soup/smoothie/chilla/curd all fine; poor lighting/angle/half-eaten/takeaway/selfie-with-food → APPROVE. Do NOT nitpick ingredients or "healthy enough".
+
+THE TASK'S OWN RULES WIN. If the DESCRIPTION above states what does or does not qualify — a required portion, "raw only", a food that is excluded — apply THAT, not the general leniency above. The description is written by the organisers for this specific task; the guidance above is only a default for when the description is silent.
 
 CONFIDENCE: clearly right → 0.85–0.95. Unsure → 0.60 (approved=true). Clearly wrong / below-number → approved=false, 0.9+.
 
