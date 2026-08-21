@@ -538,7 +538,33 @@ async function decideVideo(
   //   genuine -> approve   |   fake / wrong activity -> reject (confirmed by Pro)
   const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, references)
   const fConf = clamp01(flash.confidence ?? 0)
-  const flashFlagsFake = flash.approved === false && fConf >= 0.55
+  // Escalate only when the cheap check is genuinely confident something is
+  // wrong. At 0.55 it escalated 42 videos on 20-21 Aug and 39 of them were
+  // approved in the end -- a 93% false-alarm rate, catching one real problem.
+  // Every one of those either interrupted a member or landed on an admin, and
+  // noise at that volume makes a real flag easier to miss, not harder.
+  //
+  // A typical false alarm was a member filming in a busy gym: the model reads
+  // studio-ish lighting as "produced clip" despite the prompt saying plainly
+  // that a gym is not evidence of anything.
+  //
+  // Pro still confirms every rejection, and identity mismatch and
+  // downloaded/screen-recording still route to a human regardless of this
+  // threshold -- so the paths that catch actual cheating are untouched.
+  const flashFlagsFake = flash.approved === false && fConf >= 0.75
+
+  // Record what the CHEAP check actually thought, and whether that was enough to
+  // escalate. Only the final (Pro) confidence is stored on the row, so the number
+  // that drives this decision has never been visible -- which meant the threshold
+  // could only ever be tuned by guesswork. With this, one day of data says
+  // exactly where the line belongs.
+  console.log('[video/flash]', JSON.stringify({
+    approved: flash.approved,
+    fConf,
+    escalated: flashFlagsFake,
+    authenticity: flash.authenticity ?? null,
+    same_person: flash.same_person ?? null,
+  }))
 
   // Identity mismatch NEVER rejects — full-body framing makes faces small and
   // a wrongly-accused member is far worse than a missed cheat. It routes to a
