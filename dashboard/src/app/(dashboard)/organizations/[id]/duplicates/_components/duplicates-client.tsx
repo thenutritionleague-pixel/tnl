@@ -1,10 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Copy, Users, User, Loader2, AlertTriangle, ImageOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DuplicateGroup } from '@/lib/supabase/admin-queries'
-import { getGroupProofUrls } from '../actions'
+import { getGroupProofUrls, reviewDuplicateGroup, clearDuplicateReview, type ProofEvidence } from '../actions'
 
 function fmtBytes(n: number | null) {
   if (n == null) return '—'
@@ -12,10 +13,27 @@ function fmtBytes(n: number | null) {
 }
 
 export default function DuplicatesClient({ orgId, groups }: { orgId: string; groups: DuplicateGroup[] }) {
+  const router = useRouter()
   const [open, setOpen] = useState<string | null>(null)
-  const [urls, setUrls] = useState<Record<string, Record<string, string>>>({})
+  const [urls, setUrls] = useState<Record<string, Record<string, ProofEvidence>>>({})
   const [loading, setLoading] = useState<string | null>(null)
-  const [filter, setFilter] = useState<'all' | 'shared' | 'identical'>('all')
+  const [filter, setFilter] = useState<'all' | 'shared' | 'identical' | 'unreviewed'>('unreviewed')
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function mark(g: DuplicateGroup, verdict: 'safe' | 'confirmed') {
+    const key = g.hash + g.taskTitle
+    setBusy(key)
+    await reviewDuplicateGroup(orgId, g.hash, g.taskTitle, verdict)
+    setBusy(null)
+    router.refresh()
+  }
+  async function unmark(g: DuplicateGroup) {
+    const key = g.hash + g.taskTitle
+    setBusy(key)
+    await clearDuplicateReview(orgId, g.hash, g.taskTitle)
+    setBusy(null)
+    router.refresh()
+  }
 
   async function toggle(g: DuplicateGroup) {
     const key = g.hash + g.taskTitle
@@ -30,10 +48,13 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
   }
 
   const shown = groups.filter(g =>
-    filter === 'all' ? true : filter === 'shared' ? g.sharedBetweenMembers : g.identicalFiles)
+    filter === 'all' ? true
+      : filter === 'unreviewed' ? !g.reviewVerdict
+      : filter === 'shared' ? g.sharedBetweenMembers
+      : g.sameFileSize)
 
   const sharedCount = groups.filter(g => g.sharedBetweenMembers).length
-  const identicalCount = groups.filter(g => g.identicalFiles).length
+  const sameSizeCount = groups.filter(g => g.sameFileSize).length
 
   return (
     <div className="space-y-6">
@@ -48,10 +69,15 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
           as an accusation, and most of them are not. */}
       <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground leading-relaxed space-y-1">
         <p>
-          <span className="font-semibold text-foreground">Identical file</span> means the exact same image
-          was uploaded twice — a re-upload, not a new photo.{' '}
-          <span className="font-semibold text-foreground">Similar</span> means it only looks alike, which is
-          normal for a member who photographs the same meal in the same place each day.
+          <span className="font-semibold text-foreground">This list is a shortlist, not a verdict.</span>{' '}
+          Grouping is by visual fingerprint, which answers &ldquo;do these look alike&rdquo; — not
+          &ldquo;are these the same file&rdquo;. <span className="font-semibold text-foreground">Open a group</span>{' '}
+          to run the real check: every file is downloaded and hashed, and you are told plainly whether they
+          are byte-for-byte identical or merely similar.
+        </p>
+        <p className="font-semibold text-foreground">
+          Only a proven byte-for-byte match is evidence a member re-used a photo. Never penalise anyone on
+          the list view alone.
         </p>
         <p>
           Step-counter screenshots are mostly flat white, so their fingerprints collide even when the
@@ -62,9 +88,10 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
 
       <div className="flex flex-wrap gap-2">
         {([
+          ['unreviewed', `Needs review (${groups.filter(g => !g.reviewVerdict).length})`],
           ['all', `All groups (${groups.length})`],
           ['shared', `Shared between members (${sharedCount})`],
-          ['identical', `Identical file (${identicalCount})`],
+          ['identical', `Same file size (${sameSizeCount})`],
         ] as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)}
             className={cn('text-xs font-medium px-3 py-1.5 rounded-full border transition-colors',
@@ -104,13 +131,15 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
                       {g.taskTitle} · {g.entries.map(e => e.submittedDate).join(', ')}
                     </p>
                   </div>
-                  {g.identicalFiles ? (
-                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-700 shrink-0">
-                      Identical file
+                  {g.reviewVerdict ? (
+                    <span className={cn('text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0',
+                      g.reviewVerdict === 'safe' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
+                      {g.reviewVerdict === 'safe' ? 'Checked — not a duplicate' : 'Confirmed duplicate'}
                     </span>
                   ) : (
-                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground shrink-0">
-                      Similar only
+                    <span className={cn('text-[11px] font-semibold px-2.5 py-1 rounded-full shrink-0',
+                      g.sameFileSize ? 'bg-amber-100 text-amber-800' : 'bg-muted text-muted-foreground')}>
+                      {g.sameFileSize ? 'Same size — open to verify' : 'Looks similar'}
                     </span>
                   )}
                 </button>
@@ -126,6 +155,40 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
                         </p>
                       </div>
                     )}
+                    {(() => {
+                      const ev = urls[key]
+                      if (!ev) return null
+                      const hashes = g.entries.map(e => e.proofUrl ? ev[e.proofUrl]?.sha256 : null)
+                      if (hashes.some(h => !h)) {
+                        return (
+                          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 mb-3">
+                            <p className="text-xs text-muted-foreground">
+                              Could not read every file, so identity is unproven. Compare the images yourself
+                              before acting.
+                            </p>
+                          </div>
+                        )
+                      }
+                      const allSame = new Set(hashes).size === 1
+                      return (
+                        <div className={cn('rounded-lg border px-3 py-2 mb-3',
+                          allSame
+                            ? 'border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30'
+                            : 'border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/30')}>
+                          <p className={cn('text-xs font-semibold',
+                            allSame ? 'text-red-800 dark:text-red-300' : 'text-emerald-800 dark:text-emerald-300')}>
+                            {allSame
+                              ? 'PROVEN: byte-for-byte the same image file.'
+                              : 'NOT the same file — these are different images that happen to look alike.'}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            {allSame
+                              ? 'A SHA-256 match cannot happen by chance. This is a re-upload of the identical file.'
+                              : 'Different content hashes. On a task members repeat daily this is normally a genuine new photo — do not penalise on this alone.'}
+                          </p>
+                        </div>
+                      )
+                    })()}
                     {loading === key ? (
                       <p className="text-xs text-muted-foreground flex items-center gap-2 py-6 justify-center">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading proofs…
@@ -133,7 +196,7 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
                     ) : (
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                         {g.entries.map(e => {
-                          const url = e.proofUrl ? urls[key]?.[e.proofUrl] : undefined
+                          const url = e.proofUrl ? urls[key]?.[e.proofUrl]?.url : undefined
                           return (
                             <figure key={e.submissionId} className="space-y-1.5">
                               {url ? (
@@ -160,10 +223,35 @@ export default function DuplicatesClient({ orgId, groups }: { orgId: string; gro
                         })}
                       </div>
                     )}
-                    <p className="text-[11px] text-muted-foreground mt-3">
-                      Decide these in <a href={`/organizations/${orgId}/approvals`} className="text-primary hover:underline">Approvals</a> —
-                      this page is for spotting them, not for changing points.
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-border">
+                      {g.reviewVerdict ? (
+                        <>
+                          <span className="text-[11px] text-muted-foreground">
+                            Marked <strong className="text-foreground">
+                              {g.reviewVerdict === 'safe' ? 'not a duplicate' : 'confirmed duplicate'}
+                            </strong>{g.reviewedEmail ? ` by ${g.reviewedEmail}` : ''}
+                          </span>
+                          <button onClick={() => unmark(g)} disabled={busy === key}
+                            className="text-[11px] text-primary hover:underline disabled:opacity-40">
+                            Undo
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => mark(g, 'safe')} disabled={busy === key}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">
+                            Not a duplicate
+                          </button>
+                          <button onClick={() => mark(g, 'confirmed')} disabled={busy === key}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40">
+                            Confirm duplicate
+                          </button>
+                        </>
+                      )}
+                      <span className="text-[11px] text-muted-foreground ml-auto">
+                        Points are changed in <a href={`/organizations/${orgId}/approvals`} className="text-primary hover:underline">Approvals</a>
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>

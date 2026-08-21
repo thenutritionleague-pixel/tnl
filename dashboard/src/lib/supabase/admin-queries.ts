@@ -1514,8 +1514,17 @@ export interface DuplicateGroup {
   taskTitle: string
   /** true when the same photo appears under MORE THAN ONE member. */
   sharedBetweenMembers: boolean
-  /** true when every file in the group is byte-identical, not merely similar. */
-  identicalFiles: boolean
+  /**
+   * Every file in the group reports the same byte SIZE. A weak hint only --
+   * two different photos can share a size, and the same photo re-encoded will
+   * not. Identity is PROVEN by SHA-256 when the admin opens the group; never
+   * act on this field alone.
+   */
+  sameFileSize: boolean
+  /** Admin verdict, if this group has already been checked. */
+  reviewVerdict: 'safe' | 'confirmed' | null
+  reviewedEmail: string | null
+  reviewedAt: string | null
   entries: DuplicateEntry[]
 }
 
@@ -1551,6 +1560,8 @@ export async function getDuplicateGroups(orgId: string): Promise<DuplicateGroup[
     proof_hash: string; task_title: string; submission_id: string; user_id: string
     member_name: string; team_name: string; submitted_date: string; status: string
     points_awarded: number | null; proof_url: string | null; file_bytes: number | null
+    review_verdict: 'safe' | 'confirmed' | null; review_note: string | null
+    reviewed_email: string | null; reviewed_at: string | null
   }
 
   const buckets = new Map<string, Row[]>()
@@ -1578,7 +1589,10 @@ export async function getDuplicateGroups(orgId: string): Promise<DuplicateGroup[
       hash,
       taskTitle,
       sharedBetweenMembers: new Set(entries.map(e => e.memberId)).size > 1,
-      identicalFiles: sizes.length === entries.length && new Set(sizes).size === 1,
+      sameFileSize: sizes.length === entries.length && new Set(sizes).size === 1,
+      reviewVerdict: rows[0].review_verdict ?? null,
+      reviewedEmail: rows[0].reviewed_email ?? null,
+      reviewedAt: rows[0].reviewed_at ?? null,
       entries,
     }
   })
