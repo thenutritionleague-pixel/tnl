@@ -1,7 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
 const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
@@ -20,7 +20,10 @@ async function checkAccess(orgId: string) {
  * Called from the org settings page client component.
  */
 export async function uploadOrgLogo(orgId: string, formData: FormData) {
-  if (!await checkAccess(orgId)) return { error: 'Unauthorized.' }
+  const profile = await checkAccess(orgId)
+  if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const file = formData.get('file') as File | null
   if (!file) return { error: 'No file provided' }
@@ -51,7 +54,10 @@ export async function uploadOrgLogo(orgId: string, formData: FormData) {
  * We don't delete the storage file to keep history.
  */
 export async function removeOrgLogo(orgId: string) {
-  if (!await checkAccess(orgId)) return { error: 'Unauthorized.' }
+  const profile = await checkAccess(orgId)
+  if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   const client = await createAdminClient()
   await client.from('organizations').update({ logo_url: null }).eq('id', orgId)
   return { ok: true }

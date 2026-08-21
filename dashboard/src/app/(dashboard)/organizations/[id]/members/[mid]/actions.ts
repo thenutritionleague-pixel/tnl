@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createHash } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 const BUNNY_CDN_HOSTNAME = process.env.BUNNY_CDN_HOSTNAME  || 'vz-c97d7e4d-363.b-cdn.net'
 const BUNNY_TOKEN_AUTH   = process.env.BUNNY_TOKEN_AUTH_KEY || ''
@@ -78,6 +78,8 @@ export async function approveMemberSubmission(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
   if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return { error: 'Unauthorized.' }
 
@@ -117,6 +119,8 @@ export async function updateMemberAvatarColor(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
   if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return { error: 'Unauthorized.' }
 
@@ -141,6 +145,8 @@ export async function rejectMemberSubmission(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
   if (ORG_SCOPED_ROLES.includes(profile.role) && profile.org_id !== orgId) return { error: 'Unauthorized.' }
 

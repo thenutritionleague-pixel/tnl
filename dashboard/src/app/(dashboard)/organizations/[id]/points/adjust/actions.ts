@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
 
@@ -15,6 +15,8 @@ export async function addManualAdjustment(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
 
   // Org-scoped admins can only adjust within their own org
@@ -71,6 +73,8 @@ export async function updateManualAdjustment(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
   if (['org_admin', 'sub_admin'].includes(profile.role) && profile.org_id !== orgId) {
     return { error: 'Unauthorized.' }
@@ -121,6 +125,8 @@ export async function deleteManualAdjustment(
 ): Promise<{ success?: true; error?: string }> {
   const profile = await getAdminProfile()
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   if (!ALLOWED_ROLES.includes(profile.role)) return { error: 'Unauthorized.' }
   if (['org_admin', 'sub_admin'].includes(profile.role) && profile.org_id !== orgId) {
     return { error: 'Unauthorized.' }

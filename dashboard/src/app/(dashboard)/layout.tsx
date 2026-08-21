@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { Eye } from 'lucide-react'
 import { headers } from 'next/headers'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { getUser, getAdminProfile } from '@/lib/auth'
@@ -35,6 +36,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     email: 'dev@local.com',
     role: 'super_admin',
     status: 'active',
+    read_only: false,
     created_by: null,
     created_at: new Date().toISOString(),
   }
@@ -93,6 +95,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <UserNav profile={activeProfile} />
           </div>
         </header>
+        {activeProfile.read_only && (
+          <div className="shrink-0 flex items-center gap-2 px-6 py-2 bg-amber-50 border-b border-amber-200 text-amber-900 text-sm">
+            <Eye className="w-4 h-4 shrink-0" />
+            <span>
+              <strong className="font-semibold">View-only access.</strong>{' '}
+              You can see everything here, but changes won&apos;t save. Ask your org admin if you need to approve or edit.
+            </span>
+          </div>
+        )}
         <main className="flex-1 overflow-y-auto p-6">
           {children}
         </main>

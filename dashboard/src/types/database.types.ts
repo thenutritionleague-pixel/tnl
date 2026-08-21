@@ -42,6 +42,8 @@ export interface AdminUser {
   email: string
   role: AdminRole
   status: AdminStatus
+  /** View-only admins see every page but every write is refused server-side. */
+  read_only?: boolean
   created_by: string | null
   created_at: string
   organization?: Organization

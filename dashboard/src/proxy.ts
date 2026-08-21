@@ -51,11 +51,30 @@ export async function proxy(request: NextRequest) {
     // valid JWT from the auth API and present it here as a cookie — never
     // touching the login page, which does gate on admin_users. Without this
     // check such a session reaches every server action in the app.
-    const { data: adminUser } = await supabase
+    // Match on user_id first, then fall back to email.
+    //
+    // A freshly created sub-admin row carries user_id = null: createSubAdmin
+    // only writes the email, and the auth account is minted later by the OTP
+    // login itself. getAdminProfile() heals user_id on first load, but it runs
+    // inside a page and this guard runs before any page does — so a user_id-only
+    // lookup bounced every brand-new sub-admin to /login?error=unauthorized, in
+    // a loop they could never escape: OTP accepted, then thrown straight back.
+    // The RLS policy on admin_users is auth.email() = email, so matching on
+    // email here is scoped exactly as tightly as matching on user_id was.
+    let { data: adminUser } = await supabase
       .from('admin_users')
       .select('role, org_id, status')
       .eq('user_id', user.id)
-      .single()
+      .maybeSingle()
+
+    if (!adminUser && user.email) {
+      const { data: byEmail } = await supabase
+        .from('admin_users')
+        .select('role, org_id, status')
+        .eq('email', user.email.toLowerCase())
+        .maybeSingle()
+      adminUser = byEmail
+    }
 
     if (!adminUser || adminUser.status !== 'active') {
       return NextResponse.redirect(new URL('/login?error=unauthorized', request.url))

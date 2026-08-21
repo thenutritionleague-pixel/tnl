@@ -18,7 +18,7 @@ export const getAdminProfile = cache(async () => {
   // Normal case: look up by user_id
   const { data } = await adminClient
     .from('admin_users')
-    .select('id, user_id, org_id, name, email, role, status, created_by, created_at')
+    .select('id, user_id, org_id, name, email, role, status, read_only, created_by, created_at')
     .eq('user_id', user.id)
     .single()
   if (data) return data
@@ -26,7 +26,7 @@ export const getAdminProfile = cache(async () => {
   // Fallback: match by email and sync user_id (handles first-time login or auth re-creation)
   const { data: byEmail } = await adminClient
     .from('admin_users')
-    .select('id, user_id, org_id, name, email, role, status, created_by, created_at')
+    .select('id, user_id, org_id, name, email, role, status, read_only, created_by, created_at')
     .eq('email', user.email!)
     .single()
   if (byEmail) {
@@ -38,3 +38,30 @@ export const getAdminProfile = cache(async () => {
 
   return null
 })
+
+/** Shape returned by getAdminProfile(), for helpers that only need the guard bits. */
+type GuardableProfile = { read_only?: boolean | null } | null | undefined
+
+/**
+ * True when this admin is allowed to change things.
+ *
+ * Read-only admins can reach every page and see every number — the block is
+ * deliberately at the action layer, not the route layer, so they keep full
+ * visibility and lose only the ability to write.
+ */
+export function canWrite(profile: GuardableProfile): boolean {
+  return !!profile && profile.read_only !== true
+}
+
+/**
+ * Guard for the top of a mutating server action. Returns an error object to
+ * hand straight back to the client, or null when the write may proceed.
+ *
+ * Server actions are each their own entry point — there is no single choke
+ * point a middleware could cover — so this has to be called explicitly by every
+ * action that writes. UI-level hiding is a courtesy; this is the boundary.
+ */
+export function readOnlyBlock(profile: GuardableProfile): { error: string } | null {
+  if (canWrite(profile)) return null
+  return { error: 'Your account has view-only access, so this change was not saved.' }
+}

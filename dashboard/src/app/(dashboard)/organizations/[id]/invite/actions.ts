@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
 import { fetchAllRows } from '@/lib/supabase/fetch-all'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
 const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
@@ -53,6 +53,8 @@ export async function addToWhitelist(orgId: string, email: string, teamId: strin
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
+    const blocked = readOnlyBlock(profile)
+    if (blocked) return { error: blocked.error }
 
     const normalizedEmail = email.toLowerCase().trim()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return { error: 'Invalid email address.' }
@@ -91,6 +93,8 @@ export async function bulkAddToWhitelist(orgId: string, emails: string[], teamId
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
+    const blocked = readOnlyBlock(profile)
+    if (blocked) return { error: blocked.error }
 
     const normalizedRole = role.toLowerCase().trim()
     const client = await createAdminClient()
@@ -161,6 +165,8 @@ export async function removeFromWhitelist(orgId: string, id: string) {
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
+    const blocked = readOnlyBlock(profile)
+    if (blocked) return { error: blocked.error }
 
     const client = await createAdminClient()
     const { error } = await client.from('invite_whitelist').delete().eq('id', id).eq('org_id', orgId)
@@ -181,6 +187,8 @@ export async function csvImportToWhitelist(
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
+    const blocked = readOnlyBlock(profile)
+    if (blocked) return { error: blocked.error }
 
     const client = await createAdminClient()
 
@@ -212,6 +220,8 @@ export async function updateWhitelistEntry(orgId: string, id: string, email: str
   try {
     const profile = await checkAccess(orgId)
     if (!profile) return { error: 'Unauthorized.' }
+    const blocked = readOnlyBlock(profile)
+    if (blocked) return { error: blocked.error }
 
     const normalizedRole = role.toLowerCase().trim()
     const client = await createAdminClient()

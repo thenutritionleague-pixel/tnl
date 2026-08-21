@@ -223,6 +223,7 @@ export interface OrgAdminUser {
   email: string
   role: 'org_admin' | 'sub_admin'
   status: string
+  readOnly: boolean
   createdAt: string
 }
 
@@ -230,7 +231,7 @@ export async function getOrgAdmins(orgId: string): Promise<OrgAdminUser[]> {
   const client = await createAdminClient()
   const { data } = await client
     .from('admin_users')
-    .select('id, name, email, role, status, created_at')
+    .select('id, name, email, role, status, read_only, created_at')
     .eq('org_id', orgId)
     .in('role', ['org_admin', 'sub_admin'])
     .order('role') // org_admin first
@@ -241,6 +242,7 @@ export async function getOrgAdmins(orgId: string): Promise<OrgAdminUser[]> {
     email: a.email,
     role: a.role as OrgAdminUser['role'],
     status: a.status,
+    readOnly: a.read_only === true,
     createdAt: fmtDate(a.created_at),
   }))
 }

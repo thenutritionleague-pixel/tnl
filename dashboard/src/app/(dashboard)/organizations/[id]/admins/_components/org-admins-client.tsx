@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Shield, Plus, MoreHorizontal, UserCog, Trash2, ShieldCheck, Loader2, Mail } from 'lucide-react'
+import { Shield, Plus, MoreHorizontal, UserCog, Trash2, ShieldCheck, Loader2, Mail, Eye, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { Button } from '@/components/ui/button'
@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { createSubAdmin, removeSubAdmin, changeOrgAdminEmail } from '../actions'
+import { createSubAdmin, removeSubAdmin, changeOrgAdminEmail, setSubAdminReadOnly } from '../actions'
 import type { OrgAdminUser } from '@/lib/supabase/admin-queries'
 
 function initials(name: string) {
@@ -74,6 +74,7 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
         email,
         role: 'sub_admin' as const,
         status: 'active',
+        readOnly: false,
         createdAt: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       }])
       setFormName('')
@@ -113,6 +114,18 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
       setNewEmail('')
     }
     setChangingEmail(false)
+  }
+
+  async function toggleReadOnly(admin: OrgAdminUser) {
+    const next = !admin.readOnly
+    const result = await setSubAdminReadOnly(orgId, admin.id, next)
+    if ('error' in result && result.error) {
+      toast.error(result.error)
+    } else {
+      toast.success(next
+        ? `${admin.name} now has view-only access.`
+        : `${admin.name} can make changes again.`)
+    }
   }
 
   const activeAdmins  = subAdmins.filter(a => a.status === 'active')
@@ -200,7 +213,7 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
                       </p>
                     </div>
                     {activeAdmins.map(admin => (
-                      <AdminRow key={admin.id} admin={admin} canManage={canManage} onRemove={setRemoveTarget} />
+                      <AdminRow key={admin.id} admin={admin} canManage={canManage} onRemove={setRemoveTarget} onToggleReadOnly={toggleReadOnly} />
                     ))}
                   </>
                 )}
@@ -212,7 +225,7 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
                       </p>
                     </div>
                     {pendingAdmins.map(admin => (
-                      <AdminRow key={admin.id} admin={admin} canManage={canManage} onRemove={setRemoveTarget} />
+                      <AdminRow key={admin.id} admin={admin} canManage={canManage} onRemove={setRemoveTarget} onToggleReadOnly={toggleReadOnly} />
                     ))}
                   </>
                 )}
@@ -230,6 +243,7 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
             </div>
             <p className="text-xs text-muted-foreground">
               Sub admins can manage challenges, approvals, teams, members, and settings for this org.
+              You can switch any of them to view-only afterwards from the menu beside their name.
             </p>
             <div className="space-y-3">
               <div className="space-y-1.5">
@@ -324,7 +338,12 @@ export function OrgAdminsClient({ orgId, orgAdmin, subAdmins: initialSubAdmins, 
   )
 }
 
-function AdminRow({ admin, canManage, onRemove }: { admin: OrgAdminUser; canManage: boolean; onRemove: (a: OrgAdminUser) => void }) {
+function AdminRow({ admin, canManage, onRemove, onToggleReadOnly }: {
+  admin: OrgAdminUser
+  canManage: boolean
+  onRemove: (a: OrgAdminUser) => void
+  onToggleReadOnly: (a: OrgAdminUser) => void
+}) {
   const color = AVATAR_COLORS[admin.email.charCodeAt(0) % AVATAR_COLORS.length]
   return (
     <div className="flex items-center gap-3 px-5 py-3.5 hover:bg-muted/20 transition-colors">
@@ -345,12 +364,25 @@ function AdminRow({ admin, canManage, onRemove }: { admin: OrgAdminUser; canMana
       )}>
         {admin.status === 'active' ? 'Active' : 'Pending'}
       </span>
+      {admin.readOnly && (
+        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-600 flex items-center gap-1">
+          <Eye className="w-3 h-3 shrink-0" /> View only
+        </span>
+      )}
       {canManage && (
         <DropdownMenu>
           <DropdownMenuTrigger className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0">
             <MoreHorizontal className="w-4 h-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[140px]">
+          <DropdownMenuContent align="end" className="min-w-[180px]">
+            <DropdownMenuItem
+              onClick={() => onToggleReadOnly(admin)}
+              className="gap-2 whitespace-nowrap"
+            >
+              {admin.readOnly
+                ? <><Pencil className="w-3.5 h-3.5 shrink-0" /> Allow changes</>
+                : <><Eye className="w-3.5 h-3.5 shrink-0" /> Make view-only</>}
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => onRemove(admin)}
               variant="destructive"

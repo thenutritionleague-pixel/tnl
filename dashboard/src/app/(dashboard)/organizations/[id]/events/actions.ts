@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
 const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
@@ -29,6 +29,8 @@ export interface EventInput {
 export async function createEvent(orgId: string, data: EventInput) {
   const profile = await checkAccess(orgId)
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const client = await createAdminClient()
   const { error } = await client.from('events').insert({
@@ -51,6 +53,8 @@ export async function createEvent(orgId: string, data: EventInput) {
 export async function updateEvent(orgId: string, eventId: string, data: EventInput) {
   const profile = await checkAccess(orgId)
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const client = await createAdminClient()
   const { error } = await client
@@ -76,6 +80,8 @@ export async function updateEvent(orgId: string, eventId: string, data: EventInp
 export async function deleteEvent(orgId: string, eventId: string) {
   const profile = await checkAccess(orgId)
   if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const client = await createAdminClient()
   const { error } = await client.from('events').delete().eq('id', eventId).eq('org_id', orgId)

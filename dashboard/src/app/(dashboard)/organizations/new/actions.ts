@@ -1,7 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 function toSlug(name: string): string {
   return name
@@ -25,6 +25,8 @@ export async function createOrganization(data: {
   if (!profile || (profile.role !== 'super_admin' && profile.role !== 'sub_super_admin')) {
     return { error: 'Only platform admins can create organizations.' }
   }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const client = await createAdminClient()
   const slug = toSlug(data.name)

@@ -277,9 +277,10 @@ interface Props {
   initialTasks: Array<{ id: string; title: string }>
   initialCounts?: { pending: number; approved: number; rejected: number; rejectedEver: number }
   initialTaskBreakdown?: OrgTaskBreakdown[]
+  readOnly?: boolean
 }
 
-export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initialTasks, initialCounts, initialTaskBreakdown }: Props) {
+export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initialTasks, initialCounts, initialTaskBreakdown, readOnly = false }: Props) {
   const [approvals, setApprovals]       = useState<OrgApproval[]>(initialApprovals)
   const [hasMore, setHasMore]           = useState(initialHasMore)
   const [loading, setLoading]           = useState(false)
@@ -1155,6 +1156,16 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
               </div>
 
               <div className="px-5 py-4 border-t border-border space-y-2">
+                {/* View-only admins get the full review panel above — proof,
+                    AI verdict, duplicate check — and no way to act on it. The
+                    server refuses the write regardless; hiding the buttons is
+                    what stops them clicking Approve and getting an error back. */}
+                {readOnly ? (
+                  <p className="text-xs text-muted-foreground text-center py-1">
+                    You have view-only access, so you can review this but not decide it.
+                  </p>
+                ) : (
+                <>
                 {/* Let the member try again today. Day 1 produced several
                     "picked the wrong tier" requests that otherwise need a
                     developer to clear the row by hand. */}
@@ -1206,6 +1217,8 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                   <button disabled={submitting} onClick={handleApprove} className={cn(buttonVariants(), 'w-full')}>
                     {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><CheckCircle2 className="w-4 h-4 mr-1.5" /> Approve</>}
                   </button>
+                )}
+                </>
                 )}
               </div>
             </>

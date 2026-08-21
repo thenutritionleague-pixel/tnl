@@ -538,20 +538,26 @@ async function decideVideo(
   //   genuine -> approve   |   fake / wrong activity -> reject (confirmed by Pro)
   const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, references)
   const fConf = clamp01(flash.confidence ?? 0)
-  // Escalate only when the cheap check is genuinely confident something is
-  // wrong. At 0.55 it escalated 42 videos on 20-21 Aug and 39 of them were
-  // approved in the end -- a 93% false-alarm rate, catching one real problem.
-  // Every one of those either interrupted a member or landed on an admin, and
-  // noise at that volume makes a real flag easier to miss, not harder.
+  // Escalate only when Flash actually doubts the video's ORIGIN.
   //
-  // A typical false alarm was a member filming in a busy gym: the model reads
-  // studio-ish lighting as "produced clip" despite the prompt saying plainly
-  // that a gym is not evidence of anything.
+  // `approved` was being read as "suspects a fake", but the model folds its rep
+  // COUNT into that field: it returns approved=false on a perfectly genuine clip
+  // simply because it counted 8 burpees where 10 were claimed. Counting is
+  // explicitly advisory (see above) -- it must never drive an escalation.
   //
-  // Pro still confirms every rejection, and identity mismatch and
-  // downloaded/screen-recording still route to a human regardless of this
-  // threshold -- so the paths that catch actual cheating are untouched.
-  const flashFlagsFake = flash.approved === false && fConf >= 0.75
+  // The logging added alongside this settled it. Of 63 videos checked on 21 Aug,
+  // 6 escalated and ALL 6 carried authenticity="self_recorded" -- the model itself
+  // confirming it was the member's own recording. Zero were genuinely suspicious.
+  // Confidence was no help either: genuine and flagged clips both report
+  // 0.75-0.85, which is why raising 0.55 -> 0.75 changed almost nothing.
+  //
+  // So gate on what the model actually says about origin. By this point
+  // "downloaded" and "screen_recording" have already returned needs_review
+  // above, so this escalates only on a genuine "unclear" -- and Pro still
+  // confirms every rejection after it.
+  const flashFlagsFake = flash.approved === false
+    && fConf >= 0.55
+    && flash.authenticity !== 'self_recorded'
 
   // Record what the CHEAP check actually thought, and whether that was enough to
   // escalate. Only the final (Pro) confidence is stored on the row, so the number

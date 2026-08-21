@@ -1,13 +1,15 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { getAdminProfile } from '@/lib/auth'
+import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 
 export async function inviteSubSuperAdmin(name: string, email: string) {
   const profile = await getAdminProfile()
   if (!profile || profile.role !== 'super_admin') {
     return { error: 'Only super admins can invite platform admins.' }
   }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
 
   const client = await createAdminClient()
 
@@ -34,6 +36,8 @@ export async function removeSubSuperAdmin(adminId: string) {
   if (!profile || profile.role !== 'super_admin') {
     return { error: 'Only super admins can remove platform admins.' }
   }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
   const client = await createAdminClient()
   
   // 1. Get the auth id before we delete
