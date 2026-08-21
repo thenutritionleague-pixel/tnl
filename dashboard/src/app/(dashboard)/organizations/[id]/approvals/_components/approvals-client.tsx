@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, getPipelineHealth, type DuplicateMatch, type PipelineHealth } from '../actions'
+import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, getPipelineHealth, getIdentityReferences, type DuplicateMatch, type PipelineHealth, type IdentityReference } from '../actions'
 import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
 
@@ -379,6 +379,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   const [aiChecking, setAiChecking]   = useState(false)
   const [dupMatch, setDupMatch] = useState<DuplicateMatch | 'loading' | null>(null)
   const [health, setHealth] = useState<PipelineHealth | null>(null)
+  const [idRefs, setIdRefs] = useState<IdentityReference[] | 'loading' | null>(null)
 
   // Polled rather than derived from the page, because the answer depends on the
   // whole queue and on how long the video service has been behind, not on the
@@ -394,6 +395,14 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   // Evidence for a duplicate flag. Loaded on demand rather than with the queue:
   // it downloads both images to compare bytes, which is far too expensive to do
   // for every row up front.
+  // The earlier videos the identity check compared against. Loaded on demand:
+  // it signs Bunny URLs, which is wasted work on every other row.
+  async function loadIdentityRefs(a: OrgApproval) {
+    setIdRefs('loading')
+    const refs = await getIdentityReferences(a.id)
+    setIdRefs(refs)
+  }
+
   async function loadDuplicate(a: OrgApproval) {
     setDupMatch('loading')
     const m = await getDuplicateMatch(a.id)
@@ -494,6 +503,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
     // Clear the previous row's comparison, or one member's photos would appear
     // as evidence against another's.
     setDupMatch(null)
+    setIdRefs(null)
     if (a.selectedTier) {
       setPointsOverride(String(a.selectedTier.points))
     } else if (a.taskPointsTiers && a.selectedTierIndex != null && a.taskPointsTiers[a.selectedTierIndex]) {
@@ -502,7 +512,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
       setPointsOverride('')
     }
   }
-  function closeReview() { setReviewTarget(null); setDupMatch(null) }
+  function closeReview() { setReviewTarget(null); setDupMatch(null); setIdRefs(null) }
 
   async function handleApprove() {
     if (!reviewTarget) return
@@ -1012,6 +1022,57 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           </span>
                         ))}
                       </div>
+                    )}
+                  </div>
+                )}
+
+                {/* An identity flag asks the admin to confirm the person is the
+                    same -- against submissions it does not show. This is the one
+                    flag that must never be acted on blind, so put the exact
+                    videos the AI compared against right here. */}
+                {/looks different from this member/i.test(reviewTarget.aiFeedback ?? '') && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                        Compare with their earlier videos
+                      </p>
+                      {idRefs === null && (
+                        <button type="button" onClick={() => loadIdentityRefs(reviewTarget)}
+                          className="text-xs text-primary hover:underline shrink-0">
+                          Show past submissions
+                        </button>
+                      )}
+                      {idRefs === 'loading' && (
+                        <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Loading&hellip;
+                        </span>
+                      )}
+                    </div>
+
+                    {Array.isArray(idRefs) && (
+                      idRefs.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">
+                          No earlier approved videos found &mdash; the AI had nothing to compare against.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {idRefs.map((r, i) => (
+                            <figure key={i} className="space-y-1">
+                              <figcaption className="text-[11px] font-medium text-muted-foreground truncate">
+                                {r.taskTitle} &middot; {r.submittedDate}
+                              </figcaption>
+                              {r.videoUrl ? (
+                                // eslint-disable-next-line jsx-a11y/media-has-caption
+                                <video src={r.videoUrl} controls preload="metadata"
+                                  poster={r.thumbUrl ?? undefined}
+                                  className="w-full rounded-md border border-border bg-black aspect-video" />
+                              ) : (
+                                <p className="text-xs text-muted-foreground">Video unavailable</p>
+                              )}
+                            </figure>
+                          ))}
+                        </div>
+                      )
                     )}
                   </div>
                 )}

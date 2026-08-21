@@ -473,3 +473,60 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
 
   return { level, headline, detail, pending, oldestMins, needsReview, videoPending, photoPending, autoReleaseOk, lastAutoRelease }
 }
+
+export type IdentityReference = {
+  submittedDate: string
+  taskTitle: string
+  videoUrl: string | null
+  thumbUrl: string | null
+}
+
+/**
+ * The earlier videos the identity check actually compared this one against.
+ *
+ * "The person looks different from this member's earlier submissions" is
+ * unusable on its own -- it names no submission, so an admin is asked to confirm
+ * something they cannot see. And this is the one flag that must never be acted
+ * on blind: wrongly accusing a member of sending someone else's video is far
+ * worse than any missed cheat.
+ *
+ * Returns the SAME references the AI used: the member's two EARLIEST approved
+ * videos in this org (see fetchIdentityAnchors in analyze-submission). Earliest,
+ * not latest, so a fake that once slipped through can never become the baseline
+ * everything else is measured against.
+ */
+export async function getIdentityReferences(submissionId: string): Promise<IdentityReference[]> {
+  const profile = await getAdminProfile()
+  if (!profile) return []
+  const client = await createAdminClient()
+
+  const { data: cur } = await client
+    .from('task_submissions')
+    .select('user_id, org_id')
+    .eq('id', submissionId)
+    .maybeSingle()
+  if (!cur) return []
+
+  const { data: rows } = await client
+    .from('task_submissions')
+    .select('proof_url, submitted_date, tasks(title)')
+    .eq('user_id', cur.user_id)
+    .eq('org_id', cur.org_id)
+    .eq('status', 'approved')
+    .like('proof_url', 'bunny://%')
+    .neq('id', submissionId)
+    .order('submitted_at', { ascending: true })
+    .limit(2)
+
+  const out: IdentityReference[] = []
+  for (const r of (rows ?? []) as { proof_url: string; submitted_date: string; tasks?: { title?: string } }[]) {
+    const guid = r.proof_url.replace('bunny://', '')
+    out.push({
+      submittedDate: r.submitted_date,
+      taskTitle: r.tasks?.title ?? 'Earlier submission',
+      videoUrl: await bunnyPlayableUrl(guid, 900),
+      thumbUrl: bunnySignPath(`/${guid}/thumbnail.jpg`, 900),
+    })
+  }
+  return out
+}
