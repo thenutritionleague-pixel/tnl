@@ -17,3 +17,4 @@ mobile/.flutter-plugins-dependencies
 mobile/pubspec.lock
 # Added by code-review-graph
 .code-review-graph/
+dashboard/supabase/.temp/

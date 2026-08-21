@@ -21,6 +21,19 @@ const BUNNY_TOKEN_AUTH    = Deno.env.get('BUNNY_TOKEN_AUTH_KEY') ?? ''
 
 const PHASH_ENFORCE = true
 const PHASH_DUP_THRESHOLD = 8
+// Distance 0 is not "looks similar" — it is the identical image file. A member
+// eating the same salad at the same desk produces a close hash, never an exact
+// one, so 0 has no honest explanation and is rejected outright. Anything from 1
+// to PHASH_DUP_THRESHOLD stays a human decision, because that range genuinely
+// does contain honest repeat lunches.
+const PHASH_IDENTICAL = 0
+
+/** "2026-08-19" -> "19 Aug", for a rejection message a member has to act on. */
+function fmtProofDate(d: string): string {
+  const parsed = new Date(`${d}T00:00:00Z`)
+  if (isNaN(parsed.getTime())) return d
+  return `${parsed.getUTCDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parsed.getUTCMonth()]}`
+}
 const NUMBER_REJECT_CONFIDENCE = 0.85
 
 // Hybrid video: Flash counts first (cheap). If Flash would reject or the count
@@ -814,6 +827,7 @@ Deno.serve(async (req: Request) => {
 
       // Track the closest duplicate separately for THIS task vs a DIFFERENT task.
       let sameTaskMinDist = 999
+      let sameTaskDate: string | null = null
       let crossTaskMinDist = 999
       let crossTaskTitle: string | null = null
       const myHash = await computeDHash(bytes)
@@ -827,7 +841,7 @@ Deno.serve(async (req: Request) => {
         // rejects a genuine new submission with "you already submitted this
         // photo for <task>" naming a task they did months ago in another org.
         const { data: prevHashed } = await supabase.from('task_submissions')
-          .select('id, task_id, proof_hash, tasks(title)').eq('user_id', sub.user_id)
+          .select('id, task_id, proof_hash, submitted_date, tasks(title)').eq('user_id', sub.user_id)
           .eq('org_id', orgId)
           .eq('status', 'approved').not('proof_hash', 'is', null).neq('id', submissionId)
           .order('submitted_at', { ascending: false }).limit(50)
@@ -835,7 +849,11 @@ Deno.serve(async (req: Request) => {
           if (!p.proof_hash) continue
           const d = hamming(myHash, p.proof_hash)
           if (p.task_id === sub.task_id) {
-            if (d < sameTaskMinDist) sameTaskMinDist = d
+            if (d < sameTaskMinDist) {
+              sameTaskMinDist = d
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              sameTaskDate = (p as any).submitted_date ?? null
+            }
           } else if (d < crossTaskMinDist) {
             crossTaskMinDist = d
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -916,8 +934,18 @@ Deno.serve(async (req: Request) => {
             feedback = crossTaskTitle
               ? `This is the wrong image for this task — you already submitted this photo for "${crossTaskTitle}". Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
               : `This is the wrong image for this task — this photo was already submitted for another task. Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
+          } else if (sameTaskMinDist <= PHASH_IDENTICAL) {
+            // Byte-for-byte the same image the member already used for this
+            // task. Not a similar meal — the same file. Rejected outright so a
+            // person does not have to confirm the obvious; on 21 Aug six of
+            // these piled up and five sat unactioned for hours.
+            status = 'rejected'
+            feedback = sameTaskDate
+              ? `This is the same photo you already submitted on ${fmtProofDate(sameTaskDate)}. Please take a new photo for today's task.`
+              : `This is the same photo you have already submitted for this task. Please take a new photo for today's task.`
           } else if (sameTaskMinDist <= PHASH_DUP_THRESHOLD) {
-            // Same photo re-used for the SAME task -> let an admin verify.
+            // Close but not identical -> could honestly be the same lunch on a
+            // different day, so a person decides.
             status = 'needs_review'
             feedback = 'This photo looks very similar to a previous submission for this task. Please verify it is a new photo.'
           }
