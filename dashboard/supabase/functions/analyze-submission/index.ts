@@ -695,6 +695,10 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json()
     const record = body.record ?? body
+    // Set by reanalyze_submission when an ADMIN explicitly asks for a re-check.
+    // Without it a re-analysis of an already-decided row is discarded below, so
+    // the Re-analyze button could never produce a verdict.
+    const forced: boolean = body.force === true || record.force === true
     submissionId = record.id
     const orgId: string = record.org_id
     if (!submissionId || !orgId) return new Response(JSON.stringify({ error: 'Missing id or org_id' }), { status: 400 })
@@ -801,6 +805,68 @@ Deno.serve(async (req: Request) => {
           challenge_id: sub.challenge_id ?? null,
         })
         return new Response(JSON.stringify({ aiStatus: 'rejected', reason: 'too_short', seconds: videoSeconds }), { status: 200 })
+      }
+
+      // Re-used video, caught before a single AI token is spent.
+      //
+      // Bunny renders the thumbnail from a fixed frame, so an identical source
+      // file yields identical thumbnail bytes -- a SHA-256 of it is an exact
+      // fingerprint. Photos had this since migration 049; videos had nothing at
+      // all, and a sweep on 22 Aug found 67 re-used clips worth 26,220 points,
+      // including one submitted under two different members' names.
+      //
+      // FAILS OPEN on purpose: any fetch or hash problem falls through to normal
+      // analysis. A member must never be blocked because a thumbnail 404'd.
+      if (isBunny) {
+        try {
+          const guid = sub.proof_url.replace('bunny://', '')
+          const thumbUrl = await bunnySignPath(`/${guid}/thumbnail.jpg`)
+          const thumbRes = await fetch(thumbUrl, { signal: AbortSignal.timeout(8000) })
+          if (thumbRes.ok) {
+            const thumbBytes = new Uint8Array(await thumbRes.arrayBuffer())
+            // A tiny body is an error page or a placeholder, not a real frame.
+            if (thumbBytes.byteLength > 512) {
+              const digest = new Uint8Array(await stdCrypto.subtle.digest('SHA-256', thumbBytes))
+              let fingerprint = ''
+              for (const b of digest) fingerprint += b.toString(16).padStart(2, '0')
+
+              await supabase.from('task_submissions').update({ video_fingerprint: fingerprint }).eq('id', submissionId)
+
+              const { data: priorRows } = await supabase
+                .from('task_submissions')
+                .select('id, user_id, submitted_date, tasks(title)')
+                .eq('org_id', orgId)
+                .eq('video_fingerprint', fingerprint)
+                .neq('id', submissionId)
+                .neq('status', 'rejected')
+                .order('submitted_at', { ascending: true })
+                .limit(1)
+
+              const prior = (priorRows ?? [])[0] as
+                { id: string; user_id: string; submitted_date: string; tasks?: { title?: string } } | undefined
+
+              if (prior) {
+                const priorTask = prior.tasks?.title ? ` for "${prior.tasks.title}"` : ''
+                const msg = prior.user_id === sub.user_id
+                  ? `Duplicate video: this is the same video file you already submitted on ${prior.submitted_date}${priorTask}. Each entry needs its own new recording.`
+                  : `Duplicate video: this exact video file was already submitted by another member on ${prior.submitted_date}${priorTask}. Each entry needs its own new recording.`
+                await supabase.from('task_submissions').update({
+                  ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
+                  status: 'rejected', rejection_reason: msg, reviewed_at: new Date().toISOString(),
+                }).eq('id', submissionId).eq('status', 'pending')
+                await supabase.from('feed_items').insert({
+                  org_id: orgId, type: 'submission_rejected',
+                  title: `Your ${taskTitle} submission was not approved`,
+                  content: msg, is_auto_generated: true, author_id: sub.user_id,
+                  challenge_id: sub.challenge_id ?? null,
+                })
+                return new Response(JSON.stringify({ aiStatus: 'rejected', reason: 'duplicate_video' }), { status: 200 })
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[video-dup] skipped:', e instanceof Error ? e.message : e)
+        }
       }
 
       // Identity anchors are best-effort: empty on first submission, or on any
@@ -966,8 +1032,25 @@ Deno.serve(async (req: Request) => {
     const { data: stillPending } = await supabase
       .from('task_submissions').select('status').eq('id', submissionId).single()
     if (stillPending && stillPending.status !== 'pending') {
-      console.log('[analyze-submission] decided by a human while analysing; leaving it alone', submissionId)
-      return new Response(JSON.stringify({ skipped: 'already_decided' }), { status: 200 })
+      if (!forced) {
+        console.log('[analyze-submission] decided by a human while analysing; leaving it alone', submissionId)
+        return new Response(JSON.stringify({ skipped: 'already_decided' }), { status: 200 })
+      }
+      // An admin explicitly asked to re-check an already-decided submission.
+      // Record the verdict so they can see it, but do NOT touch status or
+      // points: the guard above exists because the model must never overturn a
+      // person, and "re-check this" is a request for an opinion, not authority.
+      // The admin approves or rejects from the queue as usual.
+      console.log('[analyze-submission] forced re-analysis of a decided row; recording verdict only', submissionId)
+      await supabase.from('task_submissions').update({
+        ai_status: decision.status,
+        ai_feedback: decision.feedback || null,
+        ai_confidence: decision.confidence,
+        ai_video_model: decision.model ?? null,
+      }).eq('id', submissionId)
+      return new Response(JSON.stringify({
+        aiStatus: decision.status, forced: true, statusUnchanged: stillPending.status,
+      }), { status: 200 })
     }
 
     const aiStatus = decision.status
