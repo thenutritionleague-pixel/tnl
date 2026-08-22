@@ -232,5 +232,29 @@ join lateral (
 ) d on true
 where j.active and d.status <> 'succeeded';
 
+\echo '== 16. Nobody may miss a task from before they arrived =='
+-- Reported 22 Aug 2026 by the Pulse Crew (Yi Lucknow) captain: a member swapped
+-- in on 21 Aug showed 20 Aug as "Missed". The audit joined org_members without
+-- ever comparing the target date to when the member actually arrived, so a
+-- backfill marked every member absent for every day of the challenge -- 126 of
+-- them for a task that ran before they had signed up.
+--
+-- GREATEST(profile created, EARLIEST team join in this org). Earliest, not
+-- current: a member who moves teams mid-event must keep their genuine misses.
+select 'missed a task from before joining' as problem,
+       p.name, x.missed_date,
+       p.created_at::date as profile_created, x.first_team_join, x.reason
+from (
+  select pt.user_id, pt.org_id, pt.reason,
+         substring(pt.reason from '\((\d{4}-\d{2}-\d{2})\)$')::date as missed_date,
+         (select min(tm.joined_at)::date from team_members tm
+            join teams tt on tt.id = tm.team_id
+           where tm.user_id = pt.user_id and tt.org_id = pt.org_id) as first_team_join
+  from points_transactions pt
+  where pt.amount = 0 and pt.reason like 'Task missed:%'
+) x
+join profiles p on p.id = x.user_id
+where x.missed_date < greatest(p.created_at::date, x.first_team_join);
+
 \echo ''
 \echo 'No rows above = healthy.'
