@@ -1194,7 +1194,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                               const SizedBox(width: 6),
                             ],
                             if (status == 'approved')
-                              Text('+$pts 🥦',
+                              // Sign the number, do not assume it is positive.
+                              // A revoked approval is a NEGATIVE ledger row that
+                              // still reads status 'approved', so a hardcoded '+'
+                              // rendered it as "+-200" on a member's own board.
+                              Text('${pts < 0 ? '' : '+'}$pts 🥦',
                                   style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w700,
