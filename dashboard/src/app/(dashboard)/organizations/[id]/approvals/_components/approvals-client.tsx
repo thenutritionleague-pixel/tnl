@@ -1107,15 +1107,21 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                 {/duplicate|similar to a previous submission|identical image fingerprint/i.test(reviewTarget.aiFeedback ?? '') && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2.5 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">Possible repeat photo</p>
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                        {reviewTarget.proofUrl?.startsWith('bunny://') ? 'Possible repeat video' : 'Possible repeat photo'}
+                      </p>
                       {dupMatch === null && (
-                        <button type="button" onClick={() => loadDuplicate(reviewTarget)} className="text-xs text-primary hover:underline shrink-0">Compare photos</button>
+                        <button type="button" onClick={() => loadDuplicate(reviewTarget)} className="text-xs text-primary hover:underline shrink-0">
+                          {reviewTarget.proofUrl?.startsWith('bunny://') ? 'Compare videos' : 'Compare photos'}
+                        </button>
                       )}
                       {dupMatch === 'loading' && (
                         <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0"><Loader2 className="w-3 h-3 animate-spin" /> Comparing…</span>
                       )}
                       {dupMatch === 'none' && (
-                        <span className="text-xs text-muted-foreground shrink-0">No earlier photo to compare</span>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {reviewTarget.proofUrl?.startsWith('bunny://') ? 'No earlier video to compare' : 'No earlier photo to compare'}
+                        </span>
                       )}
                     </div>
 
@@ -1127,24 +1133,38 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                         <p className={dupMatch.identical
                           ? 'text-xs font-semibold text-red-700 dark:text-red-400'
                           : 'text-xs font-semibold text-amber-800 dark:text-amber-300'}>
-                          {dupMatch.identical
-                            ? `Exactly the same file as ${dupMatch.previousDate} (${dupMatch.currentBytes.toLocaleString()} bytes, identical) — this is a re-upload, not a new photo.`
-                            : `A different file from ${dupMatch.previousDate} — ${dupMatch.distance} of 64 bits differ (${dupMatch.currentBytes.toLocaleString()} vs ${dupMatch.previousBytes.toLocaleString()} bytes). On a task members repeat daily, a similar-looking photo is usually a genuine new one. Check both before deciding.`}
+                          {dupMatch.isVideo
+                            ? (dupMatch.identical
+                                ? `Exactly the same file as ${dupMatch.previousDate} — identical SHA-256. This is a re-upload, not a new recording.`
+                                : `Matches the video from ${dupMatch.previousDate} on its thumbnail, but the full files differ. Play both before deciding.`)
+                            : dupMatch.identical
+                            ? `Exactly the same file as ${dupMatch.previousDate} (${(dupMatch.currentBytes ?? 0).toLocaleString()} bytes, identical) — this is a re-upload, not a new photo.`
+                            : `A different file from ${dupMatch.previousDate} — ${dupMatch.distance ?? '?'} of 64 bits differ (${(dupMatch.currentBytes ?? 0).toLocaleString()} vs ${(dupMatch.previousBytes ?? 0).toLocaleString()} bytes). On a task members repeat daily, a similar-looking photo is usually a genuine new one. Check both before deciding.`}
                         </p>
                         <div className="grid grid-cols-2 gap-2">
                           <figure className="space-y-1">
                             <figcaption className="text-[11px] font-medium text-muted-foreground">This submission</figcaption>
-                            <a href={dupMatch.currentUrl} target="_blank" rel="noopener noreferrer">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={dupMatch.currentUrl} alt="Photo submitted now" className="w-full rounded-md border border-border object-cover aspect-square" />
-                            </a>
+                            {dupMatch.isVideo ? (
+                              // eslint-disable-next-line jsx-a11y/media-has-caption
+                              <video src={dupMatch.currentUrl} controls preload="metadata" className="w-full rounded-md border border-border bg-black aspect-video" />
+                            ) : (
+                              <a href={dupMatch.currentUrl} target="_blank" rel="noopener noreferrer">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={dupMatch.currentUrl} alt="Photo submitted now" className="w-full rounded-md border border-border object-cover aspect-square" />
+                              </a>
+                            )}
                           </figure>
                           <figure className="space-y-1">
-                            <figcaption className="text-[11px] font-medium text-muted-foreground">Approved {dupMatch.previousDate}</figcaption>
-                            <a href={dupMatch.previousUrl} target="_blank" rel="noopener noreferrer">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={dupMatch.previousUrl} alt="Previously approved photo" className="w-full rounded-md border border-border object-cover aspect-square" />
-                            </a>
+                            <figcaption className="text-[11px] font-medium text-muted-foreground">Earlier — {dupMatch.previousDate}</figcaption>
+                            {dupMatch.isVideo ? (
+                              // eslint-disable-next-line jsx-a11y/media-has-caption
+                              <video src={dupMatch.previousUrl} controls preload="metadata" className="w-full rounded-md border border-border bg-black aspect-video" />
+                            ) : (
+                              <a href={dupMatch.previousUrl} target="_blank" rel="noopener noreferrer">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={dupMatch.previousUrl} alt="Previously approved photo" className="w-full rounded-md border border-border object-cover aspect-square" />
+                              </a>
+                            )}
                           </figure>
                         </div>
                       </>

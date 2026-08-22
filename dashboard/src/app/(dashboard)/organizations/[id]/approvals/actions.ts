@@ -341,15 +341,21 @@ export type DuplicateMatch = {
   previousDate: string
   /** true when the two files are byte-for-byte the same, not merely similar. */
   identical: boolean
-  currentBytes: number
-  previousBytes: number
+  currentBytes?: number
+  previousBytes?: number
   /**
    * Hamming distance between the two perceptual hashes, 0-64.
    * 0 means the same image; the AI only flags at 8 or below. Showing it lets a
    * reviewer tell "identical file" from "a similar-looking lunch on another day",
    * which for a task members repeat daily is the whole judgement.
    */
-  distance: number
+  distance?: number
+  /**
+   * A video pair rather than a photo pair. The panel plays them instead of
+   * showing images, and the byte-size / distance fields do not apply -- a video
+   * is proven identical by its full-file SHA, recorded when it was fingerprinted.
+   */
+  isVideo?: boolean
 }
 
 /**
@@ -393,6 +399,52 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
   const profile = await getAdminProfile()
   if (!profile) return null
   const client = await createAdminClient()
+
+  // VIDEOS first. proof_hash is null for every video, so the image path below
+  // returned null and the panel read "No earlier photo to compare" -- on a
+  // submission the system had just rejected for being a duplicate video. The
+  // admin was told a duplicate existed and then shown nothing to check it
+  // against, which is the same unusable flag this function was written to fix.
+  {
+    const { data: v } = await client
+      .from('task_submissions')
+      .select('user_id, org_id, proof_url, video_fingerprint, video_file_sha, submitted_date')
+      .eq('id', submissionId)
+      .maybeSingle()
+
+    if (v?.proof_url?.startsWith('bunny://') && v.video_fingerprint) {
+      const { data: earlier } = await client
+        .from('task_submissions')
+        .select('proof_url, submitted_date, video_file_sha')
+        .eq('user_id', v.user_id)
+        .eq('org_id', v.org_id)
+        .eq('video_fingerprint', v.video_fingerprint)
+        .neq('id', submissionId)
+        .order('submitted_at', { ascending: true })
+        .limit(1)
+
+      const prevVideo = (earlier ?? [])[0] as
+        { proof_url: string | null; submitted_date: string; video_file_sha: string | null } | undefined
+
+      if (prevVideo?.proof_url) {
+        const [currentUrl, previousUrl] = await Promise.all([
+          bunnyPlayableUrl(v.proof_url.replace('bunny://', '')),
+          bunnyPlayableUrl(prevVideo.proof_url.replace('bunny://', '')),
+        ])
+        if (currentUrl && previousUrl) {
+          return {
+            currentUrl,
+            previousUrl,
+            previousDate: prevVideo.submitted_date,
+            // Both full-file SHAs recorded and equal = the same file, proven.
+            identical: !!v.video_file_sha && v.video_file_sha === prevVideo.video_file_sha,
+            isVideo: true,
+          }
+        }
+      }
+      return null
+    }
+  }
 
   const { data: cur } = await client
     .from('task_submissions')
