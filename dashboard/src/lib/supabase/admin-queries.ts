@@ -1725,3 +1725,99 @@ export async function getVideoDuplicateGroups(orgId: string): Promise<VideoDupli
     b.approvedPoints - a.approvedPoints ||
     b.entries.length - a.entries.length)
 }
+
+// ---------------------------------------------------------------------------
+// Exact image reuse (eTag)
+// ---------------------------------------------------------------------------
+
+export type ExactImageEntry = {
+  submissionId: string
+  member: string
+  memberId: string
+  memberEmail: string | null
+  team: string
+  taskTitle: string
+  submittedDate: string
+  status: string
+  pointsAwarded: number | null
+  proofUrl: string | null
+  fileBytes: number | null
+}
+
+export type ExactImageGroup = {
+  /** The file's MD5, straight from the storage eTag. */
+  fingerprint: string
+  kind: 'shared_across_members' | 'same_member_different_tasks' | 'same_member_different_days'
+  approvedPoints: number
+  reviewVerdict: 'safe' | 'confirmed' | null
+  reviewNote: string | null
+  reviewedEmail: string | null
+  reviewedAt: string | null
+  entries: ExactImageEntry[]
+}
+
+/**
+ * The same image FILE submitted more than once.
+ *
+ * Distinct from getDuplicateGroups, which compares perceptual hashes. That
+ * answers "do these look alike" and is the right tool for a re-encode or crop,
+ * but it goes blind exactly where abuse concentrated: a Steps screenshot is
+ * mostly flat dark pixels, so its dHash carries too little signal and the
+ * migration 049 guard nulls it. 911 of 3,762 Steps submissions therefore had no
+ * duplicate protection at all.
+ *
+ * Storage already records an eTag per object — the MD5 of the content — so an
+ * exact re-upload is detectable with no downloads and no false positives.
+ * Identical eTag AND identical byte size means the same file, full stop.
+ *
+ * Misses re-encodes and crops by design; those are what the dHash list is for.
+ */
+export async function getReusedImageGroups(orgId: string): Promise<ExactImageGroup[]> {
+  const client = await createAdminClient()
+  const { data, error } = await client.rpc('get_reused_image_groups', { p_org_id: orgId })
+  if (error || !data) return []
+
+  type Row = {
+    fingerprint: string; group_kind: ExactImageGroup['kind']; approved_points: number
+    submission_id: string; user_id: string; member_name: string; member_email: string | null
+    team_name: string; task_title: string; submitted_date: string; status: string
+    points_awarded: number | null; proof_url: string | null; file_bytes: number | null
+    review_verdict: 'safe' | 'confirmed' | null; review_note: string | null
+    reviewed_email: string | null; reviewed_at: string | null
+  }
+
+  const buckets = new Map<string, Row[]>()
+  for (const r of data as Row[]) {
+    const list = buckets.get(r.fingerprint)
+    if (list) list.push(r); else buckets.set(r.fingerprint, [r])
+  }
+
+  const groups: ExactImageGroup[] = [...buckets.entries()].map(([fingerprint, rows]) => ({
+    fingerprint,
+    kind: rows[0].group_kind,
+    approvedPoints: Number(rows[0].approved_points ?? 0),
+    reviewVerdict: rows[0].review_verdict ?? null,
+    reviewNote: rows[0].review_note ?? null,
+    reviewedEmail: rows[0].reviewed_email ?? null,
+    reviewedAt: rows[0].reviewed_at ?? null,
+    entries: rows.map(r => ({
+      submissionId: r.submission_id,
+      member: r.member_name,
+      memberId: r.user_id,
+      memberEmail: r.member_email,
+      team: r.team_name,
+      taskTitle: r.task_title,
+      submittedDate: r.submitted_date,
+      status: r.status,
+      pointsAwarded: r.points_awarded,
+      proofUrl: r.proof_url,
+      fileBytes: r.file_bytes == null ? null : Number(r.file_bytes),
+    })),
+  }))
+
+  const rank = { shared_across_members: 0, same_member_different_tasks: 1, same_member_different_days: 2 }
+  return groups.sort((a, b) =>
+    rank[a.kind] - rank[b.kind] ||
+    b.approvedPoints - a.approvedPoints ||
+    b.entries.length - a.entries.length)
+}

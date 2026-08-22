@@ -243,3 +243,87 @@ export async function getVideoPlaybackUrls(guids: string[]): Promise<Record<stri
   }))
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Exact image reuse
+// ---------------------------------------------------------------------------
+
+/**
+ * Reject one submission from an exact-image-reuse group.
+ *
+ * Same principle as the video version: the evidence is assembled here from the
+ * database and storage metadata, not supplied by the browser, so the reason a
+ * member reads is checkable and could not have been edited in transit.
+ *
+ * eTag is the file's MD5, so a match is identity, not resemblance -- which is
+ * why this can state "the same image file" rather than "a similar image".
+ */
+export async function rejectExactImageDuplicate(
+  orgId: string,
+  submissionId: string,
+  adminNote?: string,
+) {
+  const profile = await getAdminProfile()
+  if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
+
+  const client = await createAdminClient()
+
+  const { data: me } = await client
+    .from('task_submissions')
+    .select('id, status, proof_url, submitted_date')
+    .eq('id', submissionId).eq('org_id', orgId).maybeSingle()
+  if (!me) return { error: 'Submission not found.' }
+  if (me.status === 'rejected') return { error: 'Already rejected.' }
+  if (!me.proof_url) return { error: 'This submission has no proof file.' }
+
+  // Re-read the group from the RPC so the reason quotes verified facts rather
+  // than anything the client sent.
+  const { data: groupRows } = await client.rpc('get_reused_image_groups', { p_org_id: orgId })
+  type GRow = {
+    submission_id: string; fingerprint: string; submitted_date: string
+    task_title: string; file_bytes: number | null
+  }
+  const rows = (groupRows ?? []) as GRow[]
+  const mine = rows.find(r => r.submission_id === submissionId)
+  if (!mine) return { error: 'This submission is no longer in a duplicate group.' }
+
+  const siblings = rows.filter(r => r.fingerprint === mine.fingerprint && r.submission_id !== submissionId)
+  const earlier = siblings
+    .filter(s => s.submitted_date <= mine.submitted_date)
+    .sort((a, b) => a.submitted_date.localeCompare(b.submitted_date))[0] ?? siblings[0]
+
+  const where = earlier
+    ? `already submitted on ${earlier.submitted_date}${earlier.task_title ? ` for "${earlier.task_title}"` : ''}`
+    : 'already submitted for another entry'
+
+  const facts = [
+    mine.file_bytes != null ? `${mine.file_bytes.toLocaleString('en-IN')} bytes` : null,
+    `MD5 ${mine.fingerprint.slice(0, 16)}…`,
+  ].filter(Boolean).join(', ')
+
+  const reason = [
+    `Duplicate photo: this is the same image file you ${where}.`,
+    `(${facts})`,
+    'Each entry needs its own new photo.',
+    adminNote?.trim() || null,
+  ].filter(Boolean).join(' ')
+
+  const { error } = await client
+    .from('task_submissions')
+    .update({
+      status: 'rejected',
+      rejection_reason: reason,
+      reviewed_at: new Date().toISOString(),
+      ai_status: 'rejected',
+      ai_feedback: null,
+      ai_confidence: null,
+    })
+    .eq('id', submissionId).eq('org_id', orgId)
+
+  if (error) return { error: error.message }
+  revalidatePath(`/organizations/${orgId}/duplicates`)
+  revalidatePath(`/organizations/${orgId}/approvals`)
+  return { success: true, reason }
+}
