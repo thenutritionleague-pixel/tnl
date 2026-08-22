@@ -1,0 +1,13 @@
+-- 067: image duplicate cron ignored a re-upload into an already-logged row.
+--
+-- auto_reject_exact_duplicate_images skipped any submission already present in
+-- duplicate_rejection_log. But submitTaskImage UPDATES a rejected row in place,
+-- so the row keeps its id -- a member could re-upload THE SAME FILE into that
+-- same row and the cron would never look at it again.
+--
+-- Observed 22 Aug: rejected 11:08, member re-uploaded the identical 5,198-byte
+-- file at 13:04, and 14 consecutive cron runs passed it over.
+--
+-- The video version (064) already used ON CONFLICT DO UPDATE. This brings the
+-- image version in line. Applied to DB; caught the outstanding pair on the
+-- first run after the fix.
