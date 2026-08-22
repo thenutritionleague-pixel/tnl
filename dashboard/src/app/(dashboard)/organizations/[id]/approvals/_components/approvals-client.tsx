@@ -185,7 +185,15 @@ function SubmissionHistory({ submissions }: { submissions?: PreviousSubmission[]
   const [expanded, setExpanded] = useState(false)
   const [viewingProof, setViewingProof] = useState<string | null>(null)
 
-  if (!submissions || submissions.length === 0) return null
+  // Render even when empty. Showing nothing is indistinguishable from "the
+  // panel is broken again", which is what an admin reasonably assumed when the
+  // compare panel silently stopped appearing. Say plainly that it looked and
+  // found none.
+  if (!submissions || submissions.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">Previous attempts: none for this task.</p>
+    )
+  }
 
   return (
     <div className="space-y-2">
@@ -1104,7 +1112,14 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                 {/* A duplicate flag is only actionable if the admin can SEE the
                     other photo. Without this the message named no submission, so
                     18 flags on 20 Aug could only be trusted or ignored. */}
-                {/duplicate|similar to a previous submission|identical image fingerprint/i.test(reviewTarget.aiFeedback ?? '') && (
+                {/* Matching on the AI's WORDING is fragile: v68 reworded the video
+                    duplicate message to "looks like the one you submitted" and this
+                    panel silently stopped rendering, so an admin was told a repeat
+                    existed and shown nothing to check it against -- the exact
+                    problem this panel was built to fix. Every phrasing the system
+                    can produce is listed here, and the list is the thing to update
+                    if the copy changes again. */}
+                {/duplicate|similar to a previous submission|identical image fingerprint|looks like the one you submitted|already submitted by another member|same (image|video) file/i.test(reviewTarget.aiFeedback ?? '') && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2.5 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
