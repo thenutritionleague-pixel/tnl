@@ -121,6 +121,38 @@ being survivable and not.**
 posts any row with `resolved_at IS NULL` to email or WhatsApp. A monitor nobody
 reads is a monitor that does not exist.
 
+### 7. Testing for display bugs — *currently zero coverage*
+
+**Effort:** ~4 hours for the logic tests · **Risk:** low, but needs an app release
+
+Every backend item above ignores the member app's screen. The only test that
+exists is `mobile/test/widget_test.dart`, the default Flutter template, which
+pumps the app and asserts nothing. There are no dashboard tests either.
+
+Flutter web renders through CanvasKit — it paints to a canvas with no DOM — so
+Playwright and browser automation cannot read the screen at all. Every display
+bug so far was found by a member or the client looking at their phone.
+
+The useful realisation: **these were not pixel bugs.** Tied teams numbered
+1-2-3-4-5, and a leaderboard showing "+100" and "−100" instead of netting to
+zero, are *arithmetic* bugs that happen to be visible. They need ordinary unit
+tests, not screenshots. The obstacle is where the logic lives:
+
+- netting sits in `leaderboard_service.dart` — testable today
+- `_denseRankFor` is a private method inside `home_screen.dart` — a widget file,
+  untestable without extracting it first
+
+So: pull the pure display calculations — rank, netting, the `(status, ai_status)`
+→ chip mapping — into `mobile/lib/core/display/` and unit-test them. That alone
+would have caught two of the five display bugs outright.
+
+Genuine visual regressions (layout, overflow, colour) need Flutter **golden
+tests**, which is a larger separate job — do it only after the logic is extracted.
+
+**Do not start this mid-event.** It touches the member app and needs a Flutter
+build plus a Netlify deploy of the submit path, which is the exact route that
+produced the "submitted but missing" failures.
+
 ---
 
 ## Smaller items carried over from 21–22 Aug
@@ -150,6 +182,10 @@ These are pure additions. Nothing they touch can break production.
 **Week 2:** items 4, 5, 6 — the refactor, the kill switch, alerting. Item 4 is
 the only one that touches live logic, and by then it has staging and tests
 protecting it.
+
+**Week 3:** item 7 — extracting and testing the display logic. It goes last
+because it is the only item requiring a member-app release, so it wants the
+kill switch (item 5) already in place behind it.
 
 **Do not start any of this during an event.** Every failure on 21 Aug came from
 changing a running system under time pressure.
