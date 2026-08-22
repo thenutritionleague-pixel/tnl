@@ -1,0 +1,21 @@
+-- 065: stop the look-alike list reporting screenshots that merely share a UI.
+--
+-- A step-tracker screenshot is mostly app chrome: same header, same Day/Week/
+-- Month pills, same axis. dHash compares adjacent-pixel brightness, so the
+-- chrome dominates and two screenshots from the same app collide on an
+-- IDENTICAL hash while showing completely different step counts.
+--
+-- Measured 22 Aug: 105 of 108 groups (250 rows) contained no two files that
+-- were actually the same. Every one was an admin being asked whether four
+-- different screenshots are duplicates. Worse than useless -- it trains people
+-- to dismiss the list, which is how a real one gets missed.
+--
+-- A group is now shown only when two submissions that BOTH still stand share
+-- the same actual file, tested on storage's eTag (its MD5 of the content).
+-- Counting rejected rows kept resolved groups on screen forever.
+--
+-- Result: 108 groups -> 0. Real duplicates are surfaced by
+-- get_reused_image_groups and get_video_duplicate_groups, with proof attached.
+-- Looking similar is not evidence; being the same file is.
+--
+-- Applied to DB.
