@@ -846,21 +846,27 @@ Deno.serve(async (req: Request) => {
                 { id: string; user_id: string; submitted_date: string; tasks?: { title?: string } } | undefined
 
               if (prior) {
+                // A THUMBNAIL match is a candidate, not a verdict.
+                //
+                // Bunny takes the thumbnail from a fixed frame, so a member who
+                // films in the same room from the same spot produces the same
+                // opening frame every day -- even when the recording is
+                // genuinely new. Rejecting on that alone wrongly penalised three
+                // members on 22 Aug, one of whom had three provably different
+                // files across three days. His team said so and they were right.
+                //
+                // Identity is the FULL-FILE hash, which is not available here
+                // without downloading the whole video. So hand it to a human:
+                // the Duplicates page plays both videos side by side and states
+                // whether the full files match.
                 const priorTask = prior.tasks?.title ? ` for "${prior.tasks.title}"` : ''
                 const msg = prior.user_id === sub.user_id
-                  ? `Duplicate video: this is the same video file you already submitted on ${prior.submitted_date}${priorTask}. Each entry needs its own new recording.`
-                  : `Duplicate video: this exact video file was already submitted by another member on ${prior.submitted_date}${priorTask}. Each entry needs its own new recording.`
+                  ? `This video looks like the one you submitted on ${prior.submitted_date}${priorTask} — please confirm.`
+                  : `This video looks like one already submitted by another member on ${prior.submitted_date}${priorTask} — please confirm.`
                 await supabase.from('task_submissions').update({
-                  ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
-                  status: 'rejected', rejection_reason: msg, reviewed_at: new Date().toISOString(),
+                  ai_status: 'needs_review', ai_feedback: msg, ai_confidence: 0.9,
                 }).eq('id', submissionId).eq('status', 'pending')
-                await supabase.from('feed_items').insert({
-                  org_id: orgId, type: 'submission_rejected',
-                  title: `Your ${taskTitle} submission was not approved`,
-                  content: msg, is_auto_generated: true, author_id: sub.user_id,
-                  challenge_id: sub.challenge_id ?? null,
-                })
-                return new Response(JSON.stringify({ aiStatus: 'rejected', reason: 'duplicate_video' }), { status: 200 })
+                return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'possible_duplicate_video' }), { status: 200 })
               }
             }
           }

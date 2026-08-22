@@ -1,0 +1,21 @@
+-- 069: the video duplicate cron rejected on a THUMBNAIL match alone.
+--
+-- video_fingerprint is the SHA of Bunny's thumbnail, taken from a fixed frame.
+-- A member who films in the same room from the same spot produces an identical
+-- opening frame every day, even when the recording is genuinely new. That is a
+-- resemblance, not an identity.
+--
+-- The manual sweep required the FULL-FILE SHA to match and deliberately excluded
+-- three thumbnail-only groups. The cron was written afterwards and did not carry
+-- that rule across, so it wrongly rejected three members:
+--   Balaji Nagarajan  a4c8043a vs 892b9623  (2,882,270 vs 2,882,558 bytes)
+--   Ankit Maheshwari  9264c773 vs 12f84cb9
+--   Aayush Gadia      c5f5f96a vs 3e51433d
+--
+-- His team reported it -- 'he has 3 different videos uploaded for the past 3
+-- days' -- and they were right. All three restored.
+--
+-- Now requires ONE distinct full-file SHA across the group. A thumbnail-only
+-- match goes to the Duplicates page, which plays both videos side by side.
+-- The edge function (v68) does the same: it routes to needs_review instead of
+-- rejecting, since the full-file hash is not available at that point.
