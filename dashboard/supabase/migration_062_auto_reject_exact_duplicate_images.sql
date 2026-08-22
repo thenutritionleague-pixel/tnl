@@ -1,0 +1,27 @@
+-- 062: reject re-uploaded photos automatically, as they arrive.
+--
+-- The 22 Aug sweep was retrospective and manual. At 1,100 members no admin can
+-- eyeball this: 8,620 image submissions produced 49 re-use groups, and the
+-- look-alike list could not see most of them because a Steps screenshot is too
+-- flat to fingerprint (911 of 3,762 had no protection at all).
+--
+-- Storage records an eTag -- the MD5 of the file -- so exact re-use is decidable
+-- in SQL, with no downloads and no AI. Identical checksum AND identical byte
+-- size is the same file; there is no false-positive case, so this can safely
+-- act rather than merely flag.
+--
+-- SAFETY: active, non-closed challenges ONLY. Kanpur and Gurugram are finished
+-- events with published winners and 193 duplicate groups between them. This
+-- must never move a result that has already been announced.
+--
+-- The EARLIEST submission by exact timestamp is kept and paid. Ordering by date
+-- alone would choose arbitrarily between two submitted on the same day.
+--
+-- Scheduled: cron job 27, every 10 minutes.
+--   select cron.schedule('auto-reject-duplicate-images','*/10 * * * *',
+--     'select public.auto_reject_exact_duplicate_images()');
+--
+-- NOTE: videos are NOT covered here. Their fingerprint is the Bunny thumbnail,
+-- which needs an HTTP fetch that SQL cannot do -- run scripts/video-duplicates.mjs
+-- for those until it moves into the edge function.
+-- (function body applied via migration 062; see database)
