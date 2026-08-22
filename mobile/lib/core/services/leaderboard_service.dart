@@ -179,7 +179,7 @@ class LeaderboardService {
       _client.from('challenges').select('start_date').eq('id', challengeId).single(),
       _client
           .from('points_transactions')
-          .select('amount, reason, is_manual, created_at, transaction_date, submission_id, task_submissions(submitted_date, tasks(title, icon, points))')
+          .select('amount, reason, is_manual, created_at, transaction_date, submission_id, task_submissions(submitted_date, status, rejection_reason, tasks(title, icon, points))')
           .eq('user_id', userId)
           .order('created_at', ascending: true),
     ]);
@@ -288,12 +288,30 @@ class LeaderboardService {
         final subId = t['submission_id'] as String?;
         final net = subId != null ? (netBySubmission[subId] ?? amount) : amount;
 
-        // Already drawn this submission, or it nets to nothing because the
-        // approval was revoked and never restored.
+        // ONE line per submission, showing how it ENDED.
+        //
+        // A rejected task leaves +200 and -200 in the ledger. Hiding the pair
+        // made the task vanish from the member's history entirely, so someone
+        // whose duplicate was removed simply could not see what happened to it.
+        // Showing the outcome instead answers the only question they have.
         if (subId != null) {
           if (renderedSubmissions.contains(subId)) continue;
           renderedSubmissions.add(subId);
-          if (net == 0) continue;
+        }
+
+        final subStatus = sub?['status'] as String? ?? 'approved';
+        if (subStatus == 'rejected' || (net == 0 && subId != null)) {
+          final subDateR = sub?['submitted_date'] as String? ?? '';
+          grouped.putIfAbsent(weekFor(subDateR.isNotEmpty ? subDateR : createdAt), () => [])
+              .add({
+            'title': task?['title'] as String? ?? 'Task',
+            'icon': task?['icon'] as String? ?? '📋',
+            'date': fmtDate(subDateR.isNotEmpty ? subDateR : createdAt),
+            'status': 'rejected',
+            'points': 0,
+            'admin_hint': (sub?['rejection_reason'] as String?)?.trim(),
+          });
+          continue;
         }
 
         final subDate = sub?['submitted_date'] as String? ?? '';
