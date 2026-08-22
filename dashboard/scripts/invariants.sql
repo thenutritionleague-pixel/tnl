@@ -256,5 +256,29 @@ from (
 join profiles p on p.id = x.user_id
 where x.missed_date < greatest(p.created_at::date, x.first_team_join);
 
+\echo '== 17. The winner report must agree with the leaderboard =='
+-- Found 22 Aug 2026 by running check A of the integrity checklist.
+-- get_challenge_report_stats summed task submissions only -- it never read
+-- team_transactions, where every team-task and bonus point lives. 102 of 116
+-- teams showed a different total and 39 were ranked differently, on the page
+-- that draws the GOLD/SILVER/BRONZE podium.
+--
+-- The report now reads team_points_view directly rather than re-deriving the
+-- rule, so this check should be structurally impossible to fail. It exists
+-- because that was also true of the last two copies before they drifted.
+select 'report disagrees with leaderboard' as problem,
+       o.name as org, r.team_name, r.report_points, v.total_points as leaderboard_points,
+       r.report_points - v.total_points as drift
+from challenges c
+join organizations o on o.id = c.org_id
+cross join lateral (
+  select (x->>'teamName')::text  as team_name,
+         (x->>'teamPoints')::bigint as report_points,
+         (x->>'teamId')::uuid    as team_id
+  from jsonb_array_elements(get_challenge_report_stats(c.id) -> 'teams') x
+) r
+join team_points_view v on v.team_id = r.team_id and v.challenge_id = c.id
+where r.report_points <> v.total_points;
+
 \echo ''
 \echo 'No rows above = healthy.'
