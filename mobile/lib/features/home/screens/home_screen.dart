@@ -89,6 +89,15 @@ class _HomeScreenState extends State<HomeScreen>
 
       final tasks = orgId != null ? await TaskService.getActiveTasks(orgId, teamId) : <Map<String, dynamic>>[];
       final submissions = orgId != null ? await TaskService.getUserSubmissions(profile['id'], orgId) : <Map<String, dynamic>>[];
+      // A team task is done ONCE for the whole squad and stays done for the rest
+      // of the task's window. Home used to look only at the member's own
+      // submissions for TODAY, so a Squad Drop a teammate (or the member) posted
+      // yesterday read as outstanding the next day -- and dragged "Today Done"
+      // to 83% for someone who had finished everything. tasks_screen has had
+      // this since 58f4042; Home never got it.
+      final teamSubmissions = (orgId != null && teamId != null)
+          ? await TaskService.getTeamSubmissions(teamId, orgId)
+          : <Map<String, dynamic>>[];
 
       if (mounted) {
         final org = firstIfList(profile['organizations']);
@@ -111,6 +120,16 @@ class _HomeScreenState extends State<HomeScreen>
             sorted.first['status'] as String?,
             sorted.first['ai_status'] as String?,
           );
+        }
+        // Team tasks, filled in from the squad's entries on ANY day of the
+        // task's window. Only where the member has nothing of their own today,
+        // so a member's own verdict always wins over a teammate's.
+        for (final t in tasks) {
+          if (t['submission_scope'] != 'team') continue;
+          final tid = t['id'] as String?;
+          if (tid == null || statusCache.containsKey(tid)) continue;
+          final done = teamSubmissions.any((s) => s['task_id'] == tid);
+          if (done) statusCache[tid] = SubmissionState.doneByTeammate;
         }
         // Precompute progress and week label using org timezone today
         double progress = 0.0;
