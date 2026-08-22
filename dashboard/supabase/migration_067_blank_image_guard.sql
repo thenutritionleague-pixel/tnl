@@ -1,0 +1,14 @@
+-- 067 (edge function v67): reject blank photos at submit time.
+--
+-- Eight all-black images had been auto-approved at 0.95 confidence for 200
+-- points each -- one member submitting a black frame EVERY day of the league.
+-- The image prompt is deliberately lenient ("if you cannot read the number,
+-- approve anyway"), which is right for a blurry photo and wrong for one with
+-- no content at all.
+--
+-- The guard is the dHash bit count, already computed before storage: a uniform
+-- image sets no bits. Rejects outright rather than queueing -- there is nothing
+-- for a human to weigh up and the member can simply upload a real screenshot.
+-- Two bits of slack keeps a legitimately dark screenshot safe.
+--
+-- Lives in supabase/functions/analyze-submission/index.ts (deployed v67).

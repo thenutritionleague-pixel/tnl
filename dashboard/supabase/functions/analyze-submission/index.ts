@@ -899,6 +899,42 @@ Deno.serve(async (req: Request) => {
       let crossTaskMinDist = 999
       let crossTaskTitle: string | null = null
       const myHash = await computeDHash(bytes)
+
+      // A BLANK photo is not proof of anything.
+      //
+      // dHash compares adjacent-pixel brightness, so a uniform image -- a fully
+      // black screenshot, a lens-cap shot -- sets no bits at all. Found 22 Aug:
+      // eight all-black images had been auto-approved for 200 points each, one
+      // member submitting a black frame EVERY day of the league. The image
+      // prompt is deliberately lenient ("if you cannot read the number, approve
+      // anyway"), so a picture with no content sails through -- and the AI
+      // reported 0.95 confidence, having read a number that was not there.
+      //
+      // Rejecting outright rather than queueing: there is nothing for a human
+      // to weigh up, and the member can simply upload a real screenshot. Two
+      // bits of slack keeps a legitimately dark screenshot safe -- a dark-mode
+      // step screen still has text and bars, so it sets many bits.
+      if (myHash) {
+        const bitsSet = myHash.split('').reduce(
+          (n, ch) => n + (parseInt(ch, 16).toString(2).match(/1/g)?.length ?? 0), 0)
+        if (bitsSet <= 2) {
+          const msg = 'This photo appears to be blank — no step count or content is visible. '
+            + 'Please upload a clear screenshot for this day.'
+          await supabase.from('task_submissions').update({
+            ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
+            status: 'rejected', rejection_reason: msg,
+            reviewed_at: new Date().toISOString(),
+          }).eq('id', submissionId).eq('status', 'pending')
+          await supabase.from('feed_items').insert({
+            org_id: orgId, type: 'submission_rejected',
+            title: `Your ${taskTitle} submission was not approved`,
+            content: msg, is_auto_generated: true, author_id: sub.user_id,
+            challenge_id: sub.challenge_id ?? null,
+          })
+          return new Response(JSON.stringify({ aiStatus: 'rejected', reason: 'blank_image' }), { status: 200 })
+        }
+      }
+
       if (myHash) {
         // Compare against the member's recent approved proofs in THIS org (not
         // just this task) so the same photo reused for a DIFFERENT task is

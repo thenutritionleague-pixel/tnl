@@ -1,0 +1,17 @@
+-- 068: never recover an orphan proof into an org that does not own the challenge.
+--
+-- recover_orphan_submissions took the challenge from the TASK but the org_id
+-- from the member's CURRENT profile, and never checked the two agreed.
+--
+-- Observed 22 Aug. A member was swapped out of National at 13:53: submissions
+-- deleted, profile moved back to the Gurugram event he played in July. His
+-- proof FILES stayed in storage, so at 14:00 this cron found five orphans,
+-- re-created them, and stamped them with his new org -- putting National work
+-- inside a finished event and awarding 500 points there. The AI approved all
+-- five within 19 seconds. The integrity monitor caught it 15 minutes later.
+--
+-- Gurugram's published total never moved (team_points_view drops a submission
+-- whose challenge is not the team's), so no announced result was affected.
+--
+-- One predicate fixes the class: only recover into the org that owns the
+-- challenge. Applied to DB; verified it now recovers 0 for that member.
