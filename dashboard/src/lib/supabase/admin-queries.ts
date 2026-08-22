@@ -1613,3 +1613,115 @@ export async function signProofUrls(paths: string[]): Promise<Record<string, str
   }))
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Video duplicates
+// ---------------------------------------------------------------------------
+
+export type VideoDuplicateEntry = {
+  submissionId: string
+  member: string
+  memberId: string
+  memberEmail: string | null
+  team: string
+  taskTitle: string
+  submittedDate: string
+  status: string
+  pointsAwarded: number | null
+  proofUrl: string | null
+  /** Bunny GUID, for building a playable URL. */
+  guid: string | null
+  /** SHA-256 of the MP4. Present once the scanner has proved the group. */
+  fileSha: string | null
+  fileBytes: number | null
+  seconds: number | null
+}
+
+export type VideoDuplicateGroup = {
+  fingerprint: string
+  /** Which rule was broken. Shared-between-members is the serious one. */
+  kind: 'shared_across_members' | 'same_member_different_tasks' | 'same_member_different_days'
+  approvedPoints: number
+  /**
+   * True when every entry carries the same full-file SHA-256 -- proof of a
+   * re-upload rather than a lookalike. The thumbnail match that groups them is
+   * only a cheap first pass; this is what an admin can defend to a member.
+   */
+  provenIdentical: boolean
+  reviewVerdict: 'safe' | 'confirmed' | null
+  reviewNote: string | null
+  reviewedEmail: string | null
+  reviewedAt: string | null
+  entries: VideoDuplicateEntry[]
+}
+
+/**
+ * Members who submitted the same video more than once.
+ *
+ * Videos had no duplicate detection at all until 22 Aug 2026 -- proof_hash was
+ * null for every one of them -- so the same clip could be submitted daily and
+ * each was judged as new. Grouping is by the Bunny thumbnail SHA, which Bunny
+ * renders from a fixed frame, so an identical source file gives identical bytes.
+ *
+ * Exact matches only. A re-encode, a trim or a re-record produces a different
+ * fingerprint and will not appear here, so treat the list as a floor.
+ */
+export async function getVideoDuplicateGroups(orgId: string): Promise<VideoDuplicateGroup[]> {
+  const client = await createAdminClient()
+  const { data, error } = await client.rpc('get_video_duplicate_groups', { p_org_id: orgId })
+  if (error || !data) return []
+
+  type Row = {
+    fingerprint: string; group_kind: VideoDuplicateGroup['kind']
+    approved_points: number
+    submission_id: string; user_id: string; member_name: string; member_email: string | null
+    team_name: string; task_title: string; submitted_date: string; status: string
+    points_awarded: number | null; proof_url: string | null
+    video_file_sha: string | null; video_bytes: number | null; video_seconds: number | null
+    review_verdict: 'safe' | 'confirmed' | null; review_note: string | null
+    reviewed_email: string | null; reviewed_at: string | null
+  }
+
+  const buckets = new Map<string, Row[]>()
+  for (const r of data as Row[]) {
+    const list = buckets.get(r.fingerprint)
+    if (list) list.push(r); else buckets.set(r.fingerprint, [r])
+  }
+
+  const groups: VideoDuplicateGroup[] = [...buckets.entries()].map(([fingerprint, rows]) => {
+    const entries: VideoDuplicateEntry[] = rows.map(r => ({
+      submissionId: r.submission_id,
+      member: r.member_name,
+      memberId: r.user_id,
+      memberEmail: r.member_email,
+      team: r.team_name,
+      taskTitle: r.task_title,
+      submittedDate: r.submitted_date,
+      status: r.status,
+      pointsAwarded: r.points_awarded,
+      proofUrl: r.proof_url,
+      guid: r.proof_url?.startsWith('bunny://') ? r.proof_url.slice('bunny://'.length) : null,
+      fileSha: r.video_file_sha,
+      fileBytes: r.video_bytes == null ? null : Number(r.video_bytes),
+      seconds: r.video_seconds == null ? null : Number(r.video_seconds),
+    }))
+    const shas = entries.map(e => e.fileSha).filter((s): s is string => !!s)
+    return {
+      fingerprint,
+      kind: rows[0].group_kind,
+      approvedPoints: Number(rows[0].approved_points ?? 0),
+      provenIdentical: shas.length === entries.length && new Set(shas).size === 1,
+      reviewVerdict: rows[0].review_verdict ?? null,
+      reviewNote: rows[0].review_note ?? null,
+      reviewedEmail: rows[0].reviewed_email ?? null,
+      reviewedAt: rows[0].reviewed_at ?? null,
+      entries,
+    }
+  })
+
+  const rank = { shared_across_members: 0, same_member_different_tasks: 1, same_member_different_days: 2 }
+  return groups.sort((a, b) =>
+    rank[a.kind] - rank[b.kind] ||
+    b.approvedPoints - a.approvedPoints ||
+    b.entries.length - a.entries.length)
+}

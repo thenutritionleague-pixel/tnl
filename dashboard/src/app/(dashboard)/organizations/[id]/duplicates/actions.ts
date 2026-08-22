@@ -105,3 +105,141 @@ export async function clearDuplicateReview(orgId: string, proofHash: string, tas
   revalidatePath(`/organizations/${orgId}/duplicates`)
   return { success: true }
 }
+
+// ---------------------------------------------------------------------------
+// Video duplicates
+// ---------------------------------------------------------------------------
+
+const fmtBytes = (n: number) => n.toLocaleString('en-IN')
+
+/**
+ * Reject one submission from a video duplicate group, with the evidence baked
+ * into the reason the member will read.
+ *
+ * The evidence is assembled HERE, from the database, not passed in from the
+ * browser. A member losing points is entitled to a reason that is checkable and
+ * that nobody could have edited on the way through, and the admin should not
+ * have to retype a SHA-256 by hand.
+ *
+ * The wording states what was found, not what the member intended. "This is the
+ * same file as X" is defensible; "you cheated" is a conclusion an admin may
+ * reach but the system should not assert on their behalf.
+ */
+export async function rejectVideoDuplicate(
+  orgId: string,
+  submissionId: string,
+  adminNote?: string,
+) {
+  const profile = await getAdminProfile()
+  if (!profile) return { error: 'Unauthorized.' }
+  const blocked = readOnlyBlock(profile)
+  if (blocked) return { error: blocked.error }
+
+  const client = await createAdminClient()
+
+  const { data: me, error: meErr } = await client
+    .from('task_submissions')
+    .select('id, org_id, status, video_fingerprint, video_file_sha, video_bytes, video_seconds, submitted_date')
+    .eq('id', submissionId).eq('org_id', orgId).maybeSingle()
+  if (meErr) return { error: meErr.message }
+  if (!me) return { error: 'Submission not found.' }
+  if (me.status === 'rejected') return { error: 'Already rejected.' }
+  if (!me.video_fingerprint) return { error: 'This submission has no video fingerprint.' }
+
+  // The other submissions sharing this exact video, for the reason text.
+  const { data: siblings } = await client
+    .from('task_submissions')
+    .select('id, submitted_date, video_file_sha, tasks(title)')
+    .eq('org_id', orgId)
+    .eq('video_fingerprint', me.video_fingerprint)
+    .neq('id', submissionId)
+
+  const others = (siblings ?? []) as unknown as
+    { id: string; submitted_date: string; video_file_sha: string | null; tasks: { title: string } | null }[]
+
+  // Only claim "identical file" when the full-file hashes actually agree. A
+  // shared thumbnail alone means "looks like" -- saying more than the evidence
+  // supports is how a correct decision becomes an indefensible one.
+  const proven = !!me.video_file_sha && others.some(o => o.video_file_sha === me.video_file_sha)
+  const earlier = others
+    .filter(o => o.submitted_date <= me.submitted_date)
+    .sort((a, b) => a.submitted_date.localeCompare(b.submitted_date))[0] ?? others[0]
+
+  const where = earlier
+    ? `already submitted on ${earlier.submitted_date}${earlier.tasks?.title ? ` for "${earlier.tasks.title}"` : ''}`
+    : 'already submitted for another entry'
+
+  const facts = [
+    me.video_seconds != null ? `${me.video_seconds}s` : null,
+    me.video_bytes != null ? `${fmtBytes(me.video_bytes)} bytes` : null,
+    me.video_file_sha ? `SHA-256 ${me.video_file_sha.slice(0, 16)}…` : null,
+  ].filter(Boolean).join(', ')
+
+  const reason = [
+    proven
+      ? `Duplicate video: this is the same video file you ${where}.`
+      : `Duplicate video: this appears to be the same video you ${where}.`,
+    facts ? `(${facts})` : null,
+    'Each entry needs its own new recording.',
+    adminNote?.trim() || null,
+  ].filter(Boolean).join(' ')
+
+  const { error } = await client
+    .from('task_submissions')
+    .update({
+      status: 'rejected',
+      rejection_reason: reason,
+      reviewed_at: new Date().toISOString(),
+      // Must mirror the approvals path: retry_pending_bunny_submissions selects
+      // on a null ai_status, so nulling it makes the cron re-fire the AI and
+      // silently re-approve what an admin just rejected.
+      ai_status: 'rejected',
+      ai_feedback: null,
+      ai_confidence: null,
+    })
+    .eq('id', submissionId).eq('org_id', orgId)
+
+  if (error) return { error: error.message }
+
+  revalidatePath(`/organizations/${orgId}/duplicates`)
+  revalidatePath(`/organizations/${orgId}/approvals`)
+  return { success: true, reason }
+}
+
+/**
+ * Signed playback URLs for a video group, fetched when the admin opens it.
+ *
+ * Token Authentication is on for the Bunny library, so an unsigned URL will not
+ * play. Mirrors the signing in the approvals actions rather than importing it,
+ * because that module pulls in the whole approvals surface for one helper.
+ */
+export async function getVideoPlaybackUrls(guids: string[]): Promise<Record<string, string>> {
+  const profile = await getAdminProfile()
+  if (!profile) return {}
+
+  const host = process.env.BUNNY_CDN_HOSTNAME || 'vz-c97d7e4d-363.b-cdn.net'
+  const key  = process.env.BUNNY_TOKEN_AUTH_KEY || ''
+
+  const sign = (path: string, ttl = 1800) => {
+    const url = `https://${host}${path}`
+    if (!key) return url
+    const expires = Math.floor(Date.now() / 1000) + ttl
+    const token = createHash('md5').update(key + path + String(expires)).digest('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    return `${url}?token=${token}&expires=${expires}`
+  }
+
+  const out: Record<string, string> = {}
+  await Promise.all([...new Set(guids)].map(async guid => {
+    // Bunny only generates renditions that fit the source, so try smallest-up
+    // rather than assuming one exists.
+    for (const r of ['480p', '360p', '240p', '720p']) {
+      const url = sign(`/${guid}/play_${r}.mp4`)
+      try {
+        const res = await fetch(url, { method: 'HEAD' })
+        if (res.ok) { out[guid] = url; return }
+      } catch { /* try next */ }
+    }
+  }))
+  return out
+}

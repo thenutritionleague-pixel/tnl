@@ -20,6 +20,14 @@
  *
  *   cd dashboard && node scripts/video-duplicates.mjs
  *   node scripts/video-duplicates.mjs --org <uuid> --json
+ *   node scripts/video-duplicates.mjs --write     # persist for the Duplicates page
+ *
+ * --write stores the thumbnail fingerprint on every video, then for the ones
+ * that actually landed in a duplicate group it downloads the MP4 and records
+ * the full-file SHA-256, byte size and duration. That second pass is the
+ * evidence an admin shows a member whose points are revoked: "identical file,
+ * same 3,110,336 bytes, same SHA" is checkable, "our system flagged it" is not.
+ * It runs only over flagged rows, so it is ~140 downloads and not 3,222.
  */
 
 import fs from 'node:fs'
@@ -44,6 +52,7 @@ const argVal   = n => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] :
 const JSON_OUT = args.includes('--json')
 const MAX_GROUP = Number(argVal('--max-group') ?? 25)
 const CONC      = Number(argVal('--concurrency') ?? 16)
+const WRITE     = args.includes('--write')
 
 function sign(p, ttl = 7200) {
   if (!TOKEN) return `https://${HOST}${p}`
@@ -102,6 +111,32 @@ const tasks    = await all(`tasks?select=id,title`)
 const pName = Object.fromEntries(profiles.map(p => [p.id, p.name]))
 const pMail = Object.fromEntries(profiles.map(p => [p.id, p.email]))
 const tName = Object.fromEntries(tasks.map(t => [t.id, t.title]))
+
+// ---------- duration, read from the mp4 header ----------
+function findMvhd(buf) {
+  for (let i = 0; i < buf.length - 32; i++) {
+    if (buf[i] === 0x6d && buf[i + 1] === 0x76 && buf[i + 2] === 0x68 && buf[i + 3] === 0x64) {
+      const ver = buf[i + 4]
+      if (ver === 0) {
+        const ts = buf.readUInt32BE(i + 16), du = buf.readUInt32BE(i + 20)
+        if (ts > 0) return du / ts
+      } else if (ver === 1) {
+        const ts = buf.readUInt32BE(i + 24), du = Number(buf.readBigUInt64BE(i + 28))
+        if (ts > 0) return du / ts
+      }
+    }
+  }
+  return null
+}
+
+async function patch(id, body) {
+  const res = await fetch(`${URL_}/rest/v1/task_submissions?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: { ...H_, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`PATCH ${id}: ${res.status} ${await res.text()}`)
+}
 
 // ---------- fingerprint ----------
 async function fingerprint(sub) {
@@ -164,6 +199,51 @@ const groups = [...byHash.entries()]
     }
   })
   .sort((a, b) => b.approvedPoints - a.approvedPoints || b.count - a.count)
+
+// ---------- persist ----------
+if (WRITE) {
+  const real0 = groups.filter(g => !g.placeholder)
+  const flagged = new Set(real0.flatMap(g => g.rows.map(r => r.guid)))
+
+  // Every scanned video gets its fingerprint, so the Duplicates page and any
+  // future submission can be compared without re-downloading anything.
+  let wrote = 0, failedWrites = 0
+  let wi = 0
+  await Promise.all(Array.from({ length: CONC }, async () => {
+    while (wi < done.length) {
+      const d = done[wi++]
+      if (!d.hash) continue
+      try { await patch(d.id, { video_fingerprint: d.hash }); wrote++ }
+      catch (e) { failedWrites++; if (failedWrites < 4) console.error('  ' + e.message) }
+    }
+  }))
+  console.error(`Stored ${wrote} fingerprints (${failedWrites} failed).`)
+
+  // Hard evidence, only for videos already in a group.
+  const toProve = done.filter(d => d.hash && flagged.has(d.guid))
+  let proved = 0, pi = 0
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    while (pi < toProve.length) {
+      const d = toProve[pi++]
+      for (const r of ['240p', '360p', '480p', '720p']) {
+        try {
+          const res = await fetch(sign(`/${d.guid}/play_${r}.mp4`))
+          if (!res.ok) continue
+          const buf = Buffer.from(await res.arrayBuffer())
+          const dur = findMvhd(buf)
+          await patch(d.id, {
+            video_file_sha: crypto.createHash('sha256').update(buf).digest('hex'),
+            video_bytes: buf.length,
+            video_seconds: dur ? Math.round(dur * 10) / 10 : null,
+          })
+          proved++
+          break
+        } catch { /* try next rendition */ }
+      }
+    }
+  }))
+  console.error(`Stored full-file evidence for ${proved}/${toProve.length} flagged videos.`)
+}
 
 const real = groups.filter(g => !g.placeholder)
 const suspectedPlaceholder = groups.filter(g => g.placeholder)
