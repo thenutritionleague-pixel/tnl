@@ -72,13 +72,27 @@ export async function approveSubmission(
   // Fetch submission details for feed item
   const { data: subDetails } = await client
     .from('task_submissions')
-    .select('user_id, challenge_id, tasks(title, points), profiles:user_id(name)')
+    .select('user_id, challenge_id, selected_tier_index, tasks(title, points, points_tiers), profiles:user_id(name)')
     .eq('id', submissionId)
     .single()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sd = subDetails as any
-  const finalPoints = pointsOverride ?? sd?.tasks?.points ?? 0
+  // Fall back to the CLAIMED TIER, not the task's base points.
+  //
+  // A tiered task carries a nominal `points` that is not what anyone earns --
+  // Broccoli Burpee Bash is points = 10 with tiers of 100 and 200. The review
+  // modal already tells the admin "Default: 200 pts (claimed tier)", but the
+  // default here was tasks.points, so leaving the override blank would have
+  // awarded 10 instead of 200 and quietly underpaid the member.
+  //
+  // Never fired: all 48 admin approvals of a tiered submission so far happened
+  // to have an override typed. Found by audit before it did.
+  const tierPoints: number | null =
+    sd?.selected_tier_index != null
+      ? (sd?.tasks?.points_tiers?.[sd.selected_tier_index]?.points ?? null)
+      : null
+  const finalPoints = pointsOverride ?? tierPoints ?? sd?.tasks?.points ?? 0
   const taskTitle: string = sd?.tasks?.title ?? 'a task'
   const memberName: string = sd?.profiles?.name ?? 'A member'
   const memberId: string | null = sd?.user_id ?? null
