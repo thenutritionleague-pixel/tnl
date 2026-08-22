@@ -1,0 +1,26 @@
+-- 066: guarantee task_snapshot carries the fields the submit screen needs.
+--
+-- task_snapshot is a frozen display copy of the task. Task History rebuilds the
+-- submission screen from it, and task_submission_screen reads:
+--     (_taskData['proof_type'] as String?) ?? 'image'
+--     (_taskData['max_video_seconds'] as int?) ?? 90
+-- so a snapshot without proof_type turned a VIDEO task into a photo upload and
+-- refused the member's file: "Only photos are accepted. Got mp4".
+--
+-- This copy has now lost a field its consumer needs THREE times: challenge_id,
+-- then id (fixed 259a513), now proof_type. The mobile fix is committed but the
+-- app binary is unchanged until a Flutter build ships -- and 33 fresh snapshots
+-- arrived without proof_type within 20 minutes of the first backfill.
+--
+-- So the guarantee lives in the database, where no app version can bypass it.
+-- Additive only: a value the app did send is never overwritten.
+--
+-- Also fixed the other half: getPastSubmissions' fallback join
+--   tasks!task_id(id, title, description, icon, points, points_tiers)
+-- does not select proof_type either, so a submission with NO snapshot (7 of
+-- them, all rejected) was broken too. The trigger now writes a minimal snapshot
+-- in that case.
+--
+-- Applied to DB. Backfilled 21,220 rows; verified all 3,682 video and 17,538
+-- image submissions carry the correct value, and the trigger refills a stripped
+-- field on write.
