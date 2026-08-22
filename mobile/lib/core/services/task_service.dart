@@ -735,6 +735,16 @@ class TaskService {
       'week_number':  task['week_number'],
       'points_tiers': tiers,
       'selected_tier': selectedTier,
+      // Resubmitting from Task History rebuilds the screen from THIS snapshot,
+      // and task_submission_screen falls back to 'image' when proof_type is
+      // absent -- so a video task offered the photo picker and refused the
+      // member's mp4 with "Only photos are accepted". Reported live on 22 Aug,
+      // after 70 duplicate videos were rejected and pushed dozens of members
+      // down the History resubmit path for the first time.
+      // The existing 12,240 snapshots were backfilled in the database.
+      'proof_type':        task['proof_type'],
+      'max_video_seconds': task['max_video_seconds'],
+      'min_video_seconds': task['min_video_seconds'],
     };
   }
 
