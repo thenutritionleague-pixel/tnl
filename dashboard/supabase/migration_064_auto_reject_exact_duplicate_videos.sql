@@ -1,0 +1,8 @@
+-- 064: SQL-side video duplicate rejection, mirroring 062 for images.
+-- v66 stores video_fingerprint for every video, so this is now decidable in
+-- SQL. Covers the two gaps the edge function cannot: release_stalled_video_backlog
+-- auto-approves anything pending 10 minutes without checking fingerprints
+-- (observed 22 Aug 11:38 -- a member re-uploaded an identical file after
+-- rejection and the sweeper approved it), and anything the edge function
+-- failed open on. Active challenges only. Cron 28, every 10 minutes.
+-- Applied to DB; caught 4 on first run.

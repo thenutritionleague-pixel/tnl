@@ -1,0 +1,4 @@
+-- 063: send the force flag reanalyze_submission never sent.
+-- v66 accepts {"force":true} and records a verdict on an already-decided row
+-- without touching status or points. 059 shielded the attempt from the sweeper
+-- but never sent the flag, so Re-analyze still wrote nothing. Applied to DB.
