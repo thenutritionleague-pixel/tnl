@@ -1038,12 +1038,30 @@ Deno.serve(async (req: Request) => {
         // legitimately look near-identical day to day).
         const isScreenshot = unit === 'steps' || unit === 'calories' || unit === 'minutes'
         if (!isScreenshot) {
-          if (crossTaskMinDist <= PHASH_DUP_THRESHOLD) {
-            // Same photo already used for a DIFFERENT task -> wrong image, reject.
+          if (crossTaskMinDist <= PHASH_IDENTICAL) {
+            // The IDENTICAL file already used for a DIFFERENT task -> wrong
+            // image, reject. Only distance 0 is safe to reject on: it is the
+            // same file, which has no honest explanation.
             status = 'rejected'
             feedback = crossTaskTitle
               ? `This is the wrong image for this task — you already submitted this photo for "${crossTaskTitle}". Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
               : `This is the wrong image for this task — this photo was already submitted for another task. Each task needs its own photo. Please upload a new photo for "${taskTitle}".`
+          } else if (crossTaskMinDist <= PHASH_DUP_THRESHOLD) {
+            // Close but not identical, across two tasks. This branch used to
+            // REJECT, and it was wrong every time it fired: an 8x8 dHash is
+            // dominated by the person, shirt and background, so a member who
+            // photographs every meal in the same chair scores 5-8 against
+            // themselves no matter what is on the plate. All three members it
+            // hit during the National event (Dipin Mehta d=8, Pratham Talreja
+            // d=5, Rahul Malhotra d=6) had genuinely different food, verified
+            // by eye; it never once caught a real reuse.
+            //
+            // Same-task already treats 1..8 as a human decision for exactly
+            // this reason. Cross-task now matches it.
+            status = 'needs_review'
+            feedback = crossTaskTitle
+              ? `This photo looks similar to the one submitted for "${crossTaskTitle}". Please verify it is a new photo for this task.`
+              : `This photo looks similar to one submitted for another task. Please verify it is a new photo for this task.`
           } else if (sameTaskMinDist <= PHASH_IDENTICAL) {
             // Byte-for-byte the same image the member already used for this
             // task. Not a similar meal — the same file. Rejected outright so a
