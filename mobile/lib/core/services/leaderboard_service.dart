@@ -179,7 +179,7 @@ class LeaderboardService {
       _client.from('challenges').select('start_date').eq('id', challengeId).single(),
       _client
           .from('points_transactions')
-          .select('amount, reason, is_manual, created_at, transaction_date, task_submissions(submitted_date, tasks(title, icon, points))')
+          .select('amount, reason, is_manual, created_at, transaction_date, submission_id, task_submissions(submitted_date, tasks(title, icon, points))')
           .eq('user_id', userId)
           .order('created_at', ascending: true),
     ]);
@@ -209,6 +209,27 @@ class LeaderboardService {
     }
 
     final Map<int, List<Map<String, dynamic>>> grouped = {};
+
+    // Collapse a submission's ledger movements into ONE line carrying the net.
+    //
+    // An admin who rejects and then re-approves leaves three rows: +100,
+    // "Approval revoked" -100, +100. Each was rendered as its own completed
+    // task, so a member saw the same task three times on one day, one of them
+    // reading "+-100" -- the amount is prefixed with "+" for display and the
+    // revocation is negative. The points were always right (net +100); only the
+    // history read as nonsense. Nine members are showing this today.
+    //
+    // Netting by submission also means a revocation that was never reversed
+    // simply removes the line, which is what actually happened to that member.
+    final Map<String, int> netBySubmission = {};
+    for (final t in txns) {
+      final isManual = (t['is_manual'] as bool?) ?? false;
+      final amount = (t['amount'] as int?) ?? 0;
+      final subId = t['submission_id'] as String?;
+      if (isManual || amount == 0 || subId == null) continue;
+      netBySubmission[subId] = (netBySubmission[subId] ?? 0) + amount;
+    }
+    final Set<String> renderedSubmissions = {};
 
     for (final t in txns) {
       final amount = (t['amount'] as int?) ?? 0;
@@ -262,7 +283,19 @@ class LeaderboardService {
           'points': task?['points'] as int? ?? 0,
         });
       } else {
-        // Task approved — use submitted_date for week assignment
+        // Task approved — one line per SUBMISSION carrying its net, not one per
+        // ledger row. See netBySubmission above.
+        final subId = t['submission_id'] as String?;
+        final net = subId != null ? (netBySubmission[subId] ?? amount) : amount;
+
+        // Already drawn this submission, or it nets to nothing because the
+        // approval was revoked and never restored.
+        if (subId != null) {
+          if (renderedSubmissions.contains(subId)) continue;
+          renderedSubmissions.add(subId);
+          if (net == 0) continue;
+        }
+
         final subDate = sub?['submitted_date'] as String? ?? '';
         final week = weekFor(subDate.isNotEmpty ? subDate : createdAt);
         grouped.putIfAbsent(week, () => []).add({
@@ -270,7 +303,7 @@ class LeaderboardService {
           'icon': task?['icon'] as String? ?? '📋',
           'date': fmtDate(subDate.isNotEmpty ? subDate : createdAt),
           'status': 'approved',
-          'points': amount,
+          'points': net,
         });
       }
     }
