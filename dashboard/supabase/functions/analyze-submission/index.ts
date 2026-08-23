@@ -738,7 +738,13 @@ Deno.serve(async (req: Request) => {
     const orgId: string = record.org_id
     if (!submissionId || !orgId) return new Response(JSON.stringify({ error: 'Missing id or org_id' }), { status: 400 })
 
-    const { data: claimed } = await supabase.from('task_submissions').update({ ai_status: 'analyzing' }).is('ai_status', null).eq('id', submissionId).select('id')
+    // ai_started_at stamped on EVERY claim, not just reanalyze_submission's forced
+    // re-checks. release_stalled_video_backlog uses it to tell "genuinely in
+    // flight right now" apart from "stale, submitted_at is just old" -- without
+    // it, a first-time analysis claimed moments before the 45-min mark had no
+    // way to prove it was still running and got stomped back to needs_review
+    // mid-check, same bug as the forced-recheck case, just the other origin.
+    const { data: claimed } = await supabase.from('task_submissions').update({ ai_status: 'analyzing', ai_started_at: new Date().toISOString() }).is('ai_status', null).eq('id', submissionId).select('id')
     if (!claimed || claimed.length === 0) return new Response(JSON.stringify({ skipped: true }), { status: 200 })
 
     const { data: sub } = await supabase
