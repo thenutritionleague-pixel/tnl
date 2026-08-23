@@ -1020,7 +1020,8 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                               made an ADMIN's own rejection read back as "AI Rejected /
                               No confidence recorded". Cleared AI fields plus a stored
                               reason is the signature of a human verdict. */}
-                          {reviewTarget.aiStatus === 'analyzing' ? 'Waiting for the video service…'
+                          {reviewTarget.aiStatus === 'analyzing'
+                            ? (reviewTarget.proofUrl?.startsWith('bunny://') ? 'Waiting for the video service…' : 'Checking now…')
                             : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved'
                             : reviewTarget.aiStatus === 'rejected'
                               ? (reviewTarget.aiFeedback == null && reviewTarget.aiConfidence == null && reviewTarget.rejectionReason
