@@ -590,24 +590,27 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   // review), however long that takes. So "health" here means one thing: is the
   // retry job that keeps re-firing AI checks actually running? That is the one
   // failure mode that would silently stop AI from ever getting to a submission
-  // at all. Checked against retry-stuck-ai-submissions specifically (jobid 14),
+  // at all. Checked against retry-stuck-ai-submissions specifically by name,
   // not "whatever cron ran most recently" -- the previous version took the
   // latest row across ALL jobs, so an unrelated healthy cron could mask this
   // one having stopped.
+  //
+  // Via RPC, not a direct query on cron.job_run_details: service_role (what
+  // this client authenticates as) has no USAGE on the cron schema at all --
+  // only postgres does. A direct query always failed silently here, caught by
+  // a fallback that read the failure as "the cron stopped", a false alarm the
+  // moment this became load-bearing. get_cron_job_health() is SECURITY
+  // DEFINER, owned by postgres, so it can see cron.job_run_details regardless
+  // of the caller's own grants.
   const { data: cronRow } = await client
-    .schema('cron' as never)
-    .from('job_run_details' as never)
-    .select('start_time, status')
-    .eq('jobid', 14)
-    .order('start_time', { ascending: false })
-    .limit(1)
+    .rpc('get_cron_job_health', { p_jobname: 'retry-stuck-ai-submissions' })
     .maybeSingle()
     .then(r => r, () => ({ data: null }))
-  const cronRun = cronRow as { start_time?: string; status?: string } | null
-  const lastRetryRun = cronRun?.start_time ?? null
+  const cronRun = cronRow as { last_run?: string; run_status?: string } | null
+  const lastRetryRun = cronRun?.last_run ?? null
   const retryCronHealthy = !!lastRetryRun
     && (Date.now() - new Date(lastRetryRun).getTime()) < 5 * 60_000
-    && cronRun?.status === 'succeeded'
+    && cronRun?.run_status === 'succeeded'
 
   let level: PipelineHealth['level'] = 'healthy'
   let headline = 'Everything is being processed normally'
