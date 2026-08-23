@@ -1,0 +1,67 @@
+-- Sonali Jalori's photo looped claim->crash->reset for 4h44min straight,
+-- never once resolving, invisible until an admin happened to notice. Verified
+-- tonight that normal cases self-heal within about an hour under load (3 real
+-- examples cleared in ~1h). Anything still unresolved past 60 minutes is not
+-- "busy queue" -- it's a genuine stuck loop. Surface it to a human instead of
+-- retrying forever.
+create or replace function public.retry_stuck_ai_submissions()
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare sub record;
+begin
+  update task_submissions
+  set ai_status = 'needs_review',
+      ai_feedback = 'AI review could not complete after repeated attempts over the last hour — needs manual look.'
+  where status = 'pending'
+    and (ai_status = 'analyzing' or ai_status is null)
+    and submitted_at < now() - interval '60 minutes';
+
+  update task_submissions
+  set ai_status = null
+  where ai_status = 'analyzing' and status = 'pending'
+    and submitted_at < now() - interval '10 minutes'
+    and submitted_at > now() - interval '6 hours';
+
+  for sub in
+    select id, org_id from task_submissions
+    where ai_status is null and status = 'pending'
+      and submitted_at < now() - interval '2 minutes'
+      and submitted_at > now() - interval '6 hours'
+    order by submitted_at asc
+    limit 30
+  loop
+    perform net.http_post(
+      url     := 'https://rvlwltgneitthdecqpkt.supabase.co/functions/v1/analyze-submission',
+      headers := '{"Content-Type": "application/json"}'::jsonb,
+      body    := jsonb_build_object('record', jsonb_build_object('id', sub.id, 'org_id', sub.org_id))
+    );
+    perform pg_sleep(0.5);
+  end loop;
+
+  update task_submissions
+  set ai_status = null
+  where ai_status = 'analyzing' and status <> 'pending'
+    and ai_started_at < now() - interval '10 minutes'
+    and ai_started_at > now() - interval '6 hours';
+
+  for sub in
+    select id, org_id from task_submissions
+    where ai_status is null and status <> 'pending'
+      and ai_started_at is not null
+      and ai_started_at < now() - interval '2 minutes'
+      and ai_started_at > now() - interval '6 hours'
+    order by ai_started_at asc
+    limit 30
+  loop
+    perform net.http_post(
+      url     := 'https://rvlwltgneitthdecqpkt.supabase.co/functions/v1/analyze-submission',
+      headers := '{"Content-Type": "application/json"}'::jsonb,
+      body    := jsonb_build_object('force', true, 'record', jsonb_build_object('id', sub.id, 'org_id', sub.org_id))
+    );
+    perform pg_sleep(0.5);
+  end loop;
+end;
+$function$;
