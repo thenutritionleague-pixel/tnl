@@ -31,6 +31,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   String? _teamId;
   String _orgTimezone = 'UTC';
+  // The org's word for a task's week_number ('day' for National, 'week' for
+  // the city events). Same source the Tasks screen reads, so the two screens
+  // cannot disagree about what to call the same number.
+  String _periodLabel = 'week';
 
   // Precomputed per-load (avoids O(tasks×submissions) on every build)
   Map<String, SubmissionState> _submissionStatusCache = {};
@@ -89,6 +93,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
 
       final tasks = orgId != null ? await TaskService.getActiveTasks(orgId, teamId) : <Map<String, dynamic>>[];
+      final periodLabel = orgId != null ? await TaskService.getPeriodLabel(orgId) : 'week';
       final submissions = orgId != null ? await TaskService.getUserSubmissions(profile['id'], orgId) : <Map<String, dynamic>>[];
       // A team task is done ONCE for the whole squad and stays done for the rest
       // of the task's window. Home used to look only at the member's own
@@ -159,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen>
           _teamLeaderboard = teamLeaderboard.take(5).toList();
           _teamId = teamId;
           _orgTimezone = orgTz;
+          _periodLabel = periodLabel;
           _submissionStatusCache = statusCache;
           _cachedProgress = progress;
           _cachedWeekLabel = weekLabel;
@@ -488,6 +494,7 @@ class _HomeScreenState extends State<HomeScreen>
                               profileId: _profile?['id'] as String? ?? '',
                               orgId: _profile?['org_id'] as String? ?? '',
                               orgTimezone: _orgTimezone,
+                              periodLabel: _periodLabel,
                               onDone: _load,
                             );
                           }),
@@ -643,6 +650,7 @@ class _ChallengeRow extends StatelessWidget {
   final String profileId;
   final String orgId;
   final String orgTimezone;
+  final String periodLabel;
   final VoidCallback onDone;
   const _ChallengeRow({
     required this.task,
@@ -651,6 +659,7 @@ class _ChallengeRow extends StatelessWidget {
     required this.profileId,
     required this.orgId,
     required this.orgTimezone,
+    required this.periodLabel,
     required this.onDone,
   });
 
@@ -754,7 +763,7 @@ class _ChallengeRow extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Since week ${task['week_number'] ?? 1}',
+                        taskPeriodLabel(periodLabel, task['week_number']),
                         style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.5)),
                       ),
                     ],

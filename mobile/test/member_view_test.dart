@@ -153,4 +153,29 @@ void main() {
       expect(view.description, 'live desc');
     });
   });
+
+  group('Home and Tasks must speak the same word', () {
+    test('a day-based challenge says day, matching the Tasks screen', () {
+      // 23 Aug 2026: the Balance Build task read "Day 6" on Tasks and
+      // "Since week 6" on Home. Same week_number field, two different words.
+      expect(taskPeriodLabel('day', 6), 'Since day 6');
+    });
+
+    test('a week-based city event still says week', () {
+      expect(taskPeriodLabel('week', 2), 'Since week 2');
+    });
+
+    test('an unknown or missing label falls back to week, never crashes', () {
+      expect(taskPeriodLabel(null, 3), 'Since week 3');
+      expect(taskPeriodLabel('fortnight', 3), 'Since week 3');
+    });
+
+    test('a week_number arriving as a string is still read as its number', () {
+      expect(taskPeriodLabel('day', '4'), 'Since day 4');
+    });
+
+    test('a missing week_number reads as the first period, not zero', () {
+      expect(taskPeriodLabel('day', null), 'Since day 1');
+    });
+  });
 }

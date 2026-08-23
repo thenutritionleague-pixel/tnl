@@ -120,3 +120,26 @@ SubmissionView resolveSubmissionView(Map<String, dynamic> submission) {
     pointsLabel: pointsLabel,
   );
 }
+
+// ── Period wording ──────────────────────────────────────────────────────────
+
+/// The word a member sees in front of a task's `week_number`.
+///
+/// `week_number` is a task SEQUENCE number, not a calendar week: the National
+/// challenge releases one task per day and numbers them 1–6 over nine calendar
+/// days. Which word it takes is the org's choice, held in
+/// `challenges.period_label` — 'day' for National, 'week' for the city events.
+///
+/// The Tasks screen has always honoured that label; Home hardcoded "week"
+/// against the same field, so the Balance Build task read "Day 6" on one screen
+/// and "Since week 6" on the other. Same number, same source, two words.
+///
+/// [periodLabel] anything other than 'day' means 'week', so a missing or
+/// unexpected value can only ever fall back to the city wording, never crash.
+String taskPeriodLabel(String? periodLabel, Object? weekNumber) {
+  final word = periodLabel == 'day' ? 'day' : 'week';
+  final n = weekNumber is int
+      ? weekNumber
+      : int.tryParse('${weekNumber ?? ''}') ?? 1;
+  return 'Since $word $n';
+}
