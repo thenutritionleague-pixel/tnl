@@ -205,6 +205,41 @@ async function computeDHash(bytes: Uint8Array): Promise<string | null> {
   } catch (e) { console.warn('[dhash] decode failed', e instanceof Error ? e.message : e); return null }
 }
 
+/**
+ * Spread between the darkest and brightest pixel, sampled across the WHOLE
+ * image. 0 means every pixel is the same shade — a blank frame.
+ *
+ * This replaced counting bits in the dHash, which was never a blankness signal.
+ * dHash resizes to 9x8 by SAMPLING, not averaging, so a step screenshot that is
+ * mostly flat background samples as flat background and sets almost no bits.
+ * Measured on the four members it wrongly rejected: 2, 4, 4 and 6 bits set,
+ * against a threshold of "2 or fewer means blank". Their luminance ranges were
+ * 228, 254, 255 and 239; a true black or white frame is 0.0.
+ */
+async function luminanceRange(bytes: Uint8Array): Promise<number | null> {
+  try {
+    const img = await Image.decode(bytes)
+    const w = img.width, h = img.height
+    if (w < 2 || h < 2) return null
+    // ~64 samples along the shorter side: enough to find text on a background,
+    // cheap enough not to matter next to the model call.
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 64))
+    let min = 255, max = 0
+    for (let y = 1; y <= h; y += step) {
+      for (let x = 1; x <= w; x += step) {
+        const p = img.getRGBAAt(x, y)
+        const l = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]
+        if (l < min) min = l
+        if (l > max) max = l
+      }
+    }
+    return max - min
+  } catch (e) {
+    console.warn('[blank] decode failed', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
 function hamming(aHex: string, bHex: string): number {
   let x = BigInt('0x' + aHex) ^ BigInt('0x' + bHex)
   let count = 0
@@ -917,13 +952,21 @@ Deno.serve(async (req: Request) => {
       // reported 0.95 confidence, having read a number that was not there.
       //
       // Rejecting outright rather than queueing: there is nothing for a human
-      // to weigh up, and the member can simply upload a real screenshot. Two
-      // bits of slack keeps a legitimately dark screenshot safe -- a dark-mode
-      // step screen still has text and bars, so it sets many bits.
-      if (myHash) {
-        const bitsSet = myHash.split('').reduce(
-          (n, ch) => n + (parseInt(ch, 16).toString(2).match(/1/g)?.length ?? 0), 0)
-        if (bitsSet <= 2) {
+      // to weigh up, and the member can simply upload a real screenshot.
+      //
+      // Measured by luminance SPREAD, not by dHash bits. The bit count was
+      // wrong: dHash samples 9x8 instead of averaging, so a step screenshot
+      // that is mostly flat background sets 2-6 bits -- inside the "2 or fewer
+      // is blank" threshold. On 22-23 Aug it rejected four members with
+      // perfectly readable step counts; one resubmitted TEN times in an hour,
+      // every attempt killed within seconds, before an admin approved by hand.
+      //
+      // Their luminance ranges were 228, 254, 255 and 239. A true black or
+      // white frame is 0.0, so 12 leaves an enormous margin and still catches
+      // the all-black frames that were being auto-approved for 200 points.
+      {
+        const range = await luminanceRange(bytes)
+        if (range !== null && range < 12) {
           const msg = 'This photo appears to be blank — no step count or content is visible. '
             + 'Please upload a clear screenshot for this day.'
           await supabase.from('task_submissions').update({
