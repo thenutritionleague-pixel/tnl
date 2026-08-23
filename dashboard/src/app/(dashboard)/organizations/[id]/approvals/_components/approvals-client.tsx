@@ -1119,7 +1119,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                     problem this panel was built to fix. Every phrasing the system
                     can produce is listed here, and the list is the thing to update
                     if the copy changes again. */}
-                {/duplicate|similar to a previous submission|identical image fingerprint|looks like the one you submitted|already submitted by another member|same (image|video) file/i.test(reviewTarget.aiFeedback ?? '') && (
+                {/duplicate|identical image fingerprint|already submitted (this photo for|for another task|by another member)|same (image|video) file|same photo you already submitted|have already submitted for this task|looks like the one you submitted|similar to (a previous submission|the one submitted for|one submitted for another task)/i.test(reviewTarget.aiFeedback ?? '') && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2.5 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
