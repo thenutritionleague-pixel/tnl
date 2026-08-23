@@ -11,6 +11,7 @@ import '../../../core/services/leaderboard_service.dart';
 import '../../../core/theme/theme_notifier.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/utils/org_date_utils.dart';
+import '../../../core/logic/member_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -177,10 +178,9 @@ class _HomeScreenState extends State<HomeScreen>
   int get _todayApproved =>
       _tasks.where((t) => (_submissionStatusCache[t['id']] ?? SubmissionState.notSubmitted).countsAsDone).length;
 
-  int get _todayDonePct {
-    if (_tasks.isEmpty) return 0;
-    return ((_todayApproved / _tasks.length) * 100).round();
-  }
+  // _tasks is what get_mobile_tasks returned, i.e. the tasks running TODAY, so
+  // the denominator is already the right one. See donePct.
+  int get _todayDonePct => donePct(_todayApproved, _tasks.length);
 
   /// Dense rank: 1 + however many DISTINCT higher scores there are.
   ///
@@ -199,24 +199,16 @@ class _HomeScreenState extends State<HomeScreen>
       orElse: () => const <String, dynamic>{},
     );
     if (me.isEmpty) return 0;
-    final myPoints = (me['total_points'] as int?) ?? 0;
-    final higherScores = _fullTeamLeaderboard
-        .map((t) => (t['total_points'] as int?) ?? 0)
-        .where((pts) => pts > myPoints)
-        .toSet();
-    return higherScores.length + 1;
+    return _denseRankFor((me['total_points'] as int?) ?? 0);
   }
 
   /// Place for a given score under the same rule as _teamRank and the
   /// Leaderboard screen: 1 + however many DISTINCT higher scores exist.
   /// Computed against the FULL board, never the preview's top-5 slice.
-  int _denseRankFor(int points) {
-    final higher = _fullTeamLeaderboard
-        .map((t) => (t['total_points'] as int?) ?? 0)
-        .where((pts) => pts > points)
-        .toSet();
-    return higher.length + 1;
-  }
+  int _denseRankFor(int points) => denseRankFor(
+        points,
+        _fullTeamLeaderboard.map((t) => (t['total_points'] as int?) ?? 0),
+      );
 
   int get _teamPoints {
     if (_teamId == null) return 0;

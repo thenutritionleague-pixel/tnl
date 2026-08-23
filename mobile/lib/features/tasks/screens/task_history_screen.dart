@@ -8,6 +8,7 @@ import '../../../core/models/submission_state.dart';
 import '../../../core/services/profile_service.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/theme/theme_colors.dart';
+import '../../../core/logic/member_view.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   const TaskHistoryScreen({super.key});
@@ -215,27 +216,16 @@ class _HistoryCard extends StatelessWidget {
     // all from fresh photos on the final evening, which is a different problem.
     final reviewedAtRaw = submission['reviewed_at'] as String?;
     final reviewedAt = reviewedAtRaw == null ? null : DateTime.tryParse(reviewedAtRaw)?.toLocal();
-    final resubmitWindowOpen = reviewedAt == null
-        ? true // never reviewed -> nothing to lose by allowing it
-        : DateTime.now().difference(
-            DateTime(reviewedAt.year, reviewedAt.month, reviewedAt.day),
-          ).inDays <= 1;
+    final windowOpen = resubmitWindowOpen(reviewedAt, DateTime.now());
     final reason = submission['rejection_reason'] as String?;
-    final title  = (task['title']       as String?) ?? (liveTask['title']       as String?) ?? '—';
-    final desc   = (task['description'] as String?) ?? (liveTask['description'] as String?) ?? '';
-    final icon   = (task['icon']        as String?) ?? (liveTask['icon']        as String?) ?? '📋';
 
-    // Prefer the snapshotted claimed tier; fall back to tier-range from current task
-    final selectedTier = task['selected_tier'] as Map<String, dynamic>?;
-    final tiersRaw = task['points_tiers'] ?? liveTask['points_tiers'];
-    final tiersList = (tiersRaw is List && tiersRaw.isNotEmpty)
-        ? List<Map<String, dynamic>>.from(tiersRaw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)))
-        : null;
-    final String pointsLabel = selectedTier != null
-        ? '${selectedTier['points']}'
-        : (tiersList != null && tiersList.isNotEmpty)
-            ? '${tiersList.first['points']}–${tiersList.last['points']}'
-            : '${(task['points'] as int?) ?? (liveTask['points'] as int?) ?? 0}';
+    // Snapshot-wins resolution lives in member_view.dart, covered by
+    // test/member_view_test.dart.
+    final view = resolveSubmissionView(submission);
+    final title = view.title;
+    final desc = view.description;
+    final icon = view.icon;
+    final pointsLabel = view.pointsLabel;
 
     // Only show the rejection reason when the admin gave one.
     // Expired is an internal status — we never surface that word to the member.
@@ -400,7 +390,7 @@ class _HistoryCard extends StatelessWidget {
                       ] else ...[
                         Expanded(
                           child: Text(
-                            status == 'rejected' && !resubmitWindowOpen
+                            status == 'rejected' && !windowOpen
                                 ? (hasRejectionReason
                                     ? 'Note: $reason\nThis day is now closed \u2014 resubmissions were open until the day after it was reviewed.'
                                     : 'This day is now closed \u2014 resubmissions were open until the day after it was reviewed.')
@@ -420,7 +410,7 @@ class _HistoryCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (status == 'rejected' && resubmitWindowOpen) ...[
+                if (status == 'rejected' && windowOpen) ...[
                   const SizedBox(width: 10),
                   GestureDetector(
                     onTap: () async {
