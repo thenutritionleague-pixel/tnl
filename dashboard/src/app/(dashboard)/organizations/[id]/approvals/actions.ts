@@ -536,8 +536,8 @@ export type PipelineHealth = {
   needsReview: number
   videoPending: number
   photoPending: number
-  autoReleaseOk: boolean
-  lastAutoRelease: string | null
+  retryCronHealthy: boolean
+  lastRetryRun: string | null
 }
 
 /**
@@ -579,26 +579,41 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   const oldestMins = awaitingPipeline.length === 0 ? 0 : Math.round(
     Math.max(...awaitingPipeline.map(r => now - new Date(r.submitted_at).getTime())) / 60000)
 
-  // The safety net only counts as working if it ran within the last two cycles.
+  // No submission is ever timed out to a human for being slow -- every one gets
+  // a genuine AI verdict (approved/rejected/needs_review from real content
+  // review), however long that takes. So "health" here means one thing: is the
+  // retry job that keeps re-firing AI checks actually running? That is the one
+  // failure mode that would silently stop AI from ever getting to a submission
+  // at all. Checked against retry-stuck-ai-submissions specifically (jobid 14),
+  // not "whatever cron ran most recently" -- the previous version took the
+  // latest row across ALL jobs, so an unrelated healthy cron could mask this
+  // one having stopped.
   const { data: cronRow } = await client
     .schema('cron' as never)
     .from('job_run_details' as never)
     .select('start_time, status')
+    .eq('jobid', 14)
     .order('start_time', { ascending: false })
     .limit(1)
     .maybeSingle()
     .then(r => r, () => ({ data: null }))
-  const lastAutoRelease = (cronRow as { start_time?: string } | null)?.start_time ?? null
-  const autoReleaseOk = oldestMins < 70
+  const cronRun = cronRow as { start_time?: string; status?: string } | null
+  const lastRetryRun = cronRun?.start_time ?? null
+  const retryCronHealthy = !!lastRetryRun
+    && (Date.now() - new Date(lastRetryRun).getTime()) < 5 * 60_000
+    && cronRun?.status === 'succeeded'
 
   let level: PipelineHealth['level'] = 'healthy'
   let headline = 'Everything is being processed normally'
   let detail = pending === 0 ? 'Nothing waiting.' : `${pending} waiting, oldest ${oldestMins} min — all within normal time.`
 
-  if (!autoReleaseOk) {
+  if (!retryCronHealthy) {
+    // A slow queue is expected and not alarmed on; the retry job itself not
+    // running is the one thing that actually needs a person, since nothing
+    // else will notice AI has stopped trying.
     level = 'degraded'
-    headline = 'Something is stuck'
-    detail = `A submission has been waiting ${oldestMins} min with no AI result and was not released automatically. This needs looking at.`
+    headline = 'The AI retry job has stopped running'
+    detail = 'retry-stuck-ai-submissions has not completed successfully in the last 5 minutes, so submissions are not being re-checked right now. This needs looking at directly.'
   } else if (needsReview > 0 && videoPending < 15 && oldestMins < 30) {
     // Not a fault -- the pipeline is keeping up and these are simply decisions
     // only a person can make. Say that plainly instead of raising an alarm.
@@ -608,11 +623,10 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   } else if (videoPending >= 15 || oldestMins >= 30) {
     level = 'busy'
     headline = 'Video processing is running behind'
-    detail = `${videoPending} videos waiting on the video service, oldest ${oldestMins} min. `
-      + 'After 45 min they move to Needs Review for a human — not the member\'s fault, but not auto-approved either. Photos are unaffected.'
+    detail = `${videoPending} videos waiting, oldest ${oldestMins} min. AI keeps retrying automatically until it gets a real result — nothing here is ever timed out to a human. Photos are unaffected.`
   }
 
-  return { level, headline, detail, pending, oldestMins, needsReview, videoPending, photoPending, autoReleaseOk, lastAutoRelease }
+  return { level, headline, detail, pending, oldestMins, needsReview, videoPending, photoPending, retryCronHealthy, lastRetryRun }
 }
 
 export type IdentityReference = {

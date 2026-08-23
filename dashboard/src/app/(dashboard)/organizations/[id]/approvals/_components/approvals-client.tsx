@@ -991,7 +991,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                           never touch Bunny at all. */}
                       <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                         {reviewTarget.proofUrl?.startsWith('bunny://')
-                          ? 'Waiting on the video service. Past 45 minutes it moves to Needs Review for a human \u2014 it is never approved on its own. You can also decide it now.'
+                          ? 'Waiting on the video service. AI keeps retrying automatically until it gets a real result \u2014 it is never timed out to a human, and never approved on its own. You can also decide it now.'
                           : 'The AI check has not run yet. This usually takes under a minute \u2014 you can also decide it now.'}
                       </p>
                     </div>
