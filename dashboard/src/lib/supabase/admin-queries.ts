@@ -801,7 +801,14 @@ export async function getOrgApprovals(orgId: string, page = 0, status?: 'pending
   //   model = pro   -> Flash suspected a fake and it had to escalate
   //   confidence <0.6 or null -> nobody stands behind the verdict
   if (needsAttention) {
-    subsQuery = subsQuery.or('ai_status.eq.needs_review,ai_video_model.eq.pro,ai_confidence.lt.0.6,ai_confidence.is.null')
+    // "Needs attention" has to mean still-open, not "was ever flagged". Without
+    // this, an item approved hours ago -- ai_status='needs_review' is frozen
+    // history, never cleared -- stayed in this queue forever on the default
+    // "All" tab, indistinguishable from something genuinely waiting. A client
+    // reported exactly this: an already-approved photo still showing as
+    // needing a decision.
+    subsQuery = subsQuery.eq('status', 'pending')
+      .or('ai_status.eq.needs_review,ai_video_model.eq.pro,ai_confidence.lt.0.6,ai_confidence.is.null')
   }
   // For approved/rejected, sort by reviewed_at so recently-actioned items surface first.
   // For pending/all, sort by submitted_at so oldest-waiting comes first? No — newest first is fine.
