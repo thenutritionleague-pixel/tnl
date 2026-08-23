@@ -958,16 +958,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return max(1, (diff / 7).floor() + 1);
   }
 
-  int _elapsedDaysInWeek(int weekNum) {
-    final s = _challengeStartDate;
-    if (s == null || weekNum < _currentWeek()) return 7; // past week = full 7 days
-    // Current week — count only days that have elapsed so far
-    final weekStart = DateTime(s.year, s.month, s.day)
-        .add(Duration(days: (weekNum - 1) * 7));
-    final elapsed = DateTime.now().difference(weekStart).inDays + 1;
-    return elapsed.clamp(1, 7);
-  }
-
   // ── Aggregate entries by task title ──────────────────────────────────────
   Map<String, Map<String, dynamic>> _aggregateWeekEntries(
       List<Map<String, dynamic>> entries) {
@@ -999,29 +989,50 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   }
 
   // ── Aggregate row widgets (past weeks) ───────────────────────────────────
-  List<Widget> _buildAggregateRows(List<Map<String, dynamic>> entries, {int elapsedDays = 7}) {
+  List<Widget> _buildAggregateRows(List<Map<String, dynamic>> entries) {
     final agg = _aggregateWeekEntries(entries);
     return agg.entries.map((e) {
       final title = e.key;
       final data = e.value;
       final approved = data['approved'] as List<Map<String, dynamic>>;
-      final explicitMissed = data['missed'] as int;
+      // Only the ledger's own "Task missed:" rows count as a miss.
+      //
+      // This used to add an "implicit" miss for every day of the week the
+      // member had no approval, which silently assumed each task ran all seven
+      // days. None of them did: Task 0 ran on 16 Aug alone and the Plank Stand
+      // on 22 Aug alone, so members who completed both were told they had
+      // missed each of them six times. The number barely depended on the
+      // member, which is why captains saw the same 6/2/3/4/5/6 for everyone.
+      //
+      // The database already writes one missed row per genuinely missed day,
+      // and only from the day the member joined (migration 055). It is the one
+      // honest source, so it is now the only one.
+      final missed = data['missed'] as int;
       final rejected = data['rejected'] as int;
-      final ptsPerDay = approved.isNotEmpty
-          ? (approved.first['points'] as int? ?? 0)
-          : (data['basePts'] as int? ?? 0);
       final earned =
           approved.fold<int>(0, (s, x) => s + (x['points'] as int? ?? 0));
-      final implicitMissed = max(0, elapsedDays - approved.length - rejected - explicitMissed);
-      final totalMissed = explicitMissed + implicitMissed;
-      final totalDays = elapsedDays;
-      final hasIssues = totalMissed > 0 || rejected > 0;
-      final daysLabel = hasIssues
-          ? '${approved.length}/$totalDays days × 🥦 $ptsPerDay'
-          : '$totalDays days × 🥦 $ptsPerDay';
+      // Days this task actually ran for THIS member, not days in the week.
+      final totalDays = approved.length + missed + rejected;
+      final hasIssues = missed > 0 || rejected > 0;
+
+      // "5 days × 🥦 100" only holds when every approved day paid the same. A
+      // tiered task can pay 100 one day and 200 the next — which is how
+      // "5/7 days × 🥦 100" came to sit beside a total of 700. When the daily
+      // amounts differ, show the day count and let the total speak.
+      final dayPoints = approved.map((x) => x['points'] as int? ?? 0).toSet();
+      final sameEveryDay = dayPoints.length == 1;
+      final daysLabel = totalDays == 0
+          ? ''
+          : sameEveryDay
+              ? (hasIssues
+                  ? '${approved.length}/$totalDays days × 🥦 ${dayPoints.first}'
+                  : '$totalDays days × 🥦 ${dayPoints.first}')
+              : (hasIssues
+                  ? '${approved.length}/$totalDays days'
+                  : '$totalDays days');
       final indicators = [
         if (rejected > 0) '$rejected rejected',
-        if (totalMissed > 0) '$totalMissed missed',
+        if (missed > 0) '$missed missed',
       ].join(' · ');
 
       return Padding(
@@ -1140,7 +1151,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                 ...[
                   const SizedBox(height: 6),
                   // Past weeks: aggregate summary rows
-                  if (isPastWeek) ..._buildAggregateRows(entries, elapsedDays: _elapsedDaysInWeek(week)),
+                  if (isPastWeek) ..._buildAggregateRows(entries),
                   // Current week: individual daily rows
                   if (!isPastWeek)
                     ...entries.map((t) {
