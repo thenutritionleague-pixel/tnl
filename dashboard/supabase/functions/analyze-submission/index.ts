@@ -743,7 +743,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: sub } = await supabase
       .from('task_submissions')
-      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, submitted_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
+      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, submitted_at, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
       .eq('id', submissionId).single()
 
     if (!sub?.proof_url) {
@@ -761,6 +761,14 @@ Deno.serve(async (req: Request) => {
     const claimedTierIndex: number | null = sd.selected_tier_index ?? null
     const claimedTier: Tier | null = (tiers && claimedTierIndex != null) ? (tiers[claimedTierIndex] ?? null) : null
     const submittedAt: string = sd.submitted_at ?? new Date().toISOString()
+    // reanalyze_submission() stamps ai_started_at = now() on every forced re-check
+    // but never touches submitted_at. A re-check of a days-old submission was
+    // computing retry budget from THAT original date, so it was already past
+    // RETRY_MAX_AGE_MS before the retry loop even started -- one transient
+    // Gemini hiccup and it gave up immediately with "was busy", never actually
+    // retrying. Prefer ai_started_at (this attempt's clock) when it is set;
+    // first-time analysis never sets it, so that path is unaffected.
+    const retryAnchor: string = sd.ai_started_at ?? submittedAt
     const minVideoSeconds: number | null = sd.tasks?.min_video_seconds ?? null
     // Rep target for the "common sense" duration check in the prompt: the tier
     // if there is one, otherwise the first number in the task text.
@@ -770,7 +778,7 @@ Deno.serve(async (req: Request) => {
 
     // Throttled/busy -> requeue for the retry cron (no admin work); bounded by age.
     const requeueOrReview = async (errMsg: string, reviewFeedback: string) => {
-      const canRetry = isTransientError(errMsg) && (Date.now() - new Date(submittedAt).getTime()) < RETRY_MAX_AGE_MS
+      const canRetry = isTransientError(errMsg) && (Date.now() - new Date(retryAnchor).getTime()) < RETRY_MAX_AGE_MS
       if (canRetry) {
         await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Reviewer busy — retrying automatically.' }).eq('id', submissionId)
         return new Response(JSON.stringify({ aiStatus: 'retry', error: errMsg }), { status: 200 })
