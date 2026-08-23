@@ -598,7 +598,7 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
     level = 'busy'
     headline = 'Video processing is running behind'
     detail = `${videoPending} videos waiting on the video service, oldest ${oldestMins} min. `
-      + 'They release automatically after 45 min, so members are not blocked. Photos are unaffected.'
+      + 'After 45 min they move to Needs Review for a human — not the member\'s fault, but not auto-approved either. Photos are unaffected.'
   }
 
   return { level, headline, detail, pending, oldestMins, needsReview, videoPending, photoPending, autoReleaseOk, lastAutoRelease }
