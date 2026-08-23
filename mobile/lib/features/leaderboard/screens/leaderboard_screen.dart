@@ -1021,15 +1021,18 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       // amounts differ, show the day count and let the total speak.
       final dayPoints = approved.map((x) => x['points'] as int? ?? 0).toSet();
       final sameEveryDay = dayPoints.length == 1;
+      // Several tasks ran on a single day, so "1 days" is now reachable where
+      // the old hardcoded 7 never let it show.
+      final dayWord = totalDays == 1 ? 'day' : 'days';
       final daysLabel = totalDays == 0
           ? ''
           : sameEveryDay
               ? (hasIssues
-                  ? '${approved.length}/$totalDays days × 🥦 ${dayPoints.first}'
-                  : '$totalDays days × 🥦 ${dayPoints.first}')
+                  ? '${approved.length}/$totalDays $dayWord × 🥦 ${dayPoints.first}'
+                  : '$totalDays $dayWord × 🥦 ${dayPoints.first}')
               : (hasIssues
-                  ? '${approved.length}/$totalDays days'
-                  : '$totalDays days');
+                  ? '${approved.length}/$totalDays $dayWord'
+                  : '$totalDays $dayWord');
       final indicators = [
         if (rejected > 0) '$rejected rejected',
         if (missed > 0) '$missed missed',
