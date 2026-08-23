@@ -1182,15 +1182,33 @@ Deno.serve(async (req: Request) => {
 
     const aiStatus = decision.status
     const feedback = decision.feedback
-    await supabase.from('task_submissions').update({ ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence, ai_video_model: decision.model ?? null }).eq('id', submissionId).eq('status', 'pending')
+    // ONE atomic write, not two sequential ones. It used to be ai_status set
+    // first, then a SEPARATE update for status/points_awarded -- if that second
+    // call failed (network blip, exactly the kind seen all day under load), the
+    // row was left split: ai_status='approved' forever, status still 'pending',
+    // points_awarded null, reviewed_at null. Nothing caught it: the outer
+    // catch's rescue only matches ai_status='analyzing', which by then was
+    // already overwritten. Found live -- a burpee video sat exactly in this
+    // state, AI-approved but never actually approved, until an admin noticed.
+    // A single call either commits both together or throws before touching
+    // anything, so ai_status stays 'analyzing' and the existing outer-catch
+    // rescue (below) handles it correctly with no new logic needed.
+    const finalPoints = aiStatus === 'approved' ? (claimedTier?.points ?? taskPoints) : null
+    const sharedUpdate: Record<string, unknown> = {
+      ai_status: aiStatus, ai_feedback: feedback || null, ai_confidence: decision.confidence, ai_video_model: decision.model ?? null,
+    }
+    if (aiStatus === 'approved') {
+      sharedUpdate.status = 'approved'; sharedUpdate.points_awarded = finalPoints; sharedUpdate.reviewed_at = new Date().toISOString()
+    } else if (aiStatus === 'rejected') {
+      sharedUpdate.status = 'rejected'; sharedUpdate.rejection_reason = feedback || 'Rejected by AI review.'; sharedUpdate.reviewed_at = new Date().toISOString()
+    }
+    const { error: writeErr } = await supabase.from('task_submissions').update(sharedUpdate).eq('id', submissionId).eq('status', 'pending')
+    if (writeErr) throw new Error(`Shared write failed: ${writeErr.message}`)
 
     if (aiStatus === 'approved') {
-      const finalPoints = claimedTier?.points ?? taskPoints
-      await supabase.from('task_submissions').update({ status: 'approved', points_awarded: finalPoints, reviewed_at: new Date().toISOString() }).eq('id', submissionId).eq('status', 'pending')
       await supabase.from('feed_items').insert({ org_id: orgId, type: 'submission_approved', title: `${memberName} completed ${taskTitle}`, content: `+${finalPoints} 🥦 broccoli points earned`, is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null })
     }
     if (aiStatus === 'rejected') {
-      await supabase.from('task_submissions').update({ status: 'rejected', rejection_reason: feedback || 'Rejected by AI review.', reviewed_at: new Date().toISOString() }).eq('id', submissionId).eq('status', 'pending')
       await supabase.from('feed_items').insert({ org_id: orgId, type: 'submission_rejected', title: `Your ${taskTitle} submission was not approved`, content: feedback || 'Please resubmit with a clear proof.', is_auto_generated: true, author_id: sub.user_id, challenge_id: sub.challenge_id ?? null })
     }
 
