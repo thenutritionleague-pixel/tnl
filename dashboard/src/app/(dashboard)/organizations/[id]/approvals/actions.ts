@@ -72,7 +72,7 @@ export async function approveSubmission(
   // Fetch submission details for feed item
   const { data: subDetails } = await client
     .from('task_submissions')
-    .select('user_id, challenge_id, selected_tier_index, tasks(title, points, points_tiers), profiles:user_id(name)')
+    .select('user_id, challenge_id, selected_tier_index, task_snapshot, tasks(title, points, points_tiers), profiles:user_id(name)')
     .eq('id', submissionId)
     .single()
 
@@ -86,12 +86,23 @@ export async function approveSubmission(
   // default here was tasks.points, so leaving the override blank would have
   // awarded 10 instead of 200 and quietly underpaid the member.
   //
-  // Never fired: all 48 admin approvals of a tiered submission so far happened
-  // to have an override typed. Found by audit before it did.
+  // Never fired for a while: 48 admin approvals of a tiered submission all
+  // happened to have an override typed. It fired on 23 Aug -- three needs_review
+  // submissions paid the base 10 instead of the claimed tier (150, 200, 150).
+  // The LIVE join's tasks.points_tiers[index] came back empty for those three
+  // for reasons never fully pinned down, and the code fell straight through to
+  // tasks.points with no one noticing until a captain flagged the payout.
+  //
+  // Snapshot first, live join second: task_snapshot.selected_tier is written
+  // once at submission time and never depends on a join resolving correctly at
+  // approval time. On all three broken rows it held the right tier.points the
+  // whole time -- admin-queries.ts already prefers it for this exact reason,
+  // this action just never matched that.
   const tierPoints: number | null =
-    sd?.selected_tier_index != null
+    sd?.task_snapshot?.selected_tier?.points ??
+    (sd?.selected_tier_index != null
       ? (sd?.tasks?.points_tiers?.[sd.selected_tier_index]?.points ?? null)
-      : null
+      : null)
   const finalPoints = pointsOverride ?? tierPoints ?? sd?.tasks?.points ?? 0
   const taskTitle: string = sd?.tasks?.title ?? 'a task'
   const memberName: string = sd?.profiles?.name ?? 'A member'

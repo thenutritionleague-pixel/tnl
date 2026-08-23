@@ -743,7 +743,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: sub } = await supabase
       .from('task_submissions')
-      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, submitted_at, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
+      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, task_snapshot, submitted_at, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
       .eq('id', submissionId).single()
 
     if (!sub?.proof_url) {
@@ -759,7 +759,17 @@ Deno.serve(async (req: Request) => {
     const memberName: string = sd.profiles?.name ?? 'A member'
     const tiers: Tier[] | null = sd.tasks?.points_tiers ?? null
     const claimedTierIndex: number | null = sd.selected_tier_index ?? null
-    const claimedTier: Tier | null = (tiers && claimedTierIndex != null) ? (tiers[claimedTierIndex] ?? null) : null
+    // Snapshot first, live join second. On 23 Aug the equivalent lookup in
+    // approveSubmission() (dashboard) silently returned null on 3 real
+    // submissions -- points_tiers[index] came back empty off the live join for
+    // reasons never fully pinned down, and finalPoints fell through to the
+    // task's base value instead of the claimed tier (10 instead of 150/200).
+    // task_snapshot.selected_tier is written once at submission time and
+    // never depends on a join resolving correctly later; it held the right
+    // tier on all three broken rows.
+    const claimedTier: Tier | null =
+      sd.task_snapshot?.selected_tier ??
+      ((tiers && claimedTierIndex != null) ? (tiers[claimedTierIndex] ?? null) : null)
     const submittedAt: string = sd.submitted_at ?? new Date().toISOString()
     // reanalyze_submission() stamps ai_started_at = now() on every forced re-check
     // but never touches submitted_at. A re-check of a days-old submission was
