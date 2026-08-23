@@ -70,8 +70,17 @@ function isTransientError(msg: string): boolean {
 const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
 
 // Largest original we will pull into edge-function memory when Bunny's
-// transcode has stalled. Comfortably above a normal 1080p phone clip.
-const FALLBACK_MAX_BYTES = 60 * 1024 * 1024
+// transcode has stalled. Was 60MB, sized for a compressed native-app upload —
+// but this member base is 100% Flutter web, which skips client-side
+// compression entirely (video_compress has no web implementation) and allows
+// raw uploads up to 500MB. A typical uncompressed phone clip is 60-150MB, so
+// the old cap meant the fallback almost never actually fired for real
+// members; they just sat on Bunny's transcode with no safety net. Raised to
+// match the native app's own hard upload cap (200MB) -- the pipeline already
+// handles files this size safely today via Gemini's File API upload path
+// (anything over INLINE_LIMIT), which is used on every successfully
+// transcoded video regardless of size, so this isn't new memory pressure.
+const FALLBACK_MAX_BYTES = 200 * 1024 * 1024
 
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
