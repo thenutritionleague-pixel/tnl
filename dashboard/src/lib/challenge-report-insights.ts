@@ -9,8 +9,37 @@
 
 import type { ReportStats } from '@/app/(dashboard)/organizations/[id]/reports/[cid]/actions'
 
+/**
+ * Dense rank over a points-descending team list: teams level on points share a
+ * place and the next different score takes the next number — 2000/2000/1900
+ * are 1st, 1st, 2nd.
+ *
+ * The report used to rank by array index, so two teams on identical points were
+ * handed different positions decided by nothing but sort order, and one of them
+ * would have taken GOLD while the other took SILVER on the same score. The
+ * member app has always used dense rank, so the app and the published report
+ * disagreed for every tied team — 14 of 116 at the time this was written.
+ *
+ * @param teams sorted DESC by points
+ * @returns rank per team, parallel to the input array
+ */
+export function denseRanks(teams: Array<{ teamPoints: number }>): number[] {
+  const out: number[] = []
+  let rank = 0
+  let prev: number | null = null
+  for (const t of teams) {
+    if (prev === null || t.teamPoints !== prev) {
+      rank += 1
+      prev = t.teamPoints
+    }
+    out.push(rank)
+  }
+  return out
+}
+
 export type OverallInsights = {
-  topThree: Array<{ rank: number; teamName: string; points: number; consistencyPct: number }>
+  /** One entry per PLACE, not per team: tied teams share a place and are all named. */
+  topThree: Array<{ rank: number; teamNames: string[]; points: number; consistencyPct: number }>
   mostImproved: { teamName: string; growthPct: number; fromWeek: number; toWeek: number } | null
   biggestDrop:  { teamName: string; dropPct: number; fromWeek: number; toWeek: number } | null
   peakWeek:     { week: number; points: number }
@@ -49,13 +78,23 @@ function computeOverall(stats: ReportStats): OverallInsights {
   const teams = stats.teams // already sorted DESC by points
   const totalWeeks = stats.challenge.totalWeeks
 
-  // Top 3
-  const topThree = teams.slice(0, 3).map((t, i) => ({
-    rank: i + 1,
-    teamName: t.teamName,
-    points: t.teamPoints,
-    consistencyPct: t.consistencyPct,
-  }))
+  // The top three PLACES, not the top three rows. Teams level on points share a
+  // place and are all named on it, so the podium can never award GOLD and
+  // SILVER to two identical scores.
+  const ranks = denseRanks(teams)
+  const topThree = [1, 2, 3].flatMap(place => {
+    const tied = teams.filter((_, i) => ranks[i] === place)
+    if (tied.length === 0) return []
+    return [{
+      rank: place,
+      teamNames: tied.map(t => t.teamName),
+      points: tied[0].teamPoints,
+      // Tied teams rarely share a consistency figure; averaging is the only
+      // honest single number for the place.
+      consistencyPct: Math.round(
+        (tied.reduce((s, t) => s + t.consistencyPct, 0) / tied.length) * 10) / 10,
+    }]
+  })
 
   // Most-improved / biggest-drop — look at week-over-week deltas across all teams
   let bestGrowth: OverallInsights['mostImproved'] = null
@@ -227,8 +266,11 @@ function computeTeam(
 
 export function computeInsights(stats: ReportStats): Insights {
   const perTeam: Record<string, TeamInsights> = {}
+  // Dense rank, so "finished #5" in a team's own summary matches both the
+  // standings list and what the member saw in the app.
+  const ranks = denseRanks(stats.teams)
   stats.teams.forEach((team, i) => {
-    perTeam[team.teamId] = computeTeam(team, i + 1, stats)
+    perTeam[team.teamId] = computeTeam(team, ranks[i], stats)
   })
   return {
     overall: computeOverall(stats),

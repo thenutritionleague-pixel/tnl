@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { ArrowLeft, Printer, Trophy, TrendingUp, TrendingDown, Users, Activity, Award, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
-import { computeInsights, type Insights, type TeamInsights } from '@/lib/challenge-report-insights'
+import { computeInsights, denseRanks, type Insights, type TeamInsights } from '@/lib/challenge-report-insights'
 import type { ReportStats } from '../actions'
 
 interface Props {
@@ -17,6 +17,9 @@ interface Props {
 export function ReportClient({ orgId, challengeId, stats }: Props) {
   const insights: Insights = useMemo(() => computeInsights(stats), [stats])
   const sortedTeams = useMemo(() => [...stats.teams].sort((a, b) => b.teamPoints - a.teamPoints), [stats.teams])
+  // Dense rank on the tab strip too, so a team's number is the same wherever it
+  // appears — tab, podium, standings, its own summary, and the member app.
+  const tabRanks = useMemo(() => denseRanks(sortedTeams), [sortedTeams])
   const [activeTab, setActiveTab] = useState<'overall' | string>('overall')
 
   const currentTeam = activeTab !== 'overall' ? sortedTeams.find(t => t.teamId === activeTab) : null
@@ -72,7 +75,7 @@ export function ReportClient({ orgId, challengeId, stats }: Props) {
           <TabBtn active={activeTab === 'overall'} onClick={() => setActiveTab('overall')}>League Overview</TabBtn>
           {sortedTeams.map((t, i) => (
             <TabBtn key={t.teamId} active={activeTab === t.teamId} onClick={() => setActiveTab(t.teamId)}>
-              <span className="text-[10px] font-bold text-muted-foreground mr-1.5">#{i + 1}</span>
+              <span className="text-[10px] font-bold text-muted-foreground mr-1.5">#{tabRanks[i]}</span>
               {t.teamName}
             </TabBtn>
           ))}
@@ -153,6 +156,10 @@ function OverallSection({ stats, sortedTeams, insights, onPickTeam }: {
 }) {
   const maxPoints = Math.max(...sortedTeams.map(t => t.teamPoints), 1)
   const o = insights.overall
+  // Dense rank, matching the podium, each team's own summary, and the member
+  // app. The list used to number by array index, so tied teams were shown
+  // different positions here than the members saw all week.
+  const standingRanks = useMemo(() => denseRanks(sortedTeams), [sortedTeams])
 
   return (
     <div className="space-y-6">
@@ -221,8 +228,17 @@ function OverallSection({ stats, sortedTeams, insights, onPickTeam }: {
                   <span className="text-[11px] font-semibold text-muted-foreground">
                     {t.rank === 1 ? 'GOLD' : t.rank === 2 ? 'SILVER' : 'BRONZE'}
                   </span>
+                  {t.teamNames.length > 1 && (
+                    <span className="text-[11px] font-semibold text-muted-foreground">
+                      · {t.teamNames.length}-way tie
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-bold text-foreground truncate">{t.teamName}</p>
+                {/* Every team on this place is named. Two identical scores must
+                    never be split into GOLD and SILVER by sort order. */}
+                {t.teamNames.map(name => (
+                  <p key={name} className="text-sm font-bold text-foreground truncate">{name}</p>
+                ))}
                 <p className="text-xs text-muted-foreground mt-1">
                   {t.points.toLocaleString()} pts · {t.consistencyPct}% consistency
                 </p>
@@ -249,9 +265,12 @@ function OverallSection({ stats, sortedTeams, insights, onPickTeam }: {
               >
                 <div className={cn(
                   'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold',
-                  i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-zinc-100 text-zinc-700' : i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-muted text-muted-foreground'
+                  standingRanks[i] === 1 ? 'bg-amber-100 text-amber-700'
+                    : standingRanks[i] === 2 ? 'bg-zinc-100 text-zinc-700'
+                    : standingRanks[i] === 3 ? 'bg-orange-100 text-orange-700'
+                    : 'bg-muted text-muted-foreground'
                 )}>
-                  #{i + 1}
+                  #{standingRanks[i]}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-foreground truncate">{t.teamName}</p>
