@@ -471,11 +471,17 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
   // sees them, so every row still reaching this panel is a NEAR match (1-8 bits)
   // with, by definition, a different hash. The query found nothing, the function
   // returned null, and "Compare photos" appeared to do nothing at all.
+  // NOT scoped to cur.task_id. The AI's own check (analyze-submission) compares
+  // this photo against the member's last 50 approved photos ACROSS EVERY TASK
+  // in the org, then reports whichever is closer -- same-task or cross-task.
+  // Scoping this query to only the current task meant a cross-task match (e.g.
+  // "looks similar to the one submitted for Crunch Before Lunch") could never
+  // be found here: the panel always said "No earlier photo to compare" for
+  // exactly the flags naming a different task.
   const { data: candidates } = await client
     .from('task_submissions')
     .select('proof_url, submitted_date, proof_hash')
     .eq('user_id', cur.user_id)
-    .eq('task_id', cur.task_id)
     .eq('org_id', cur.org_id)
     .eq('status', 'approved')
     .not('proof_hash', 'is', null)
