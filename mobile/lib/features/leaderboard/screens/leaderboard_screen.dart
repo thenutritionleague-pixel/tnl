@@ -11,6 +11,7 @@ import '../../../core/utils/avatar_url.dart';
 import '../../../core/utils/session_mixin.dart';
 import '../../../core/widgets/user_avatar.dart';
 import '../../../core/theme/theme_colors.dart';
+import '../week_summary.dart';
 
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -958,92 +959,26 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     return max(1, (diff / 7).floor() + 1);
   }
 
-  // ── Aggregate entries by task title ──────────────────────────────────────
-  Map<String, Map<String, dynamic>> _aggregateWeekEntries(
-      List<Map<String, dynamic>> entries) {
-    final Map<String, Map<String, dynamic>> byTask = {};
-    for (final e in entries) {
-      final title = e['title'] as String? ?? '';
-      final status = e['status'] as String? ?? 'approved';
-      byTask.putIfAbsent(title, () => {
-        'icon': e['icon'] ?? '📋',
-        'approved': <Map<String, dynamic>>[],
-        'missed': 0,
-        'rejected': 0,
-        'basePts': 0,
-      });
-      // Keep the highest known base points for this task
-      final incoming = e['points'] as int? ?? 0;
-      if (incoming > (byTask[title]!['basePts'] as int)) {
-        byTask[title]!['basePts'] = incoming;
-      }
-      if (status == 'approved') {
-        (byTask[title]!['approved'] as List<Map<String, dynamic>>).add(e);
-      } else if (status == 'missed') {
-        byTask[title]!['missed'] = (byTask[title]!['missed'] as int) + 1;
-      } else if (status == 'rejected') {
-        byTask[title]!['rejected'] = (byTask[title]!['rejected'] as int) + 1;
-      }
-    }
-    return byTask;
-  }
-
   // ── Aggregate row widgets (past weeks) ───────────────────────────────────
+  //
+  // The arithmetic lives in week_summary.dart as a pure function, covered by
+  // test/week_summary_test.dart. It used to sit inline here, where no test
+  // could reach it, and every display bug members reported during the event
+  // was a mistake in exactly this maths.
   List<Widget> _buildAggregateRows(List<Map<String, dynamic>> entries) {
-    final agg = _aggregateWeekEntries(entries);
-    return agg.entries.map((e) {
-      final title = e.key;
-      final data = e.value;
-      final approved = data['approved'] as List<Map<String, dynamic>>;
-      // Only the ledger's own "Task missed:" rows count as a miss.
-      //
-      // This used to add an "implicit" miss for every day of the week the
-      // member had no approval, which silently assumed each task ran all seven
-      // days. None of them did: Task 0 ran on 16 Aug alone and the Plank Stand
-      // on 22 Aug alone, so members who completed both were told they had
-      // missed each of them six times. The number barely depended on the
-      // member, which is why captains saw the same 6/2/3/4/5/6 for everyone.
-      //
-      // The database already writes one missed row per genuinely missed day,
-      // and only from the day the member joined (migration 055). It is the one
-      // honest source, so it is now the only one.
-      final missed = data['missed'] as int;
-      final rejected = data['rejected'] as int;
-      final earned =
-          approved.fold<int>(0, (s, x) => s + (x['points'] as int? ?? 0));
-      // Days this task actually ran for THIS member, not days in the week.
-      final totalDays = approved.length + missed + rejected;
-      final hasIssues = missed > 0 || rejected > 0;
-
-      // "5 days × 🥦 100" only holds when every approved day paid the same. A
-      // tiered task can pay 100 one day and 200 the next — which is how
-      // "5/7 days × 🥦 100" came to sit beside a total of 700. When the daily
-      // amounts differ, show the day count and let the total speak.
-      final dayPoints = approved.map((x) => x['points'] as int? ?? 0).toSet();
-      final sameEveryDay = dayPoints.length == 1;
-      // Several tasks ran on a single day, so "1 days" is now reachable where
-      // the old hardcoded 7 never let it show.
-      final dayWord = totalDays == 1 ? 'day' : 'days';
-      final daysLabel = totalDays == 0
-          ? ''
-          : sameEveryDay
-              ? (hasIssues
-                  ? '${approved.length}/$totalDays $dayWord × 🥦 ${dayPoints.first}'
-                  : '$totalDays $dayWord × 🥦 ${dayPoints.first}')
-              : (hasIssues
-                  ? '${approved.length}/$totalDays $dayWord'
-                  : '$totalDays $dayWord');
-      final indicators = [
-        if (rejected > 0) '$rejected rejected',
-        if (missed > 0) '$missed missed',
-      ].join(' · ');
+    return summariseWeek(entries).map((s) {
+      final title = s.title;
+      final earned = s.earned;
+      final hasIssues = s.hasIssues;
+      final daysLabel = s.daysLabel;
+      final indicators = s.indicators;
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(data['icon'] as String,
+            Text(s.icon,
                 style: const TextStyle(fontSize: 13)),
             const SizedBox(width: 6),
             Expanded(
