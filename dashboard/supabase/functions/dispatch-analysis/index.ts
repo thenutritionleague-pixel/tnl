@@ -90,6 +90,18 @@ Deno.serve(async () => {
     // First-time analysis: never claimed, submitted long enough ago that the
     // original insert-trigger has had its chance, and recent enough to still
     // matter. Mirrors the window the cron used to query directly.
+    // ORDER MATTERS, and ordering by submitted_at alone was a head-of-line
+    // blocking bug: a submission whose video is still transcoding gets kicked,
+    // immediately returns to ai_status=null ("still processing — will retry"),
+    // and is therefore STILL among the oldest next cycle. Twenty-five stuck
+    // rows monopolised every single dispatch, and the ~80 submissions behind
+    // them were never reached at all -- the queue sat flat at ~105 for
+    // minutes while the same 25 were retried over and over.
+    //
+    // Ordering by last-attempt instead makes this self-correcting: anything
+    // just tried moves to the back, so every row gets its turn. Rows never
+    // attempted (ai_started_at null) sort first, which is what we want -- a
+    // brand new submission should not queue behind a known-stuck one.
     const { data: fresh } = await supabase
       .from('task_submissions')
       .select('id, org_id')
@@ -97,6 +109,7 @@ Deno.serve(async () => {
       .eq('status', 'pending')
       .lt('submitted_at', new Date(Date.now() - 2 * 60_000).toISOString())
       .gt('submitted_at', new Date(Date.now() - 6 * 60 * 60_000).toISOString())
+      .order('ai_started_at', { ascending: true, nullsFirst: true })
       .order('submitted_at', { ascending: true })
       .limit(BATCH)
 
