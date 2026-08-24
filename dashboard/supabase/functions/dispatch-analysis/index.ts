@@ -47,13 +47,17 @@ const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // per-minute ceiling. Each kick becomes its own independent analyze-submission
 // invocation with its own memory and time budget, so this is bounded by how
 // much concurrent AI work is sensible, not by anything in this function.
-const BATCH = 25
+// Raised from 25 on results night. Measured intake was ~8 videos/min against
+// ~2.3 completions/min, so the queue grew by roughly 6/min no matter how
+// healthy dispatch was. The ceiling was this batch size, not the AI: each kick
+// is an independent invocation, and the ones that find Bunny still transcoding
+// return in ~8s rather than occupying a slot for a full analysis.
+const BATCH = 60
 
-// Spacing between kicks. Small, but non-zero: it keeps us from opening 25
-// sockets in the same millisecond, which is the shape of load that was
-// upsetting pg_net in the first place. 120ms * 25 = 3s total, well inside the
-// function's budget.
-const KICK_SPACING_MS = 120
+// Spacing between kicks. Small, but non-zero: it keeps us from opening every
+// socket in the same millisecond, which is the shape of load that was upsetting
+// pg_net in the first place. 60ms * 60 = 3.6s total, well inside budget.
+const KICK_SPACING_MS = 60
 
 type Row = { id: string; org_id: string; forced: boolean }
 
