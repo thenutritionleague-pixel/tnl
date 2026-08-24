@@ -99,7 +99,7 @@ const STREAM_THRESHOLD_BYTES = 80 * 1024 * 1024
 // So: stream the originals that can realistically finish, and let anything
 // larger wait for Bunny's own transcode, after which play_720p is ~20-40MB and
 // analyses in seconds. Waiting is genuinely faster than failing repeatedly.
-const FALLBACK_STREAM_CEILING = 150 * 1024 * 1024
+const FALLBACK_STREAM_CEILING = 200 * 1024 * 1024
 
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
