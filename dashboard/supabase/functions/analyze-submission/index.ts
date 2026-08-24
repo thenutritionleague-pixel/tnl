@@ -296,7 +296,23 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
   // Size-capped: fetchVideo() pulls the whole file into memory, so a huge
   // original (an 8K phone recording can be ~184 MB) would exhaust the edge
   // function. Those stay 'pending' for the rescue sweep to hand to an admin.
-  const fallbackUrl = await bunnyResolvePlayableUrl(guid)
+  // Go STRAIGHT to /original -- do not probe play_720p/480p/360p/240p/1080p.
+  //
+  // Those renditions are produced BY the transcode, so if we are here (status
+  // never reached 4) they cannot exist, and every probe is a guaranteed miss
+  // costing up to 5s each. That was ~30s burned per stuck video just to learn
+  // what the status already told us. With ~150 videos cycling through a
+  // Bunny backlog on results night, that wasted time was the pipeline's real
+  // throughput ceiling -- slots sat occupied doing nothing but timing out.
+  // The original is uploaded intact and downloadable the whole time, which is
+  // exactly what this fallback wants anyway.
+  const fallbackUrl = await (async () => {
+    const orig = await bunnySignPath(`/${guid}/original`)
+    try {
+      const h = await fetch(orig, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+      return h.ok ? orig : null
+    } catch { return null }
+  })()
   if (fallbackUrl) {
     try {
       const head = await fetch(fallbackUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
