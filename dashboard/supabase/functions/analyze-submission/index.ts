@@ -101,6 +101,22 @@ const STREAM_THRESHOLD_BYTES = 80 * 1024 * 1024
 // analyses in seconds. Waiting is genuinely faster than failing repeatedly.
 const FALLBACK_STREAM_CEILING = 200 * 1024 * 1024
 
+// DISABLED (set to 0).
+//
+// Analysing only the opening ~12 seconds means the model never sees the rest
+// of the attempt. Even though the video prompt treats rep count as advisory
+// and never rejects on it, a verdict formed from a fragment is not the same
+// check as a verdict formed from the whole recording, and it would be recorded
+// as though it were. On a national final that is not an acceptable trade:
+// better to leave a submission waiting than to approve or reject it on
+// partial evidence.
+//
+// The mechanism is kept, gated behind this constant, because it is the only
+// way found to analyse a 250-300MB upload inside the worker's memory ceiling.
+// It becomes reasonable only if it is ever explicitly chosen, and only paired
+// with a clear marker on the submission saying the review was partial.
+const PREFIX_FALLBACK_BYTES = 0
+
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
   approved:   boolean
@@ -121,6 +137,7 @@ type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
 // video record we already fetch -- so duration costs no extra request.
 type BunnyPollResult =
   | { kind: 'ready'; url: string; lengthSeconds: number | null; sizeBytes?: number }
+  | { kind: 'prefix'; bytes: Uint8Array; lengthSeconds: number | null }
   | { kind: 'pending' }
   | { kind: 'failed'; reason: string }
 
@@ -365,6 +382,43 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
   } catch (e) {
     console.warn('[bunny] original probe error', e instanceof Error ? e.message : e)
   }
+  // LAST RESORT: analyse a decodable PREFIX of the original.
+  //
+  // The whole file cannot be moved -- the edge function OOMs
+  // (WORKER_RESOURCE_LIMIT) long before 250-300MB is in hand. But phone
+  // uploads are frequently written "faststart", with the moov atom at the
+  // FRONT, which makes the first N megabytes a complete, playable clip in its
+  // own right. Measured on the 24 Aug backlog: half the stuck videos are
+  // faststart, and at ~3MB/s a 40MB prefix is roughly 12 seconds of footage --
+  // ample for the only question the video path actually asks, which is whether
+  // this is a genuine attempt at the right exercise.
+  //
+  // Strictly gated: if 'moov' is not in the prefix the file is moov-at-end,
+  // the bytes are undecodable on their own, and we return pending rather than
+  // feed the model garbage and let it invent a verdict.
+  if (PREFIX_FALLBACK_BYTES > 0) {
+    try {
+      const pr = await fetch(orig, {
+        headers: { Range: `bytes=0-${PREFIX_FALLBACK_BYTES - 1}` },
+        signal: AbortSignal.timeout(120_000),
+      })
+      if (pr.ok || pr.status === 206) {
+        const buf = new Uint8Array(await pr.arrayBuffer())
+        let hasMoov = false
+        for (let i = 0; i + 3 < buf.length; i++) {
+          if (buf[i] === 0x6d && buf[i + 1] === 0x6f && buf[i + 2] === 0x6f && buf[i + 3] === 0x76) { hasMoov = true; break }
+        }
+        if (hasMoov) {
+          console.log('[bunny] using decodable prefix', buf.byteLength, 'bytes of', total)
+          return { kind: 'prefix', bytes: buf, lengthSeconds: null }
+        }
+        console.log('[bunny] prefix not decodable (moov at end); waiting for transcode')
+      }
+    } catch (e) {
+      console.warn('[bunny] prefix fetch failed', e instanceof Error ? e.message : e)
+    }
+  }
+
   return { kind: 'pending' }
 }
 
@@ -716,6 +770,7 @@ async function decideVideo(
   requiredReps: number | null = null,
   durationSeconds: number | null = null,
   sizeBytes: number | null = null,
+  prefixBytes: Uint8Array | null = null,
 ): Promise<Decision> {
   const hasReference = references.length > 0
   const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints, references.length, requiredReps, durationSeconds)
@@ -725,7 +780,14 @@ async function decideVideo(
   // without a second transfer.
   let video: { bytes: Uint8Array; mime: string } | null = null
   let streamed: { fileUri: string; fileName: string } | null = null
-  if (sizeBytes != null && sizeBytes > STREAM_THRESHOLD_BYTES) {
+  if (prefixBytes) {
+    // Already in hand: a faststart prefix pulled because the full original is
+    // too large to move. runVideoModel routes it through Gemini's File API
+    // (it is over INLINE_LIMIT), which is the same path a normal large video
+    // takes -- the only difference is that this clip is the opening seconds
+    // rather than the whole recording.
+    video = { bytes: prefixBytes, mime: 'video/mp4' }
+  } else if (sizeBytes != null && sizeBytes > STREAM_THRESHOLD_BYTES) {
     console.log('[video] streaming', sizeBytes, 'bytes to Gemini (too large to buffer)')
     streamed = await streamVideoToGemini(signedUrl, sizeBytes, 'video/mp4')
   } else {
@@ -1001,10 +1063,12 @@ Deno.serve(async (req: Request) => {
       let videoUrl: string | null = null
       let videoSeconds: number | null = null
       let videoSize: number | null = null
+      let videoPrefix: Uint8Array | null = null
       if (isBunny) {
         const guid = sub.proof_url.replace('bunny://', '')
         const poll = await bunnyCheckStatus(guid)
         if (poll.kind === 'ready') { videoUrl = poll.url; videoSeconds = poll.lengthSeconds; videoSize = poll.sizeBytes ?? null }
+        else if (poll.kind === 'prefix') { videoPrefix = poll.bytes; videoSeconds = null }
         else if (poll.kind === 'pending') {
           await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'retry' }), { status: 200 })
@@ -1030,7 +1094,7 @@ Deno.serve(async (req: Request) => {
       //
       // Only runs when the admin set a minimum AND Bunny reported a length;
       // either being absent means the rule is simply off for this submission.
-      if (minVideoSeconds != null && videoSeconds != null && videoSeconds < minVideoSeconds) {
+      if (videoPrefix == null && minVideoSeconds != null && videoSeconds != null && videoSeconds < minVideoSeconds) {
         const msg = `This video is ${videoSeconds} seconds long, but this task needs at least ${minVideoSeconds} seconds so the full set is visible. Please record the whole set in one take and upload again.`
         await supabase.from('task_submissions').update({
           ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
@@ -1117,7 +1181,7 @@ Deno.serve(async (req: Request) => {
       // lookup/fetch problem. Analysis proceeds exactly as before when absent.
       const identityRefs = await fetchIdentityAnchors(sub.user_id, orgId, submissionId)
       try {
-        decision = await decideVideo(videoUrl!, taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds, videoSize)
+        decision = await decideVideo(videoUrl ?? '', taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds, videoSize, videoPrefix)
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/video]', errMsg)
