@@ -753,16 +753,33 @@ Deno.serve(async (req: Request) => {
     // it, a first-time analysis claimed moments before the 45-min mark had no
     // way to prove it was still running and got stomped back to needs_review
     // mid-check, same bug as the forced-recheck case, just the other origin.
-    const { data: claimed } = await supabase.from('task_submissions').update({ ai_status: 'analyzing', ai_started_at: new Date().toISOString() }).is('ai_status', null).eq('id', submissionId).select('id')
+    //
+    // claimToken is this run's FENCING TOKEN. Every write below is gated on
+    // ai_started_at still equalling it, so an older run that is still in flight
+    // when a newer one starts can no longer write anything -- it discovers it
+    // was superseded and exits. Without this, an admin hitting Re-analyze while
+    // an analysis was already running produced TWO concurrent reviews of the
+    // same submission, and whichever finished last silently overwrote the
+    // other's verdict. reanalyze_submission stamps a fresh ai_started_at, which
+    // is exactly what invalidates the older run's token.
+    const claimToken = new Date().toISOString()
+    const { data: claimed } = await supabase.from('task_submissions').update({ ai_status: 'analyzing', ai_started_at: claimToken }).is('ai_status', null).eq('id', submissionId).select('id')
     if (!claimed || claimed.length === 0) return new Response(JSON.stringify({ skipped: true }), { status: 200 })
 
     const { data: sub } = await supabase
       .from('task_submissions')
       .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, task_snapshot, submitted_at, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
-      .eq('id', submissionId).single()
+      .eq('id', submissionId).eq('ai_started_at', claimToken).maybeSingle()
 
-    if (!sub?.proof_url) {
-      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'No proof image found.' }).eq('id', submissionId)
+    // Superseded before we even started reading -- bail out before spending a
+    // single AI call on a verdict that could never be written.
+    if (!sub) {
+      console.log('[analyze-submission] superseded before analysis began', submissionId)
+      return new Response(JSON.stringify({ skipped: 'superseded' }), { status: 200 })
+    }
+
+    if (!sub.proof_url) {
+      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'No proof image found.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
       return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
     }
 
@@ -805,7 +822,7 @@ Deno.serve(async (req: Request) => {
     const requeueOrReview = async (errMsg: string, reviewFeedback: string) => {
       const canRetry = isTransientError(errMsg) && (Date.now() - new Date(retryAnchor).getTime()) < RETRY_MAX_AGE_MS
       if (canRetry) {
-        await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Reviewer busy — retrying automatically.' }).eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Reviewer busy — retrying automatically.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
         return new Response(JSON.stringify({ aiStatus: 'retry', error: errMsg }), { status: 200 })
       }
       // reviewFeedback used to carry the provider's raw error, so an admin saw
@@ -814,7 +831,7 @@ Deno.serve(async (req: Request) => {
         ? 'The AI service was busy for too long on this one. The proof is fine — please review it manually.'
         : 'The AI could not analyse this proof automatically. Please review it manually.'
       console.error('[analyze-submission/needs_review]', reviewFeedback)
-      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: humane }).eq('id', submissionId)
+      await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: humane }).eq('id', submissionId).eq('ai_started_at', claimToken)
       return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
     }
 
@@ -826,7 +843,7 @@ Deno.serve(async (req: Request) => {
 
     if (medium === 'video') {
       if (!GEMINI_API_KEY) {
-        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' }).eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Video proof — admin review required.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
         return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'gemini_not_configured' }), { status: 200 })
       }
       let videoUrl: string | null = null
@@ -836,17 +853,17 @@ Deno.serve(async (req: Request) => {
         const poll = await bunnyCheckStatus(guid)
         if (poll.kind === 'ready') { videoUrl = poll.url; videoSeconds = poll.lengthSeconds }
         else if (poll.kind === 'pending') {
-          await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId)
+          await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'retry' }), { status: 200 })
         } else {
-          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: poll.reason }).eq('id', submissionId)
+          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: poll.reason }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'bunny_failed' }), { status: 200 })
         }
       } else {
         const { data: signed } = await supabase.storage.from('task-proofs').createSignedUrl(sub.proof_url, 300)
         videoUrl = signed?.signedUrl ?? null
         if (!videoUrl) {
-          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof video.' }).eq('id', submissionId)
+          await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof video.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
         }
       }
@@ -865,7 +882,7 @@ Deno.serve(async (req: Request) => {
         await supabase.from('task_submissions').update({
           ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
           status: 'rejected', rejection_reason: msg, reviewed_at: new Date().toISOString(),
-        }).eq('id', submissionId)
+        }).eq('id', submissionId).eq('ai_started_at', claimToken)
         await supabase.from('feed_items').insert({
           org_id: orgId, type: 'submission_rejected',
           title: `Your ${taskTitle} submission was not approved`,
@@ -898,7 +915,7 @@ Deno.serve(async (req: Request) => {
               let fingerprint = ''
               for (const b of digest) fingerprint += b.toString(16).padStart(2, '0')
 
-              await supabase.from('task_submissions').update({ video_fingerprint: fingerprint }).eq('id', submissionId)
+              await supabase.from('task_submissions').update({ video_fingerprint: fingerprint }).eq('id', submissionId).eq('ai_started_at', claimToken)
 
               const { data: priorRows } = await supabase
                 .from('task_submissions')
@@ -933,7 +950,7 @@ Deno.serve(async (req: Request) => {
                   : `This video looks like one already submitted by another member on ${prior.submitted_date}${priorTask} — please confirm.`
                 await supabase.from('task_submissions').update({
                   ai_status: 'needs_review', ai_feedback: msg, ai_confidence: 0.9,
-                }).eq('id', submissionId).eq('status', 'pending')
+                }).eq('id', submissionId).eq('ai_started_at', claimToken).eq('status', 'pending')
                 return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'possible_duplicate_video' }), { status: 200 })
               }
             }
@@ -957,12 +974,12 @@ Deno.serve(async (req: Request) => {
       // ---- IMAGE (GPT-4o + pHash) ----
       const { data: signed } = await supabase.storage.from('task-proofs').createSignedUrl(sub.proof_url, 120)
       if (!signed?.signedUrl) {
-        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof image.' }).eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not access proof image.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
         return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
       }
       const bytes = await fetchBytes(signed.signedUrl)
       if (!bytes) {
-        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not download proof image.' }).eq('id', submissionId)
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'Could not download proof image.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
         return new Response(JSON.stringify({ aiStatus: 'needs_review' }), { status: 200 })
       }
       const currentBase64 = bytesToBase64(bytes)
@@ -1006,7 +1023,7 @@ Deno.serve(async (req: Request) => {
             ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
             status: 'rejected', rejection_reason: msg,
             reviewed_at: new Date().toISOString(),
-          }).eq('id', submissionId).eq('status', 'pending')
+          }).eq('id', submissionId).eq('ai_started_at', claimToken).eq('status', 'pending')
           await supabase.from('feed_items').insert({
             org_id: orgId, type: 'submission_rejected',
             title: `Your ${taskTitle} submission was not approved`,
@@ -1047,7 +1064,7 @@ Deno.serve(async (req: Request) => {
           }
         }
         console.log('[phash]', JSON.stringify({ submissionId, sameTaskMinDist, crossTaskMinDist }))
-        await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId)
+        await supabase.from('task_submissions').update({ proof_hash: myHash }).eq('id', submissionId).eq('ai_started_at', claimToken)
       }
 
       // Numeric target, in priority order:
@@ -1165,9 +1182,20 @@ Deno.serve(async (req: Request) => {
     // up to 150s later. Without a guard the AI would overwrite that decision --
     // approving something a human had just rejected, points and all. Re-checking
     // status here means the last word belongs to the person, not the model.
+    //
+    // The token match doubles as the supersession check. If a newer run has
+    // claimed this submission since we started, our token no longer matches and
+    // this returns nothing -- we must stop here. Every UPDATE below is fenced,
+    // so a superseded run cannot write a verdict, but it could still have
+    // posted a feed item ("X completed Y") for a verdict that never landed.
+    // Returning early is what keeps the two consistent.
     const { data: stillPending } = await supabase
-      .from('task_submissions').select('status').eq('id', submissionId).single()
-    if (stillPending && stillPending.status !== 'pending') {
+      .from('task_submissions').select('status').eq('id', submissionId).eq('ai_started_at', claimToken).maybeSingle()
+    if (!stillPending) {
+      console.log('[analyze-submission] superseded by a newer run; discarding this verdict', submissionId)
+      return new Response(JSON.stringify({ skipped: 'superseded' }), { status: 200 })
+    }
+    if (stillPending.status !== 'pending') {
       if (!forced) {
         console.log('[analyze-submission] decided by a human while analysing; leaving it alone', submissionId)
         return new Response(JSON.stringify({ skipped: 'already_decided' }), { status: 200 })
@@ -1183,7 +1211,7 @@ Deno.serve(async (req: Request) => {
         ai_feedback: decision.feedback || null,
         ai_confidence: decision.confidence,
         ai_video_model: decision.model ?? null,
-      }).eq('id', submissionId)
+      }).eq('id', submissionId).eq('ai_started_at', claimToken)
       return new Response(JSON.stringify({
         aiStatus: decision.status, forced: true, statusUnchanged: stillPending.status,
       }), { status: 200 })
@@ -1211,7 +1239,7 @@ Deno.serve(async (req: Request) => {
     } else if (aiStatus === 'rejected') {
       sharedUpdate.status = 'rejected'; sharedUpdate.rejection_reason = feedback || 'Rejected by AI review.'; sharedUpdate.reviewed_at = new Date().toISOString()
     }
-    const { error: writeErr } = await supabase.from('task_submissions').update(sharedUpdate).eq('id', submissionId).eq('status', 'pending')
+    const { error: writeErr } = await supabase.from('task_submissions').update(sharedUpdate).eq('id', submissionId).eq('ai_started_at', claimToken).eq('status', 'pending')
     if (writeErr) throw new Error(`Shared write failed: ${writeErr.message}`)
 
     if (aiStatus === 'approved') {
@@ -1227,7 +1255,7 @@ Deno.serve(async (req: Request) => {
     if (submissionId) {
       // Unexpected (non-API) failure: send to admin review as a bounded last
       // resort. Throttle/rate-limit self-heal is handled by requeueOrReview above.
-      try { await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' }).eq('id', submissionId).eq('ai_status', 'analyzing') } catch { /* ignore */ }
+      try { await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'AI analysis failed — please review manually.' }).eq('id', submissionId).eq('ai_started_at', claimToken).eq('ai_status', 'analyzing') } catch { /* ignore */ }
     }
     return new Response(JSON.stringify({ error: 'Internal error' }), { status: 200 })
   }
