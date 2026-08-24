@@ -423,16 +423,31 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
       .eq('id', submissionId)
       .maybeSingle()
 
-    if (v?.proof_url?.startsWith('bunny://') && v.video_fingerprint) {
-      const { data: earlier } = await client
+    // Match on the FULL-FILE hash first, thumbnail fingerprint second.
+    //
+    // Requiring video_fingerprint meant the panel found nothing for any video
+    // Bunny never generated a thumbnail for -- exactly the 200-410MB uploads
+    // stuck through the 24 Aug outage, which were later matched by SHA-256 of
+    // the whole file instead. The admin saw "Duplicate video (exact file
+    // match)" and then an empty compare box, which is the same unusable flag
+    // this function exists to prevent.
+    //
+    // The full-file hash is also the stronger signal: two videos sharing a
+    // thumbnail may be a member filming in the same spot on a different day,
+    // whereas an identical SHA-256 is provably the same upload.
+    if (v?.proof_url?.startsWith('bunny://') && (v.video_file_sha || v.video_fingerprint)) {
+      const base = client
         .from('task_submissions')
         .select('proof_url, submitted_date, video_file_sha')
-        .eq('user_id', v.user_id)
         .eq('org_id', v.org_id)
-        .eq('video_fingerprint', v.video_fingerprint)
         .neq('id', submissionId)
         .order('submitted_at', { ascending: true })
         .limit(1)
+      // A duplicate is worth showing whoever uploaded it -- a file shared
+      // between two members is the more serious case, not the less.
+      const { data: earlier } = v.video_file_sha
+        ? await base.eq('video_file_sha', v.video_file_sha)
+        : await base.eq('user_id', v.user_id).eq('video_fingerprint', v.video_fingerprint)
 
       const prevVideo = (earlier ?? [])[0] as
         { proof_url: string | null; submitted_date: string; video_file_sha: string | null } | undefined
