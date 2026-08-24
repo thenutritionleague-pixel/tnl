@@ -306,25 +306,43 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
   // throughput ceiling -- slots sat occupied doing nothing but timing out.
   // The original is uploaded intact and downloadable the whole time, which is
   // exactly what this fallback wants anyway.
-  const fallbackUrl = await (async () => {
-    const orig = await bunnySignPath(`/${guid}/original`)
-    try {
-      const h = await fetch(orig, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-      return h.ok ? orig : null
-    } catch { return null }
-  })()
-  if (fallbackUrl) {
-    try {
-      const head = await fetch(fallbackUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-      const size = Number(head.headers.get('content-length') ?? '0')
-      if (head.ok && size > 0 && size <= FALLBACK_MAX_BYTES) {
-        console.log('[bunny] transcode stalled; analysing original', size, 'bytes')
+  // Probe with a RANGED GET, not HEAD.
+  //
+  // This is the bug that left ~150 videos "still processing" for hours on
+  // results night. Bunny's CDN does not answer HEAD on these paths the way we
+  // assumed, so the availability gate failed and we reported the file missing
+  // -- while the very same file played fine in the admin dashboard, because a
+  // browser issues GET. The dashboard even returns a URL when its own HEAD
+  // checks fail, which is why a reviewer could watch a video the pipeline
+  // swore did not exist.
+  //
+  // `Range: bytes=0-0` costs one byte, proves the object is really served,
+  // and returns the true size in Content-Range -- so it replaces both the
+  // availability check and the size check in a single request.
+  const orig = await bunnySignPath(`/${guid}/original`)
+  try {
+    const probe = await fetch(orig, {
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (probe.ok || probe.status === 206) {
+      // "bytes 0-0/12345678" -> 12345678. Falls back to Content-Length for a
+      // server that ignores the range and returns 200 with the whole body.
+      const cr = probe.headers.get('content-range') ?? ''
+      const total = Number(cr.split('/')[1] ?? probe.headers.get('content-length') ?? '0')
+      probe.body?.cancel()
+      if (total > 0 && total <= FALLBACK_MAX_BYTES) {
+        console.log('[bunny] transcode stalled; analysing original', total, 'bytes')
         // No reliable length while the transcode is still stalled, so the
         // duration rule is skipped for this path rather than guessed at.
-        return { kind: 'ready', url: fallbackUrl, lengthSeconds: null }
+        return { kind: 'ready', url: orig, lengthSeconds: null }
       }
-      console.log('[bunny] original too large for fallback:', size)
-    } catch { /* fall through to pending */ }
+      console.log('[bunny] original unusable for fallback, size =', total)
+    } else {
+      console.log('[bunny] original probe failed', probe.status)
+    }
+  } catch (e) {
+    console.warn('[bunny] original probe error', e instanceof Error ? e.message : e)
   }
   return { kind: 'pending' }
 }

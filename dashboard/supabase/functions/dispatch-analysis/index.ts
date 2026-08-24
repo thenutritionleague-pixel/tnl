@@ -94,18 +94,21 @@ Deno.serve(async () => {
     // First-time analysis: never claimed, submitted long enough ago that the
     // original insert-trigger has had its chance, and recent enough to still
     // matter. Mirrors the window the cron used to query directly.
-    // ORDER MATTERS, and ordering by submitted_at alone was a head-of-line
-    // blocking bug: a submission whose video is still transcoding gets kicked,
-    // immediately returns to ai_status=null ("still processing — will retry"),
-    // and is therefore STILL among the oldest next cycle. Twenty-five stuck
-    // rows monopolised every single dispatch, and the ~80 submissions behind
-    // them were never reached at all -- the queue sat flat at ~105 for
-    // minutes while the same 25 were retried over and over.
+    // OLDEST MEMBER SUBMISSIONS FIRST -- whoever has been waiting longest gets
+    // served first, which is the fair order once intake has closed.
     //
-    // Ordering by last-attempt instead makes this self-correcting: anything
-    // just tried moves to the back, so every row gets its turn. Rows never
-    // attempted (ai_started_at null) sort first, which is what we want -- a
-    // brand new submission should not queue behind a known-stuck one.
+    // The COOLDOWN is what makes that safe. Ordering by submitted_at alone was
+    // a head-of-line blocking bug earlier tonight: a video still transcoding
+    // gets kicked, immediately returns to ai_status=null ("still processing"),
+    // and is therefore STILL the oldest next cycle. Twenty-five stuck rows won
+    // every dispatch and the ~80 behind them were never reached at all -- the
+    // queue sat flat at ~105 while the same 25 were retried over and over.
+    //
+    // Excluding anything attempted in the last COOLDOWN_MS keeps the ordering
+    // honest: a row is tried, sits out one short rotation while others get
+    // their turn, then comes back around. Oldest-first, but nothing can
+    // monopolise the batch.
+    const COOLDOWN_MS = 3 * 60_000
     const { data: fresh } = await supabase
       .from('task_submissions')
       .select('id, org_id')
@@ -113,7 +116,7 @@ Deno.serve(async () => {
       .eq('status', 'pending')
       .lt('submitted_at', new Date(Date.now() - 2 * 60_000).toISOString())
       .gt('submitted_at', new Date(Date.now() - 6 * 60 * 60_000).toISOString())
-      .order('ai_started_at', { ascending: true, nullsFirst: true })
+      .or(`ai_started_at.is.null,ai_started_at.lt.${new Date(Date.now() - COOLDOWN_MS).toISOString()}`)
       .order('submitted_at', { ascending: true })
       .limit(BATCH)
 
