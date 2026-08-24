@@ -82,6 +82,11 @@ const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
 // transcoded video regardless of size, so this isn't new memory pressure.
 const FALLBACK_MAX_BYTES = 200 * 1024 * 1024
 
+// Above this we stream to Gemini instead of buffering. Web uploads skip
+// compression entirely, so 250-300MB clips are normal and buffering them
+// exhausts the function.
+const STREAM_THRESHOLD_BYTES = 80 * 1024 * 1024
+
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
   approved:   boolean
@@ -101,7 +106,7 @@ type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
 // lengthSeconds comes free with the status poll -- Bunny returns it on the same
 // video record we already fetch -- so duration costs no extra request.
 type BunnyPollResult =
-  | { kind: 'ready'; url: string; lengthSeconds: number | null }
+  | { kind: 'ready'; url: string; lengthSeconds: number | null; sizeBytes?: number }
   | { kind: 'pending' }
   | { kind: 'failed'; reason: string }
 
@@ -331,11 +336,11 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
       const cr = probe.headers.get('content-range') ?? ''
       const total = Number(cr.split('/')[1] ?? probe.headers.get('content-length') ?? '0')
       probe.body?.cancel()
-      if (total > 0 && total <= FALLBACK_MAX_BYTES) {
+      if (total > 0) {
         console.log('[bunny] transcode stalled; analysing original', total, 'bytes')
         // No reliable length while the transcode is still stalled, so the
         // duration rule is skipped for this path rather than guessed at.
-        return { kind: 'ready', url: orig, lengthSeconds: null }
+        return { kind: 'ready', url: orig, lengthSeconds: null, sizeBytes: total }
       }
       console.log('[bunny] original unusable for fallback, size =', total)
     } else {
@@ -511,6 +516,76 @@ async function fetchVideo(signedUrl: string): Promise<{ bytes: Uint8Array; mime:
   return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'video/mp4' }
 }
 
+/**
+ * Stream a video straight from Bunny into Gemini's File API without ever
+ * holding it in memory, and return the file_uri to analyse.
+ *
+ * This is what makes the stalled-transcode fallback actually usable. Members
+ * on the web app upload with NO compression (video_compress has no web
+ * implementation), so a single clip is routinely 250-300MB -- one measured at
+ * 304,932,768 bytes. fetchVideo() buffers the whole response, which at that
+ * size exhausts the edge function, so the fallback carried a 200MB cap and
+ * simply skipped them. The result was the worst possible outcome: Bunny had
+ * the original sitting there and served it happily (verified: ranged GET
+ * returns 206), but we declined to look at it and reported "still processing"
+ * for hours.
+ *
+ * Piping response.body straight into the upload keeps memory flat regardless
+ * of file size. Gemini needs the exact byte count up front, which the caller
+ * already knows from the Content-Range on the availability probe.
+ *
+ * Returns a file_uri usable by BOTH Flash and Pro, so an escalation reuses the
+ * upload instead of transferring the file a second time.
+ */
+async function streamVideoToGemini(
+  signedUrl: string,
+  sizeBytes: number,
+  mime: string,
+): Promise<{ fileUri: string; fileName: string }> {
+  const src = await fetch(signedUrl, { signal: AbortSignal.timeout(120_000) })
+  if (!src.ok || !src.body) throw new Error(`Could not open video stream (${src.status})`)
+
+  const initRes = await fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
+    method: 'POST',
+    headers: {
+      'X-goog-api-key': GEMINI_API_KEY,
+      'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(sizeBytes),
+      'X-Goog-Upload-Header-Content-Type': mime, 'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ file: { display_name: 'proof_video' } }),
+  })
+  if (!initRes.ok) throw new Error(`Stream upload init failed (${initRes.status})`)
+  const uploadUrl = initRes.headers.get('x-goog-upload-url') ?? initRes.headers.get('X-Goog-Upload-URL')
+  if (!uploadUrl) throw new Error('No upload URL for streamed video')
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(sizeBytes),
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    body: src.body,
+    // Deno requires this to send a streaming request body.
+    // deno-lint-ignore no-explicit-any
+    duplex: 'half',
+  } as any)
+  if (!uploadRes.ok) throw new Error(`Stream upload failed (${uploadRes.status})`)
+
+  const data = await uploadRes.json() as { file: { name: string; uri: string; state: string } }
+  let state = data.file.state
+  const start = Date.now()
+  while (state === 'PROCESSING' && Date.now() - start < 60_000) {
+    await new Promise(r => setTimeout(r, 3000))
+    const sr = await fetch(`${GEMINI_BASE}/v1beta/${data.file.name}`, { headers: { 'X-goog-api-key': GEMINI_API_KEY } })
+    if (!sr.ok) break
+    state = ((await sr.json()) as { state: string }).state
+  }
+  if (state !== 'ACTIVE') throw new Error(`Streamed video not ready (state: ${state})`)
+  return { fileUri: data.file.uri, fileName: data.file.name }
+}
+
 async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt: string, model: string, opts?: GenOpts, references: { bytes: Uint8Array; mime: string }[] = []): Promise<AIResult> {
   // References go FIRST so "the FIRST image(s)" in the prompt is unambiguous.
   const refPart = references.map(r => ({ inline_data: { mime_type: r.mime, data: bytesToBase64(r.bytes) } }))
@@ -619,17 +694,39 @@ async function decideVideo(
   references: { bytes: Uint8Array; mime: string }[] = [],
   requiredReps: number | null = null,
   durationSeconds: number | null = null,
+  sizeBytes: number | null = null,
 ): Promise<Decision> {
   const hasReference = references.length > 0
   const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints, references.length, requiredReps, durationSeconds)
-  const video = await fetchVideo(signedUrl)
+
+  // Anything too large to hold in memory goes to Gemini as a stream. Below
+  // that, buffer as before -- the buffered path also lets Pro reuse the bytes
+  // without a second transfer.
+  let video: { bytes: Uint8Array; mime: string } | null = null
+  let streamed: { fileUri: string; fileName: string } | null = null
+  if (sizeBytes != null && sizeBytes > STREAM_THRESHOLD_BYTES) {
+    console.log('[video] streaming', sizeBytes, 'bytes to Gemini (too large to buffer)')
+    streamed = await streamVideoToGemini(signedUrl, sizeBytes, 'video/mp4')
+  } else {
+    video = await fetchVideo(signedUrl)
+  }
+  const runModel = (model: string, opts?: GenOpts) =>
+    streamed
+      ? geminiGenerate(
+          [
+            ...references.map(r => ({ inline_data: { mime_type: r.mime, data: bytesToBase64(r.bytes) } })),
+            { file_data: { mime_type: 'video/mp4', file_uri: streamed!.fileUri } },
+          ],
+          prompt, model, opts,
+        )
+      : runVideoModel(video!, prompt, model, opts, references)
 
   // AI CANNOT reliably count reps from video (front/depth angles, knees-down,
   // portrait framing, ~1fps sampling all defeat counting). So the rep count is
   // ADVISORY ONLY and never rejects a genuine member. The AI's job for video is
   // anti-cheat: is this a genuine attempt at the RIGHT exercise?
   //   genuine -> approve   |   fake / wrong activity -> reject (confirmed by Pro)
-  const flash = await runVideoModel(video, prompt, GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, references)
+  const flash = await runModel(GEMINI_FLASH, { thinkingBudget: FLASH_THINKING_BUDGET, maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
   const fConf = clamp01(flash.confidence ?? 0)
   // Escalate only when Flash actually doubts the video's ORIGIN.
   //
@@ -708,7 +805,7 @@ async function decideVideo(
   // we NEVER reject a genuine video on Flash's word alone.
   let pro: AIResult
   try {
-    pro = await runVideoModel(video, prompt, GEMINI_PRO, { maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS }, references)
+    pro = await runModel(GEMINI_PRO, { maxOutputTokens: VIDEO_MAX_OUTPUT_TOKENS })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[video/pro escalation failed]', msg)
@@ -882,10 +979,11 @@ Deno.serve(async (req: Request) => {
       }
       let videoUrl: string | null = null
       let videoSeconds: number | null = null
+      let videoSize: number | null = null
       if (isBunny) {
         const guid = sub.proof_url.replace('bunny://', '')
         const poll = await bunnyCheckStatus(guid)
-        if (poll.kind === 'ready') { videoUrl = poll.url; videoSeconds = poll.lengthSeconds }
+        if (poll.kind === 'ready') { videoUrl = poll.url; videoSeconds = poll.lengthSeconds; videoSize = poll.sizeBytes ?? null }
         else if (poll.kind === 'pending') {
           await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'retry' }), { status: 200 })
@@ -998,7 +1096,7 @@ Deno.serve(async (req: Request) => {
       // lookup/fetch problem. Analysis proceeds exactly as before when absent.
       const identityRefs = await fetchIdentityAnchors(sub.user_id, orgId, submissionId)
       try {
-        decision = await decideVideo(videoUrl!, taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds)
+        decision = await decideVideo(videoUrl!, taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds, videoSize)
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/video]', errMsg)
