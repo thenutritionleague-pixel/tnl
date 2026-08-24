@@ -685,6 +685,49 @@ export async function removeMember(orgId: string, userId: string) {
       .reduce((sum, r) => sum + (r.amount ?? 0), 0)
   }
 
+  // Capture WHAT they earned, per task per day, BEFORE anything is deleted.
+  //
+  // The transfer above is a single lump sum, which is why a swap can push a
+  // team past the maximum a ten-person roster can score: the leaver's points
+  // go to the team AND the replacement then earns the same days again, so one
+  // roster slot scores twice. Gurugram crossed the ceiling three times on
+  // 24 Aug because of exactly this.
+  //
+  // Fixing it needs the breakdown, and by the time a replacement earns
+  // anything the leaver's rows are long gone -- which is why that team's
+  // overlap had to be inferred from the leaderboard rather than computed.
+  // reconcile_swap_overlap() uses this to deduct only genuine duplicates.
+  //
+  // Best-effort: a failure here must never block the removal itself.
+  if (tm?.team_id) {
+    try {
+      let breakdownQuery = supabase
+        .from('task_submissions')
+        .select('task_id, submitted_date, points_awarded')
+        .eq('user_id', userId)
+        .eq('org_id', orgId)
+        .eq('status', 'approved')
+      const { data: earned } = await breakdownQuery
+      const rows = ((earned ?? []) as { task_id: string; submitted_date: string; points_awarded: number | null }[])
+        .filter(r => r.task_id && r.submitted_date && (r.points_awarded ?? 0) > 0)
+        .map(r => ({
+          org_id: orgId,
+          team_id: tm.team_id,
+          departed_user_id: userId,
+          departed_name: profile.name,
+          departed_email: profile.email,
+          task_id: r.task_id,
+          submitted_date: r.submitted_date,
+          points: r.points_awarded as number,
+        }))
+      if (rows.length > 0) {
+        await supabase.from('swap_transfer_breakdown').insert(rows)
+      }
+    } catch (e) {
+      console.error('[removeMember] swap breakdown capture failed:', e)
+    }
+  }
+
   let insertedTransferId: string | null = null
   if (tm?.team_id && transferAmount > 0) {
     const { data: ttRow, error: ttErr } = await supabase
