@@ -34,23 +34,35 @@ function bunnySignPath(path: string, ttlSeconds = 1800): string {
  * exists; fall back to 480p unverified so we always return something.
  */
 async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string> {
+  // Probe with a one-byte ranged GET, never HEAD, and always with a timeout.
+  //
+  // Two separate failures on 24 Aug came from this. Bunny's CDN does not answer
+  // HEAD on these paths the way we assumed -- verified directly: a ranged GET
+  // returns 206 for a file whose HEAD gives nothing -- so the probe reported
+  // videos missing that were serving perfectly. And with no timeout on the
+  // fetch, a probe that simply never answers hangs the caller indefinitely,
+  // which is what left the Compare panel spinning forever.
+  const probe = async (url: string) => {
+    try {
+      const r = await fetch(url, {
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(6000),
+      })
+      // Cancel the body so the connection is not left open.
+      r.body?.cancel().catch(() => {})
+      return r.ok || r.status === 206
+    } catch { return false }
+  }
+
   for (const r of BUNNY_MP4_RESOLUTIONS) {
     const url = bunnySignPath(`/${guid}/play_${r}.mp4`, ttlSeconds)
-    try {
-      const head = await fetch(url, { method: 'HEAD' })
-      if (head.ok) return url
-    } catch { /* try next resolution */ }
+    if (await probe(url)) return url
   }
-  // Bunny's transcode can fail (status 5) while the uploaded original is
-  // perfectly intact and downloadable. Without this the reviewer is stuck on
-  // "Video is being processed" forever for a video that is sitting right
-  // there, because every play_* rendition 404s. The edge function already
-  // falls back this way; the dashboard did not.
+  // Bunny's transcode can stall or fail while the uploaded original is intact
+  // and downloadable throughout. Without this the reviewer is stuck on "Video
+  // is being processed" for a video that is sitting right there.
   const original = bunnySignPath(`/${guid}/original`, ttlSeconds)
-  try {
-    const head = await fetch(original, { method: 'HEAD' })
-    if (head.ok) return original
-  } catch { /* fall through */ }
+  if (await probe(original)) return original
 
   return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
 }

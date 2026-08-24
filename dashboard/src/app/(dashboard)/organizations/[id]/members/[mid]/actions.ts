@@ -20,26 +20,28 @@ function bunnySignPath(path: string, ttlSeconds = 1800): string {
   return `${url}?token=${token}&expires=${expires}`
 }
 
-// Try each resolution (HEAD) and return the first that exists; Bunny only
-// generates renditions that fit the source, so a hardcoded 480p can 404.
+// Probe with a one-byte ranged GET, never HEAD, and always with a timeout.
+// Same fix as the approvals page: Bunny's CDN does not answer HEAD on these
+// paths (verified -- a ranged GET returns 206 where HEAD gives nothing), and an
+// untimed fetch that never answers hangs the caller forever.
 async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string> {
+  const probe = async (url: string) => {
+    try {
+      const r = await fetch(url, {
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(6000),
+      })
+      r.body?.cancel().catch(() => {})
+      return r.ok || r.status === 206
+    } catch { return false }
+  }
+
   for (const r of BUNNY_MP4_RESOLUTIONS) {
     const url = bunnySignPath(`/${guid}/play_${r}.mp4`, ttlSeconds)
-    try {
-      const head = await fetch(url, { method: 'HEAD' })
-      if (head.ok) return url
-    } catch { /* try next resolution */ }
+    if (await probe(url)) return url
   }
-  // Bunny's transcode can fail (status 5) while the uploaded original is
-  // perfectly intact and downloadable. Without this the reviewer is stuck on
-  // "Video is being processed" forever for a video that is sitting right
-  // there, because every play_* rendition 404s. The edge function already
-  // falls back this way; the dashboard did not.
   const original = bunnySignPath(`/${guid}/original`, ttlSeconds)
-  try {
-    const head = await fetch(original, { method: 'HEAD' })
-    if (head.ok) return original
-  } catch { /* fall through */ }
+  if (await probe(original)) return original
 
   return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
 }

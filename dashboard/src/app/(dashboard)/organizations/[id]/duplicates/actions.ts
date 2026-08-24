@@ -233,13 +233,25 @@ export async function getVideoPlaybackUrls(guids: string[]): Promise<Record<stri
   await Promise.all([...new Set(guids)].map(async guid => {
     // Bunny only generates renditions that fit the source, so try smallest-up
     // rather than assuming one exists.
+    //
+    // Probed with a one-byte ranged GET and a timeout, not HEAD: Bunny's CDN
+    // does not answer HEAD on these paths (a ranged GET returns 206 where HEAD
+    // gives nothing), and an untimed fetch that never answers hangs the whole
+    // page. Same fix as the approvals and member views.
+    const probe = async (url: string) => {
+      try {
+        const r = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(6000) })
+        r.body?.cancel().catch(() => {})
+        return r.ok || r.status === 206
+      } catch { return false }
+    }
     for (const r of ['480p', '360p', '240p', '720p']) {
       const url = sign(`/${guid}/play_${r}.mp4`)
-      try {
-        const res = await fetch(url, { method: 'HEAD' })
-        if (res.ok) { out[guid] = url; return }
-      } catch { /* try next */ }
+      if (await probe(url)) { out[guid] = url; return }
     }
+    // Transcode may never have run -- the original is intact throughout.
+    const original = sign(`/${guid}/original`)
+    if (await probe(original)) { out[guid] = original; return }
   }))
   return out
 }
