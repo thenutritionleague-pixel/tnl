@@ -87,6 +87,20 @@ const FALLBACK_MAX_BYTES = 200 * 1024 * 1024
 // exhausts the function.
 const STREAM_THRESHOLD_BYTES = 80 * 1024 * 1024
 
+// Hard ceiling on the stalled-transcode fallback.
+//
+// Streaming removed the MEMORY limit but not the CLOCK. The whole run has to
+// finish inside the edge function's ~150s budget, and a 291MB original has to
+// come down from Bunny AND go up to Gemini within it. Measured on results
+// night: at 60 concurrent that tripped Gemini's rate limits, and even at 10
+// concurrent only one submission completed in five minutes -- the transfers
+// were being killed mid-flight and the rows simply bounced.
+//
+// So: stream the originals that can realistically finish, and let anything
+// larger wait for Bunny's own transcode, after which play_720p is ~20-40MB and
+// analyses in seconds. Waiting is genuinely faster than failing repeatedly.
+const FALLBACK_STREAM_CEILING = 150 * 1024 * 1024
+
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
   approved:   boolean
@@ -336,13 +350,15 @@ async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
       const cr = probe.headers.get('content-range') ?? ''
       const total = Number(cr.split('/')[1] ?? probe.headers.get('content-length') ?? '0')
       probe.body?.cancel()
-      if (total > 0) {
+      if (total > 0 && total <= FALLBACK_STREAM_CEILING) {
         console.log('[bunny] transcode stalled; analysing original', total, 'bytes')
         // No reliable length while the transcode is still stalled, so the
         // duration rule is skipped for this path rather than guessed at.
         return { kind: 'ready', url: orig, lengthSeconds: null, sizeBytes: total }
       }
-      console.log('[bunny] original unusable for fallback, size =', total)
+      // Too big to move inside the function's time budget. Bunny is actively
+      // transcoding (status 2); its own output will be small and quick.
+      console.log('[bunny] original too large to transfer in budget, waiting for transcode. size =', total)
     } else {
       console.log('[bunny] original probe failed', probe.status)
     }

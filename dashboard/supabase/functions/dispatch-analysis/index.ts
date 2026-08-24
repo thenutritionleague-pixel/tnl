@@ -52,7 +52,15 @@ const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // healthy dispatch was. The ceiling was this batch size, not the AI: each kick
 // is an independent invocation, and the ones that find Bunny still transcoding
 // return in ~8s rather than occupying a slot for a full analysis.
-const BATCH = 60
+// 60 was right when most kicks returned in ~8s having found nothing to do.
+// Once streaming unblocked the large originals, every kick became a real
+// 250-300MB transfer plus a full Gemini analysis, and 60 of those at once
+// tripped Gemini's rate limits -- 137 rows came straight back as "Reviewer
+// busy". Throughput collapsed from 59 completions per 5min to 2.
+//
+// 10 concurrent real analyses at roughly 60-90s each still clears ~7-10/min,
+// which is far more than enough, and stays inside what Gemini will accept.
+const BATCH = 10
 
 // Spacing between kicks. Small, but non-zero: it keeps us from opening every
 // socket in the same millisecond, which is the shape of load that was upsetting
