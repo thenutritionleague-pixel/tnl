@@ -558,7 +558,12 @@ async function streamVideoToGemini(
   sizeBytes: number,
   mime: string,
 ): Promise<{ fileUri: string; fileName: string }> {
-  const src = await fetch(signedUrl, { signal: AbortSignal.timeout(120_000) })
+  // 120s aborted our own transfer before the platform ever would. A 138MB
+  // original at a realistic edge-to-CDN rate needs longer than that, and the
+  // abort surfaced as a timeout error which isTransientError classified as
+  // "Reviewer busy" -- making a self-inflicted limit look like Gemini
+  // throttling us. Raised well past the expected transfer time.
+  const src = await fetch(signedUrl, { signal: AbortSignal.timeout(300_000) })
   if (!src.ok || !src.body) throw new Error(`Could not open video stream (${src.status})`)
 
   const initRes = await fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
@@ -592,7 +597,7 @@ async function streamVideoToGemini(
   const data = await uploadRes.json() as { file: { name: string; uri: string; state: string } }
   let state = data.file.state
   const start = Date.now()
-  while (state === 'PROCESSING' && Date.now() - start < 60_000) {
+  while (state === 'PROCESSING' && Date.now() - start < 180_000) {
     await new Promise(r => setTimeout(r, 3000))
     const sr = await fetch(`${GEMINI_BASE}/v1beta/${data.file.name}`, { headers: { 'X-goog-api-key': GEMINI_API_KEY } })
     if (!sr.ok) break

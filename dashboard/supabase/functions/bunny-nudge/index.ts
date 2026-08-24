@@ -79,6 +79,16 @@ Deno.serve(async (req) => {
       const key = `status_${v.status ?? 'null'}`
       statusCounts[key] = (statusCounts[key] ?? 0) + 1
 
+      // Size distribution against the 200MB transfer ceiling, so we can tell
+      // whether a chunked/resumable upload is actually worth building or
+      // whether these clear on their own once Bunny finishes.
+      const mb = Math.round((v.storageSize ?? 0) / 1048576)
+      const bucket = mb === 0 ? 'size_unknown'
+        : mb <= 80 ? 'size_0_80MB'
+        : mb <= 200 ? 'size_80_200MB'
+        : 'size_over_200MB'
+      statusCounts[bucket] = (statusCounts[bucket] ?? 0) + 1
+
       // status: 0 queued, 1 processing, 2 encoding, 3 finished, 4 resolution
       // finished, 5 failed, 6 presigned-upload started, 7 transcoding error.
       // A video Bunny has genuinely wedged (0 with real bytes on disk, or an
@@ -130,11 +140,93 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Is Gemini rate-limiting us, or is the quota gone for the day? Those look
+  // identical from inside the pipeline (both classified transient, both
+  // producing "Reviewer busy") but the answers are opposite: one clears in
+  // seconds, the other not until the quota window resets.
+  const gem: Record<string, unknown> = {}
+  try {
+    const key = Deno.env.get('GEMINI_API_KEY') ?? ''
+    const r = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-goog-api-key': key },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }],
+          generationConfig: { maxOutputTokens: 10 },
+        }),
+        signal: AbortSignal.timeout(15000),
+      },
+    )
+    gem.status = r.status
+    if (!r.ok) gem.body = (await r.text()).slice(0, 300)
+    else gem.ok = true
+  } catch (e) {
+    gem.error = e instanceof Error ? e.message.slice(0, 120) : 'err'
+  }
+
+  // CAN A PARTIAL DOWNLOAD BE ANALYSED?
+  //
+  // We do not need all 138MB to confirm someone did burpees -- we need enough
+  // frames. If the MP4 was written faststart (moov atom at the front, which is
+  // what browser-based uploads typically produce) then a prefix is a valid,
+  // decodable clip. If moov sits at the end, a prefix is undecodable and this
+  // idea is dead. Only a real test settles it, so: pull a prefix, hand it to
+  // Gemini, and see whether it can actually describe the video.
+  const partial: Record<string, unknown> = {}
+  if (body.testPartial === true && first) {
+    const guid = first.proof_url.replace('bunny://', '')
+    const MB = Number(body.partialMB ?? 40)
+    try {
+      const u = await signPath(`/${guid}/original`)
+      const r = await fetch(u, {
+        headers: { Range: `bytes=0-${MB * 1048576 - 1}` },
+        signal: AbortSignal.timeout(60_000),
+      })
+      partial.fetchStatus = r.status
+      const buf = new Uint8Array(await r.arrayBuffer())
+      partial.gotMB = Math.round(buf.byteLength / 1048576)
+
+      let bin = ''
+      const CH = 8192
+      for (let i = 0; i < buf.length; i += CH) bin += String.fromCharCode(...buf.subarray(i, i + CH))
+      const b64 = btoa(bin)
+
+      const key = Deno.env.get('GEMINI_API_KEY') ?? ''
+      const g = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                { inline_data: { mime_type: 'video/mp4', data: b64 } },
+                { text: 'In one short sentence: what physical activity is this person doing? If the video is unreadable, reply exactly UNREADABLE.' },
+              ],
+            }],
+            generationConfig: { maxOutputTokens: 60, temperature: 0 },
+          }),
+          signal: AbortSignal.timeout(90_000),
+        },
+      )
+      partial.geminiStatus = g.status
+      const txt = await g.text()
+      partial.geminiSays = txt.slice(0, 300)
+    } catch (e) {
+      partial.error = e instanceof Error ? e.message.slice(0, 150) : 'err'
+    }
+  }
+
   return new Response(JSON.stringify({
     inspected: (rows ?? []).length,
     statusCounts,
     nudgedCount: nudged.length,
     probe,
+    gemini: gem,
+    partial,
     errors: errors.slice(0, 5),
   }), { status: 200 })
 })

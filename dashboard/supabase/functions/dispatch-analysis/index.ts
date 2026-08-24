@@ -60,7 +60,7 @@ const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 //
 // 10 concurrent real analyses at roughly 60-90s each still clears ~7-10/min,
 // which is far more than enough, and stays inside what Gemini will accept.
-const BATCH = 10
+const BATCH = 15
 
 // Spacing between kicks. Small, but non-zero: it keeps us from opening every
 // socket in the same millisecond, which is the shape of load that was upsetting
