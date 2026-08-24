@@ -87,13 +87,32 @@ export async function approveMemberSubmission(
 
   let finalPoints = pointsOverride
   if (finalPoints === null) {
+    // Must resolve the CLAIMED TIER, not the task's base value.
+    //
+    // This read only ever fetched tasks.points, which on a tiered task is the
+    // floor and not what anyone earns: Broccoli Burpee Bash is 10 base with
+    // 100/200 tiers, Plank Stand is 10 base with 50/100/150. So approving from
+    // the member detail page paid 10 points for a submission worth 200 --
+    // confirmed live on 24 Aug for Atin Goyal, whose snapshot held the "10
+    // Burpees" tier at 200 the whole time.
+    //
+    // The Approvals page was fixed for exactly this on 23 Aug (7a5c78c); this
+    // second approve path was missed. Same snapshot-first order as there:
+    // task_snapshot.selected_tier is frozen at submission time and never
+    // depends on a join resolving correctly later.
     const { data: sub } = await client
       .from('task_submissions')
-      .select('tasks(points)')
+      .select('selected_tier_index, task_snapshot, tasks(points, points_tiers)')
       .eq('id', submissionId)
       .single()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    finalPoints = (sub as any)?.tasks?.points ?? 0
+    const sd = sub as any
+    const tierPoints: number | null =
+      sd?.task_snapshot?.selected_tier?.points ??
+      (sd?.selected_tier_index != null
+        ? (sd?.tasks?.points_tiers?.[sd.selected_tier_index]?.points ?? null)
+        : null)
+    finalPoints = tierPoints ?? sd?.tasks?.points ?? 0
   }
 
   const { error } = await client
