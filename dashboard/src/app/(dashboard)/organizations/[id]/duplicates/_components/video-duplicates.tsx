@@ -86,7 +86,7 @@ export default function VideoDuplicates({ orgId, groups }: { orgId: string; grou
           going to have to defend it to a member who lost points. */}
       <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground leading-relaxed space-y-1">
         <p>
-          Grouping is by the video&rsquo;s thumbnail, which Bunny renders from a fixed frame — so an
+          Grouping is by the video&rsquo;s thumbnail, which the video service renders from a fixed frame — so an
           identical source file gives an identical thumbnail.{' '}
           <span className="font-semibold text-foreground">
             Where the full file was also hashed and matched, the group is marked “Identical file”, and that

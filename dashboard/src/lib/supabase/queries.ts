@@ -657,9 +657,8 @@ export async function removeMember(orgId: string, userId: string) {
     .maybeSingle()
 
   // 3. Capture proof_urls BEFORE auth-delete cascades them.
-  // Bunny videos (`bunny://<guid>`) are on a different backend — the daily
-  // pg_cron sweep + AI-side cleanup handle orphans there. Only Supabase
-  // Storage paths go through storage.remove() below.
+  // Hosted videos (`gumlet://<id>`, retired `bunny://<guid>`) live on another
+  // backend. Only Supabase Storage paths go through storage.remove() below.
   // For a multi-org member only THIS org's proofs may be deleted — the other
   // org's submissions stay untouched.
   let subsQuery = supabase
@@ -670,7 +669,7 @@ export async function removeMember(orgId: string, userId: string) {
   const { data: subs } = await subsQuery
   const proofPaths = ((subs ?? []) as { proof_url: string | null }[])
     .map(s => s.proof_url)
-    .filter((p): p is string => !!p && !p.startsWith('bunny://'))
+    .filter((p): p is string => !!p && !p.startsWith('bunny://') && !p.startsWith('gumlet://'))
 
   // 4. Insert team_transactions row IF the user had a team AND non-zero points.
   //    Zero-point removals skip this entry to keep the breakdown clean.

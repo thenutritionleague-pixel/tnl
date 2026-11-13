@@ -4,68 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { createHash } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
+import {
+  isGumletProof, isHostedVideoProof, gumletAssetId, gumletPlayableUrl, gumletThumbUrl, hostedVideoUrl, deleteGumletAsset,
+} from '@/lib/video-host'
 
 const ORG_SCOPED_ROLES = ['org_admin', 'sub_admin']
 const ALLOWED_ROLES = ['super_admin', 'sub_super_admin', 'org_admin', 'sub_admin']
-
-const BUNNY_CDN_HOSTNAME  = process.env.BUNNY_CDN_HOSTNAME  || 'vz-c97d7e4d-363.b-cdn.net'
-const BUNNY_TOKEN_AUTH    = process.env.BUNNY_TOKEN_AUTH_KEY || ''
-
-const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
-
-/**
- * Sign an arbitrary Bunny CDN path. Token Authentication:
- *   token = base64url( md5_binary(TokenAuthKey + path + expires) )
- * If TOKEN_AUTH is empty, returns the plain URL (works if the library is public).
- */
-function bunnySignPath(path: string, ttlSeconds = 1800): string {
-  const url = `https://${BUNNY_CDN_HOSTNAME}${path}`
-  if (!BUNNY_TOKEN_AUTH) return url
-  const expires = Math.floor(Date.now() / 1000) + ttlSeconds
-  const raw = BUNNY_TOKEN_AUTH + path + String(expires)
-  const md5 = createHash('md5').update(raw).digest()
-  const token = md5.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  return `${url}?token=${token}&expires=${expires}`
-}
-
-/**
- * Bunny only generates renditions that fit the source, so a hardcoded 480p can
- * 404 for some videos. Try each resolution (HEAD) and return the first that
- * exists; fall back to 480p unverified so we always return something.
- */
-async function bunnyPlayableUrl(guid: string, ttlSeconds = 1800): Promise<string> {
-  // Probe with a one-byte ranged GET, never HEAD, and always with a timeout.
-  //
-  // Two separate failures on 24 Aug came from this. Bunny's CDN does not answer
-  // HEAD on these paths the way we assumed -- verified directly: a ranged GET
-  // returns 206 for a file whose HEAD gives nothing -- so the probe reported
-  // videos missing that were serving perfectly. And with no timeout on the
-  // fetch, a probe that simply never answers hangs the caller indefinitely,
-  // which is what left the Compare panel spinning forever.
-  const probe = async (url: string) => {
-    try {
-      const r = await fetch(url, {
-        headers: { Range: 'bytes=0-0' },
-        signal: AbortSignal.timeout(6000),
-      })
-      // Cancel the body so the connection is not left open.
-      r.body?.cancel().catch(() => {})
-      return r.ok || r.status === 206
-    } catch { return false }
-  }
-
-  for (const r of BUNNY_MP4_RESOLUTIONS) {
-    const url = bunnySignPath(`/${guid}/play_${r}.mp4`, ttlSeconds)
-    if (await probe(url)) return url
-  }
-  // Bunny's transcode can stall or fail while the uploaded original is intact
-  // and downloadable throughout. Without this the reviewer is stuck on "Video
-  // is being processed" for a video that is sitting right there.
-  const original = bunnySignPath(`/${guid}/original`, ttlSeconds)
-  if (await probe(original)) return original
-
-  return bunnySignPath(`/${guid}/play_480p.mp4`, ttlSeconds)
-}
 
 export async function approveSubmission(
   submissionId: string,
@@ -167,8 +111,8 @@ export async function rejectSubmission(
       status: 'rejected',
       rejection_reason: reason || null,
       reviewed_at: new Date().toISOString(),
-      // ai_status must NOT be nulled. retry_pending_bunny_submissions selects
-      // on `ai_status IS NULL`, so nulling it made the cron re-fire the AI on a
+      // ai_status must NOT be nulled. The AI retry crons select on
+      // `ai_status IS NULL`, so nulling it made the cron re-fire the AI on a
       // submission a human had just rejected — the AI re-approved it and the
       // rejection silently disappeared. Mark it as the human verdict instead.
       ai_status: 'rejected',
@@ -222,12 +166,8 @@ export async function getProofSignedUrl(path: string): Promise<string | null> {
   const profile = await getAdminProfile()
   if (!profile) return null
 
-  // Bunny Stream videos — return signed CDN URL (Token Authentication is
-  // enabled on the library, so playback requires a signed token).
-  if (path.startsWith('bunny://')) {
-    const guid = path.replace('bunny://', '')
-    return await bunnyPlayableUrl(guid)
-  }
+  // Hosted videos — signed Gumlet URL; retired Bunny files resolve to null.
+  if (isHostedVideoProof(path)) return await hostedVideoUrl(path)
 
   const client = await createAdminClient()
   // No `transform: {...}` — Supabase counts each unique source image transformed
@@ -261,11 +201,8 @@ export async function getPreviousApprovedProof(
     .maybeSingle()
   if (!data?.proof_url) return null
 
-  // Bunny video → signed CDN URL
-  if (data.proof_url.startsWith('bunny://')) {
-    const guid = data.proof_url.replace('bunny://', '')
-    return await bunnyPlayableUrl(guid, 300)
-  }
+  // Hosted video → signed Gumlet URL (null for retired Bunny files)
+  if (isHostedVideoProof(data.proof_url)) return await hostedVideoUrl(data.proof_url, 300)
 
   // No transform — see getProofSignedUrl above for the rationale (transformation
   // quota is the bottleneck, not egress).
@@ -333,9 +270,13 @@ export async function allowResubmit(submissionId: string, orgId: string) {
     .from('task_submissions').delete().eq('id', submissionId).eq('org_id', orgId)
   if (sErr) return { error: `Could not clear submission: ${sErr.message}` }
 
-  // 4. The proof file. Bunny videos live on another backend and are swept
-  //    separately, so only Supabase Storage paths are removed here.
-  if (sub.proof_url && !sub.proof_url.startsWith('bunny://')) {
+  // 4. The proof file. Gumlet videos are deleted on Gumlet (frees storage
+  //    minutes); retired Bunny files are already gone; everything else is a
+  //    Supabase Storage path.
+  if (isGumletProof(sub.proof_url)) {
+    try { await deleteGumletAsset(gumletAssetId(sub.proof_url)) }
+    catch (e) { console.error('[allowResubmit] video cleanup failed:', e) }
+  } else if (sub.proof_url && !isHostedVideoProof(sub.proof_url)) {
     const { error: stErr } = await client.storage.from('task-proofs').remove([sub.proof_url])
     if (stErr) console.error('[allowResubmit] proof cleanup failed:', stErr)
   }
@@ -438,7 +379,7 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
     // Match on the FULL-FILE hash first, thumbnail fingerprint second.
     //
     // Requiring video_fingerprint meant the panel found nothing for any video
-    // Bunny never generated a thumbnail for -- exactly the 200-410MB uploads
+    // the host never generated a thumbnail for -- exactly the 200-410MB uploads
     // stuck through the 24 Aug outage, which were later matched by SHA-256 of
     // the whole file instead. The admin saw "Duplicate video (exact file
     // match)" and then an empty compare box, which is the same unusable flag
@@ -447,7 +388,7 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
     // The full-file hash is also the stronger signal: two videos sharing a
     // thumbnail may be a member filming in the same spot on a different day,
     // whereas an identical SHA-256 is provably the same upload.
-    if (v?.proof_url?.startsWith('bunny://') && (v.video_file_sha || v.video_fingerprint)) {
+    if (isHostedVideoProof(v?.proof_url) && (v.video_file_sha || v.video_fingerprint)) {
       const base = client
         .from('task_submissions')
         .select('proof_url, submitted_date, video_file_sha')
@@ -466,8 +407,8 @@ export async function getDuplicateMatch(submissionId: string): Promise<Duplicate
 
       if (prevVideo?.proof_url) {
         const [currentUrl, previousUrl] = await Promise.all([
-          bunnyPlayableUrl(v.proof_url.replace('bunny://', '')),
-          bunnyPlayableUrl(prevVideo.proof_url.replace('bunny://', '')),
+          hostedVideoUrl(v.proof_url),
+          hostedVideoUrl(prevVideo.proof_url),
         ])
         if (currentUrl && previousUrl) {
           return {
@@ -601,7 +542,7 @@ export async function getPipelineHealth(orgId: string): Promise<PipelineHealth |
   const now = Date.now()
   const pending = list.length
   const needsReview = list.filter(r => r.ai_status === 'needs_review').length
-  const videoPending = list.filter(r => r.proof_url?.startsWith('bunny://') && r.ai_status !== 'needs_review').length
+  const videoPending = list.filter(r => isHostedVideoProof(r.proof_url) && r.ai_status !== 'needs_review').length
   const photoPending = pending - videoPending - needsReview
   // Age is measured ONLY over submissions the pipeline still owes an answer on.
   // A needs_review row is waiting on a PERSON and has no time limit by design,
@@ -704,19 +645,19 @@ export async function getIdentityReferences(submissionId: string): Promise<Ident
     .eq('user_id', cur.user_id)
     .eq('org_id', cur.org_id)
     .eq('status', 'approved')
-    .like('proof_url', 'bunny://%')
+    .like('proof_url', 'gumlet://%')
     .neq('id', submissionId)
     .order('submitted_at', { ascending: true })
     .limit(2)
 
   const out: IdentityReference[] = []
   for (const r of (rows ?? []) as { proof_url: string; submitted_date: string; tasks?: { title?: string } }[]) {
-    const guid = r.proof_url.replace('bunny://', '')
+    const assetId = gumletAssetId(r.proof_url)
     out.push({
       submittedDate: r.submitted_date,
       taskTitle: r.tasks?.title ?? 'Earlier submission',
-      videoUrl: await bunnyPlayableUrl(guid, 900),
-      thumbUrl: bunnySignPath(`/${guid}/thumbnail.jpg`, 900),
+      videoUrl: await gumletPlayableUrl(assetId, 900),
+      thumbUrl: gumletThumbUrl(assetId),
     })
   }
   return out

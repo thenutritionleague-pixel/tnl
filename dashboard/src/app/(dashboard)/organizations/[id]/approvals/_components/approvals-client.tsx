@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { approveSubmission, rejectSubmission, allowResubmit, getProofSignedUrl, loadApprovalsPage, loadApprovalCounts, loadOrgTaskBreakdown, getDuplicateMatch, getPipelineHealth, getIdentityReferences, type DuplicateMatch, type PipelineHealth, type IdentityReference } from '../actions'
 import { runAiAnalysis, getSubmissionAiStatus } from '../ai-actions'
 import type { OrgApproval, PreviousSubmission, OrgTaskBreakdown } from '@/lib/supabase/admin-queries'
+import { isGumletProof, isLegacyBunnyProof, isHostedVideoProof, isVideoProof } from '@/lib/video-proof'
 
 // ── DatePicker ────────────────────────────────────────────────────────────────
 
@@ -115,10 +116,7 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [state, setState] = useState<'loading' | 'loaded' | 'error' | 'unsupported' | 'none'>('none')
 
-  const isVideo = !!proofUrl && (
-    proofUrl.startsWith('bunny://') ||
-    /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(proofUrl)
-  )
+  const isVideo = isVideoProof(proofUrl)
   const isHeic = !!proofUrl && /\.heic$|\.heif$/i.test(proofUrl)
 
   useEffect(() => {
@@ -154,14 +152,21 @@ function ProofViewer({ proofUrl }: { proofUrl: string | null }) {
           <button type="button" className="text-xs text-primary hover:underline" onClick={async () => { const url = await getProofSignedUrl(proofUrl); if (url) window.open(url, '_blank') }}>Download to view →</button>
         </div>
       )}
-      {state === 'error' && proofUrl?.startsWith('bunny://') && (
+      {state === 'error' && isGumletProof(proofUrl) && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
           <span className="text-xs font-semibold">Video is being processed</span>
-          <span className="text-[11px]">Bunny is transcoding this video (usually 30-90 seconds). Reopen this review in a moment.</span>
+          <span className="text-[11px]">The video service is preparing this video (usually about a minute). Reopen this review in a moment.</span>
         </div>
       )}
-      {state === 'error' && !proofUrl?.startsWith('bunny://') && (
+      {state === 'error' && isLegacyBunnyProof(proofUrl) && (
+        <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
+          <ImageIcon className="w-8 h-8" />
+          <span className="text-xs font-semibold">Video no longer available</span>
+          <span className="text-[11px]">It was stored on the old video service, which has been retired. Points and history are unaffected.</span>
+        </div>
+      )}
+      {state === 'error' && !isHostedVideoProof(proofUrl) && (
         <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
           <ImageIcon className="w-8 h-8" />
           <span className="text-xs font-semibold">Could not load proof</span>
@@ -405,7 +410,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
   // it downloads both images to compare bytes, which is far too expensive to do
   // for every row up front.
   // The earlier videos the identity check compared against. Loaded on demand:
-  // it signs Bunny URLs, which is wasted work on every other row.
+  // it signs video URLs, which is wasted work on every other row.
   async function loadIdentityRefs(a: OrgApproval) {
     setIdRefs('loading')
     const refs = await getIdentityReferences(a.id)
@@ -988,9 +993,9 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                       <p className="text-xs font-semibold text-muted-foreground">Not checked by AI yet</p>
                       {/* Only VIDEO waits on the transcoder. Saying "video service"
                           on a photo is simply wrong -- photos average 72 seconds and
-                          never touch Bunny at all. */}
+                          never touch the video host at all. */}
                       <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                        {reviewTarget.proofUrl?.startsWith('bunny://')
+                        {isHostedVideoProof(reviewTarget.proofUrl)
                           ? 'Waiting on the video service. AI keeps retrying automatically until it gets a real result \u2014 it is never timed out to a human, and never approved on its own. You can also decide it now.'
                           : 'The AI check has not run yet. This usually takes under a minute \u2014 you can also decide it now.'}
                       </p>
@@ -1021,7 +1026,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                               No confidence recorded". Cleared AI fields plus a stored
                               reason is the signature of a human verdict. */}
                           {reviewTarget.aiStatus === 'analyzing'
-                            ? (reviewTarget.proofUrl?.startsWith('bunny://') ? 'Waiting for the video service…' : 'Checking now…')
+                            ? (isHostedVideoProof(reviewTarget.proofUrl) ? 'Waiting for the video service…' : 'Checking now…')
                             : reviewTarget.aiStatus === 'approved' ? '✓ AI Approved'
                             : reviewTarget.aiStatus === 'rejected'
                               ? (reviewTarget.aiFeedback == null && reviewTarget.aiConfidence == null && reviewTarget.rejectionReason
@@ -1124,11 +1129,11 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                   <div className="rounded-lg border border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2.5 space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                        {reviewTarget.proofUrl?.startsWith('bunny://') ? 'Possible repeat video' : 'Possible repeat photo'}
+                        {isHostedVideoProof(reviewTarget.proofUrl) ? 'Possible repeat video' : 'Possible repeat photo'}
                       </p>
                       {dupMatch === null && (
                         <button type="button" onClick={() => loadDuplicate(reviewTarget)} className="text-xs text-primary hover:underline shrink-0">
-                          {reviewTarget.proofUrl?.startsWith('bunny://') ? 'Compare videos' : 'Compare photos'}
+                          {isHostedVideoProof(reviewTarget.proofUrl) ? 'Compare videos' : 'Compare photos'}
                         </button>
                       )}
                       {dupMatch === 'loading' && (
@@ -1136,7 +1141,7 @@ export function ApprovalsClient({ orgId, initialApprovals, initialHasMore, initi
                       )}
                       {dupMatch === 'none' && (
                         <span className="text-xs text-muted-foreground shrink-0">
-                          {reviewTarget.proofUrl?.startsWith('bunny://') ? 'No earlier video to compare' : 'No earlier photo to compare'}
+                          {isHostedVideoProof(reviewTarget.proofUrl) ? 'No earlier video to compare' : 'No earlier photo to compare'}
                         </span>
                       )}
                     </div>

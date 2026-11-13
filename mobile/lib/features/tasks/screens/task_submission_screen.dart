@@ -27,7 +27,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
   Uint8List? _videoBytes;    // web: video bytes read at pick time (blob can expire before submit)
   bool _isVideoPicked = false;
   double? _compressProgress; // 0–100 during video compression
-  double? _uploadProgress;   // 0.0–1.0 during Bunny upload
+  double? _uploadProgress;   // 0.0–1.0 during video upload
   bool _submitting = false;
   bool _done = false;
   int? _selectedTierIndex;
@@ -388,7 +388,7 @@ class _TaskSubmissionScreenState extends State<TaskSubmissionScreen> {
       if (mounted) {
         setState(() { _submitting = false; _compressProgress = null; _uploadProgress = null; });
         // Never print the driver's exception. A member saw
-        // "ClientException: Failed to fetch, uri=https://video.bunnycdn.com/tusupload"
+        // "ClientException: Failed to fetch, uri=<video host upload URL>"
         // — which names our video host, tells them nothing they can act on, and
         // reads like the app broke. Their file is still selected, so the only
         // useful instruction is to try again.

@@ -14,10 +14,13 @@ const GEMINI_FLASH     = 'gemini-flash-latest'
 const GEMINI_PRO       = 'gemini-pro-latest'
 const GEMINI_BASE      = 'https://generativelanguage.googleapis.com'
 
-const BUNNY_LIBRARY_ID    = Deno.env.get('BUNNY_LIBRARY_ID')    ?? ''
-const BUNNY_API_KEY       = Deno.env.get('BUNNY_API_KEY')       ?? ''
-const BUNNY_CDN_HOSTNAME  = Deno.env.get('BUNNY_CDN_HOSTNAME')  ?? ''
-const BUNNY_TOKEN_AUTH    = Deno.env.get('BUNNY_TOKEN_AUTH_KEY') ?? ''
+// Video host. Bunny was retired in Nov 2026 (account deactivated); every new
+// video is `gumlet://<asset_id>`. Old `bunny://` rows can no longer be fetched.
+const GUMLET_API_KEY      = Deno.env.get('GUMLET_API_KEY')      ?? ''
+const GUMLET_WORKSPACE_ID = Deno.env.get('GUMLET_WORKSPACE_ID') ?? ''
+const GUMLET_SIGN_SECRET  = Deno.env.get('GUMLET_SIGN_SECRET')  ?? ''
+const GUMLET_API          = 'https://api.gumlet.com/v1'
+const GUMLET_CDN          = 'https://video.gumlet.io'
 
 const PHASH_ENFORCE = true
 const PHASH_DUP_THRESHOLD = 8
@@ -67,55 +70,37 @@ function isTransientError(msg: string): boolean {
     || m.includes('econnreset') || m.includes('network') || m.includes('fetch failed')
 }
 
-const BUNNY_MP4_RESOLUTIONS = ['720p', '480p', '360p', '240p', '1080p']
-
-// Largest original we will pull into edge-function memory when Bunny's
-// transcode has stalled. Was 60MB, sized for a compressed native-app upload —
-// but this member base is 100% Flutter web, which skips client-side
-// compression entirely (video_compress has no web implementation) and allows
-// raw uploads up to 500MB. A typical uncompressed phone clip is 60-150MB, so
-// the old cap meant the fallback almost never actually fired for real
-// members; they just sat on Bunny's transcode with no safety net. Raised to
-// match the native app's own hard upload cap (200MB) -- the pipeline already
-// handles files this size safely today via Gemini's File API upload path
-// (anything over INLINE_LIMIT), which is used on every successfully
-// transcoded video regardless of size, so this isn't new memory pressure.
-const FALLBACK_MAX_BYTES = 200 * 1024 * 1024
-
 // Above this we stream to Gemini instead of buffering. Web uploads skip
 // compression entirely, so 250-300MB clips are normal and buffering them
 // exhausts the function.
 const STREAM_THRESHOLD_BYTES = 80 * 1024 * 1024
 
-// Hard ceiling on the stalled-transcode fallback.
+// Hard ceiling on analysing the ORIGINAL while the transcode is still queued.
 //
 // Streaming removed the MEMORY limit but not the CLOCK. The whole run has to
 // finish inside the edge function's ~150s budget, and a 291MB original has to
-// come down from Bunny AND go up to Gemini within it. Measured on results
-// night: at 60 concurrent that tripped Gemini's rate limits, and even at 10
-// concurrent only one submission completed in five minutes -- the transfers
-// were being killed mid-flight and the rows simply bounced.
+// come down AND go up to Gemini within it. Measured on the Bunny results night:
+// at 60 concurrent that tripped Gemini's rate limits, and even at 10 concurrent
+// only one submission completed in five minutes.
 //
 // So: stream the originals that can realistically finish, and let anything
-// larger wait for Bunny's own transcode, after which play_720p is ~20-40MB and
-// analyses in seconds. Waiting is genuinely faster than failing repeatedly.
+// larger wait for the transcode, whose download.mp4 is ~30MB for a 60s clip
+// and analyses in seconds. Waiting is genuinely faster than failing repeatedly.
 const FALLBACK_STREAM_CEILING = 200 * 1024 * 1024
 
-// DISABLED (set to 0).
+// How long to wait for Gumlet's own transcode before analysing the original.
 //
-// Analysing only the opening ~12 seconds means the model never sees the rest
-// of the attempt. Even though the video prompt treats rep count as advisory
-// and never rejects on it, a verdict formed from a fragment is not the same
-// check as a verdict formed from the whole recording, and it would be recorded
-// as though it were. On a national final that is not an acceptable trade:
-// better to leave a submission waiting than to approve or reject it on
-// partial evidence.
-//
-// The mechanism is kept, gated behind this constant, because it is the only
-// way found to analyse a 250-300MB upload inside the worker's memory ceiling.
-// It becomes reasonable only if it is ever explicitly chosen, and only paired
-// with a clear marker on the submission saying the review was partial.
-const PREFIX_FALLBACK_BYTES = 0
+// A 60s / 90MB clip was ready ~55s after upload (13 Nov 2026), and the webhook
+// re-kicks analysis the moment it is. So normally we simply wait. Only if the
+// asset is still queued after this long -- a peak-time backlog, which is what
+// stranded ~150 videos on Bunny for hours -- do we fall back to the original,
+// which Gumlet serves from the moment the upload completes.
+const ORIGINAL_FALLBACK_AFTER_MS = 3 * 60_000
+
+// A direct upload the browser never completed. After this long it is not
+// coming; tell the member rather than wait for the 60-minute escalation.
+const UPLOAD_ABANDONED_AFTER_MS = 30 * 60_000
+
 
 type Tier = { label: string; description: string; points: number }
 type AIResult = {
@@ -133,11 +118,10 @@ type AIResult = {
 type Decision = { status: 'approved' | 'rejected' | 'needs_review'; feedback: string; confidence: number; model?: 'flash' | 'pro' | null }
 type GenOpts = { thinkingBudget?: number; maxOutputTokens?: number }
 
-// lengthSeconds comes free with the status poll -- Bunny returns it on the same
-// video record we already fetch -- so duration costs no extra request.
-type BunnyPollResult =
+// Duration and size come free with the status call -- Gumlet returns them on
+// the same asset record -- so they cost no extra request.
+type VideoPollResult =
   | { kind: 'ready'; url: string; lengthSeconds: number | null; sizeBytes?: number }
-  | { kind: 'prefix'; bytes: Uint8Array; lengthSeconds: number | null }
   | { kind: 'pending' }
   | { kind: 'failed'; reason: string }
 
@@ -190,29 +174,23 @@ function extractTierThreshold(tier: Tier): { value: number; unit: string } | nul
   return { value, unit }
 }
 
-async function bunnySignPath(path: string, ttlSeconds = 900): Promise<string> {
-  const base = `https://${BUNNY_CDN_HOSTNAME}${path}`
-  if (!BUNNY_TOKEN_AUTH) return base
+// Gumlet signed URL: HMAC-SHA1 (hex) over the path + expiry, keyed with the
+// BASE64-DECODED sign secret. Verified on a real asset 13 Nov 2026 -- the raw
+// and hex-decoded key variants both return 403.
+async function gumletSignUrl(url: string, ttlSeconds = 900): Promise<string> {
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds
-  const raw = new TextEncoder().encode(BUNNY_TOKEN_AUTH + path + String(expires))
-  const digest = new Uint8Array(await stdCrypto.subtle.digest('MD5', raw))
-  let bin = ''
-  for (const b of digest) bin += String.fromCharCode(b)
-  const token = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  return `${base}?token=${token}&expires=${expires}`
+  const keyBytes = Uint8Array.from(atob(GUMLET_SIGN_SECRET), c => c.charCodeAt(0))
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+  const path = url.slice(GUMLET_CDN.length)
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(path + String(expires))))
+  let token = ''
+  for (const b of sig) token += b.toString(16).padStart(2, '0')
+  return `${url}?token=${token}&expires=${expires}`
 }
 
-async function bunnyResolvePlayableUrl(guid: string): Promise<string | null> {
-  for (const r of BUNNY_MP4_RESOLUTIONS) {
-    const url = await bunnySignPath(`/${guid}/play_${r}.mp4`)
-    try {
-      const head = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
-      if (head.ok) return url
-    } catch { /* try next */ }
-  }
-  const orig = await bunnySignPath(`/${guid}/original`)
-  try { const h = await fetch(orig, { method: 'HEAD', signal: AbortSignal.timeout(5000) }); if (h.ok) return orig } catch { /* none */ }
-  return null
+// Thumbnails are served without a token even with signed URLs on.
+function gumletThumbUrl(assetId: string): string {
+  return `${GUMLET_CDN}/${GUMLET_WORKSPACE_ID}/${assetId}/thumbnail-1-0.png`
 }
 
 async function fetchBytes(url: string): Promise<Uint8Array | null> {
@@ -292,135 +270,65 @@ function hamming(aHex: string, bHex: string): number {
   return count
 }
 
-async function bunnyCheckStatus(guid: string): Promise<BunnyPollResult> {
-  if (!BUNNY_LIBRARY_ID || !BUNNY_API_KEY || !BUNNY_CDN_HOSTNAME) return { kind: 'failed', reason: 'Bunny credentials missing on the server.' }
-  const statusUrl = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${guid}`
-  // Was 40s. Every attempt spent that polling BEFORE falling back to the
-  // original, and the whole run has to finish inside the edge function's 150s
-  // budget -- 40s poll + a 60MB download + Gemini routinely blew it, leaving the
-  // row stuck in 'analyzing'. Bunny's original is downloadable the instant the
-  // upload lands, so a short poll then straight to Plan B is both faster and
-  // far more likely to complete.
-  const deadline = Date.now() + 8_000
-  let lastKnownStatus = -1
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(statusUrl, { headers: { 'AccessKey': BUNNY_API_KEY, 'accept': 'application/json' }, signal: AbortSignal.timeout(5000) })
-      if (res.status === 404) return { kind: 'failed', reason: 'Video was deleted from the video service before analysis. Please re-upload.' }
-      if (!res.ok) { await new Promise(r => setTimeout(r, 2000)); continue }
-      const data = await res.json() as { status?: number; length?: number }
-      lastKnownStatus = data.status ?? -1
-      if (lastKnownStatus === 4) {
-        const url = await bunnyResolvePlayableUrl(guid)
-        const lengthSeconds = typeof data.length === 'number' && data.length > 0 ? data.length : null
-        if (url) return { kind: 'ready', url, lengthSeconds }
-        return { kind: 'failed', reason: 'Video processed but no downloadable version is available. Please re-upload the video.' }
-      }
-      if (lastKnownStatus === 5) return { kind: 'failed', reason: 'Video could not be processed — likely audio/video sync issue, unsupported codec, or corrupted file. Please re-record and try again.' }
-      if (lastKnownStatus === 6) return { kind: 'failed', reason: 'Video upload was incomplete. Please try again on a stable network.' }
-    } catch (e) { console.warn('[bunny] status check error', e instanceof Error ? e.message : e) }
-    await new Promise(r => setTimeout(r, 2500))
-  }
-  console.log('[bunny] poll timeout, last status =', lastKnownStatus)
-
-  // PLAN B: Bunny can sit in 'processing' for hours (status 0-3) while the
-  // uploaded ORIGINAL is perfectly downloadable the whole time — five members
-  // were stranded for ~3h on launch night exactly this way. The reviewer
-  // dashboard already falls back to /original; do the same here instead of
-  // leaving a genuine submission unevaluated.
-  //
-  // Size-capped: fetchVideo() pulls the whole file into memory, so a huge
-  // original (an 8K phone recording can be ~184 MB) would exhaust the edge
-  // function. Those stay 'pending' for the rescue sweep to hand to an admin.
-  // Go STRAIGHT to /original -- do not probe play_720p/480p/360p/240p/1080p.
-  //
-  // Those renditions are produced BY the transcode, so if we are here (status
-  // never reached 4) they cannot exist, and every probe is a guaranteed miss
-  // costing up to 5s each. That was ~30s burned per stuck video just to learn
-  // what the status already told us. With ~150 videos cycling through a
-  // Bunny backlog on results night, that wasted time was the pipeline's real
-  // throughput ceiling -- slots sat occupied doing nothing but timing out.
-  // The original is uploaded intact and downloadable the whole time, which is
-  // exactly what this fallback wants anyway.
-  // Probe with a RANGED GET, not HEAD.
-  //
-  // This is the bug that left ~150 videos "still processing" for hours on
-  // results night. Bunny's CDN does not answer HEAD on these paths the way we
-  // assumed, so the availability gate failed and we reported the file missing
-  // -- while the very same file played fine in the admin dashboard, because a
-  // browser issues GET. The dashboard even returns a URL when its own HEAD
-  // checks fail, which is why a reviewer could watch a video the pipeline
-  // swore did not exist.
-  //
-  // `Range: bytes=0-0` costs one byte, proves the object is really served,
-  // and returns the true size in Content-Range -- so it replaces both the
-  // availability check and the size check in a single request.
-  const orig = await bunnySignPath(`/${guid}/original`)
+async function gumletCheckStatus(assetId: string): Promise<VideoPollResult> {
+  if (!GUMLET_API_KEY || !GUMLET_WORKSPACE_ID || !GUMLET_SIGN_SECRET) return { kind: 'failed', reason: 'Video service credentials missing on the server.' }
+  // One status call, no polling loop. The webhook re-kicks analysis when the
+  // transcode finishes, and dispatch-analysis retries as the safety net, so
+  // spinning here would only hold a slot that another video could use.
+  // deno-lint-ignore no-explicit-any
+  let asset: any
   try {
-    const probe = await fetch(orig, {
-      headers: { Range: 'bytes=0-0' },
+    const res = await fetch(`${GUMLET_API}/video/assets/${assetId}`, {
+      headers: { 'Authorization': `Bearer ${GUMLET_API_KEY}`, 'accept': 'application/json' },
       signal: AbortSignal.timeout(8000),
     })
-    if (probe.ok || probe.status === 206) {
-      // "bytes 0-0/12345678" -> 12345678. Falls back to Content-Length for a
-      // server that ignores the range and returns 200 with the whole body.
-      const cr = probe.headers.get('content-range') ?? ''
-      const total = Number(cr.split('/')[1] ?? probe.headers.get('content-length') ?? '0')
-      probe.body?.cancel()
-      if (total > 0 && total <= FALLBACK_STREAM_CEILING) {
-        console.log('[bunny] transcode stalled; analysing original', total, 'bytes')
-        // No reliable length while the transcode is still stalled, so the
-        // duration rule is skipped for this path rather than guessed at.
-        return { kind: 'ready', url: orig, lengthSeconds: null, sizeBytes: total }
-      }
-      // Too big to move inside the function's time budget. Bunny is actively
-      // transcoding (status 2); its own output will be small and quick.
-      console.log('[bunny] original too large to transfer in budget, waiting for transcode. size =', total)
-    } else {
-      console.log('[bunny] original probe failed', probe.status)
-    }
+    if (res.status === 404) return { kind: 'failed', reason: 'Video was deleted from the video service before analysis. Please re-upload.' }
+    if (!res.ok) { console.warn('[gumlet] status http', res.status); return { kind: 'pending' } }
+    asset = await res.json()
   } catch (e) {
-    console.warn('[bunny] original probe error', e instanceof Error ? e.message : e)
+    console.warn('[gumlet] status check error', e instanceof Error ? e.message : e)
+    return { kind: 'pending' }
   }
-  // LAST RESORT: analyse a decodable PREFIX of the original.
-  //
-  // The whole file cannot be moved -- the edge function OOMs
-  // (WORKER_RESOURCE_LIMIT) long before 250-300MB is in hand. But phone
-  // uploads are frequently written "faststart", with the moov atom at the
-  // FRONT, which makes the first N megabytes a complete, playable clip in its
-  // own right. Measured on the 24 Aug backlog: half the stuck videos are
-  // faststart, and at ~3MB/s a 40MB prefix is roughly 12 seconds of footage --
-  // ample for the only question the video path actually asks, which is whether
-  // this is a genuine attempt at the right exercise.
-  //
-  // Strictly gated: if 'moov' is not in the prefix the file is moov-at-end,
-  // the bytes are undecodable on their own, and we return pending rather than
-  // feed the model garbage and let it invent a verdict.
-  if (PREFIX_FALLBACK_BYTES > 0) {
-    try {
-      const pr = await fetch(orig, {
-        headers: { Range: `bytes=0-${PREFIX_FALLBACK_BYTES - 1}` },
-        signal: AbortSignal.timeout(120_000),
-      })
-      if (pr.ok || pr.status === 206) {
-        const buf = new Uint8Array(await pr.arrayBuffer())
-        let hasMoov = false
-        for (let i = 0; i + 3 < buf.length; i++) {
-          if (buf[i] === 0x6d && buf[i + 1] === 0x6f && buf[i + 2] === 0x6f && buf[i + 3] === 0x76) { hasMoov = true; break }
-        }
-        if (hasMoov) {
-          console.log('[bunny] using decodable prefix', buf.byteLength, 'bytes of', total)
-          return { kind: 'prefix', bytes: buf, lengthSeconds: null }
-        }
-        console.log('[bunny] prefix not decodable (moov at end); waiting for transcode')
-      }
-    } catch (e) {
-      console.warn('[bunny] prefix fetch failed', e instanceof Error ? e.message : e)
+
+  const status: string = asset?.status ?? ''
+  const duration = Number(asset?.input?.duration)
+  const lengthSeconds = Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null
+  const ageMs = Date.now() - Number(asset?.created_at ?? Date.now())
+
+  if (status === 'errored') {
+    console.warn('[gumlet] errored', assetId, JSON.stringify(asset?.error ?? null))
+    return { kind: 'failed', reason: 'We could not process this video. Please record it again and re-upload — an MP4 from your phone camera works best.' }
+  }
+  if (status === 'upload-pending') {
+    if (ageMs > UPLOAD_ABANDONED_AFTER_MS) return { kind: 'failed', reason: 'Video upload was incomplete. Please try again on a stable network.' }
+    return { kind: 'pending' }
+  }
+
+  if (status === 'ready') {
+    // download.mp4 exists only when the asset was created with mp4_access.
+    // gumlet-upload always sets it; anything else falls through to the original.
+    // deno-lint-ignore no-explicit-any
+    const mp4 = (asset?.output?.storage_details?.video ?? []).find((v: any) => v?.fileName === 'download.mp4')
+    if (mp4) {
+      const url = await gumletSignUrl(`${GUMLET_CDN}/${GUMLET_WORKSPACE_ID}/${assetId}/download.mp4`)
+      return { kind: 'ready', url, lengthSeconds, sizeBytes: Number(mp4.size) || undefined }
     }
   }
 
+  // Still transcoding (or ready without an MP4). Analyse the uploaded original
+  // once we have waited long enough -- see ORIGINAL_FALLBACK_AFTER_MS.
+  if (status === 'ready' || ageMs > ORIGINAL_FALLBACK_AFTER_MS) {
+    const orig: string | undefined = asset?.original_download_url
+    const size = Number(asset?.input?.size)
+    if (orig && Number.isFinite(size) && size > 0 && size <= FALLBACK_STREAM_CEILING) {
+      console.log('[gumlet] transcode not ready after', Math.round(ageMs / 1000), 's; analysing original', size, 'bytes')
+      return { kind: 'ready', url: orig, lengthSeconds, sizeBytes: size }
+    }
+    if (orig && size > FALLBACK_STREAM_CEILING) console.log('[gumlet] original too large to transfer in budget, waiting for transcode. size =', size)
+  }
   return { kind: 'pending' }
 }
+
 
 function buildVideoPrompt(
   taskTitle: string,
@@ -583,11 +491,13 @@ async function geminiGenerate(parts: unknown[], prompt: string, model: string, o
 async function fetchVideo(signedUrl: string): Promise<{ bytes: Uint8Array; mime: string }> {
   const res = await fetch(signedUrl, { signal: AbortSignal.timeout(30_000) })
   if (!res.ok) throw new Error(`Could not fetch video (${res.status})`)
-  return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'video/mp4' }
+  // Gumlet serves the ORIGINAL as binary/octet-stream; Gemini needs a video type.
+  const ct = res.headers.get('content-type') ?? ''
+  return { bytes: new Uint8Array(await res.arrayBuffer()), mime: ct.startsWith('video/') ? ct : 'video/mp4' }
 }
 
 /**
- * Stream a video straight from Bunny into Gemini's File API without ever
+ * Stream a video straight from the video host into Gemini's File API without ever
  * holding it in memory, and return the file_uri to analyse.
  *
  * This is what makes the stalled-transcode fallback actually usable. Members
@@ -595,7 +505,7 @@ async function fetchVideo(signedUrl: string): Promise<{ bytes: Uint8Array; mime:
  * implementation), so a single clip is routinely 250-300MB -- one measured at
  * 304,932,768 bytes. fetchVideo() buffers the whole response, which at that
  * size exhausts the edge function, so the fallback carried a 200MB cap and
- * simply skipped them. The result was the worst possible outcome: Bunny had
+ * simply skipped them. The result was the worst possible outcome: the host had
  * the original sitting there and served it happily (verified: ranged GET
  * returns 206), but we declined to look at it and reported "still processing"
  * for hours.
@@ -710,8 +620,8 @@ async function runVideoModel(video: { bytes: Uint8Array; mime: string }, prompt:
  * ever slips through, anchoring on "most recent" would make that fake the new
  * baseline and every later fake would match it.
  *
- * Returns up to TWO references from two different submissions. Bunny's
- * thumbnail is taken at a fixed position and is often motion-blurred — with a
+ * Returns up to TWO references from two different submissions. The video
+ * host's thumbnail is a single auto-picked frame and is often motion-blurred — with a
  * single reference one bad frame produces a false "different person", and every
  * false positive costs an admin a manual review. Two independent frames give
  * the model a fair chance to recognise the member.
@@ -737,7 +647,7 @@ async function fetchIdentityAnchors(
       .eq('user_id', userId)
       .eq('org_id', orgId)
       .eq('status', 'approved')
-      .like('proof_url', 'bunny://%')
+      .like('proof_url', 'gumlet://%')
       .neq('id', excludeSubmissionId)
       .order('submitted_at', { ascending: true })
       .limit(2)
@@ -745,11 +655,10 @@ async function fetchIdentityAnchors(
     if (rows.length === 0) return [] // first submission — this one becomes the baseline
     const out: { bytes: Uint8Array; mime: string }[] = []
     for (const row of rows) {
-      const guid = row.proof_url.replace('bunny://', '')
-      const url = await bunnySignPath(`/${guid}/thumbnail.jpg`)
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      const assetId = row.proof_url.replace('gumlet://', '')
+      const res = await fetch(gumletThumbUrl(assetId), { signal: AbortSignal.timeout(8000) })
       if (!res.ok) continue
-      out.push({ bytes: new Uint8Array(await res.arrayBuffer()), mime: 'image/jpeg' })
+      out.push({ bytes: new Uint8Array(await res.arrayBuffer()), mime: 'image/png' })
     }
     return out
   } catch (e) {
@@ -770,7 +679,6 @@ async function decideVideo(
   requiredReps: number | null = null,
   durationSeconds: number | null = null,
   sizeBytes: number | null = null,
-  prefixBytes: Uint8Array | null = null,
 ): Promise<Decision> {
   const hasReference = references.length > 0
   const prompt = buildVideoPrompt(taskTitle, taskDesc, claimedTier, taskPoints, references.length, requiredReps, durationSeconds)
@@ -780,14 +688,7 @@ async function decideVideo(
   // without a second transfer.
   let video: { bytes: Uint8Array; mime: string } | null = null
   let streamed: { fileUri: string; fileName: string } | null = null
-  if (prefixBytes) {
-    // Already in hand: a faststart prefix pulled because the full original is
-    // too large to move. runVideoModel routes it through Gemini's File API
-    // (it is over INLINE_LIMIT), which is the same path a normal large video
-    // takes -- the only difference is that this clip is the opening seconds
-    // rather than the whole recording.
-    video = { bytes: prefixBytes, mime: 'video/mp4' }
-  } else if (sizeBytes != null && sizeBytes > STREAM_THRESHOLD_BYTES) {
+  if (sizeBytes != null && sizeBytes > STREAM_THRESHOLD_BYTES) {
     console.log('[video] streaming', sizeBytes, 'bytes to Gemini (too large to buffer)')
     streamed = await streamVideoToGemini(signedUrl, sizeBytes, 'video/mp4')
   } else {
@@ -950,6 +851,10 @@ async function decideVideo(
 
 Deno.serve(async (req: Request) => {
   let submissionId: string | undefined
+  // Hoisted so the outer catch can fence its write. It was block-scoped inside
+  // the try, so that write threw a ReferenceError, was swallowed, and the row
+  // sat in 'analyzing' until the 10-minute stale reset.
+  let claimToken = ''
   try {
     const body = await req.json()
     const record = body.record ?? body
@@ -976,7 +881,7 @@ Deno.serve(async (req: Request) => {
     // same submission, and whichever finished last silently overwrote the
     // other's verdict. reanalyze_submission stamps a fresh ai_started_at, which
     // is exactly what invalidates the older run's token.
-    const claimToken = new Date().toISOString()
+    claimToken = new Date().toISOString()
     const { data: claimed } = await supabase.from('task_submissions').update({ ai_status: 'analyzing', ai_started_at: claimToken }).is('ai_status', null).eq('id', submissionId).select('id')
     if (!claimed || claimed.length === 0) return new Response(JSON.stringify({ skipped: true }), { status: 200 })
 
@@ -1049,8 +954,10 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ aiStatus: 'needs_review', error: errMsg }), { status: 200 })
     }
 
-    const isBunny = sub.proof_url.startsWith('bunny://')
-    const isVideo = isBunny || /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(sub.proof_url)
+    const isGumlet = sub.proof_url.startsWith('gumlet://')
+    // Retired host. The account is gone, so these files cannot be fetched.
+    const isLegacyBunny = sub.proof_url.startsWith('bunny://')
+    const isVideo = isGumlet || isLegacyBunny || /\.(mp4|mov|m4v|webm|mkv|3gp)$/i.test(sub.proof_url)
     const medium: 'image' | 'video' = isVideo ? 'video' : 'image'
 
     let decision: Decision
@@ -1063,18 +970,27 @@ Deno.serve(async (req: Request) => {
       let videoUrl: string | null = null
       let videoSeconds: number | null = null
       let videoSize: number | null = null
-      let videoPrefix: Uint8Array | null = null
-      if (isBunny) {
-        const guid = sub.proof_url.replace('bunny://', '')
-        const poll = await bunnyCheckStatus(guid)
-        if (poll.kind === 'ready') { videoUrl = poll.url; videoSeconds = poll.lengthSeconds; videoSize = poll.sizeBytes ?? null }
-        else if (poll.kind === 'prefix') { videoPrefix = poll.bytes; videoSeconds = null }
+      if (isLegacyBunny) {
+        await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: 'This video was stored on the old video service and is no longer available — please review manually.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
+        return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'legacy_bunny' }), { status: 200 })
+      }
+      if (isGumlet) {
+        const assetId = sub.proof_url.replace('gumlet://', '')
+        const poll = await gumletCheckStatus(assetId)
+        if (poll.kind === 'ready') {
+          videoUrl = poll.url; videoSeconds = poll.lengthSeconds; videoSize = poll.sizeBytes ?? null
+          // Recorded for the dashboard and the duplicate tools. Best-effort.
+          await supabase.from('task_submissions').update({
+            ...(videoSeconds != null ? { video_seconds: videoSeconds } : {}),
+            ...(videoSize != null ? { video_bytes: videoSize } : {}),
+          }).eq('id', submissionId).eq('ai_started_at', claimToken)
+        }
         else if (poll.kind === 'pending') {
           await supabase.from('task_submissions').update({ ai_status: null, ai_feedback: 'Video still processing — will retry.' }).eq('id', submissionId).eq('ai_started_at', claimToken)
           return new Response(JSON.stringify({ aiStatus: 'retry' }), { status: 200 })
         } else {
           await supabase.from('task_submissions').update({ ai_status: 'needs_review', ai_feedback: poll.reason }).eq('id', submissionId).eq('ai_started_at', claimToken)
-          return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'bunny_failed' }), { status: 200 })
+          return new Response(JSON.stringify({ aiStatus: 'needs_review', reason: 'video_host_failed' }), { status: 200 })
         }
       } else {
         const { data: signed } = await supabase.storage.from('task-proofs').createSignedUrl(sub.proof_url, 300)
@@ -1092,9 +1008,9 @@ Deno.serve(async (req: Request) => {
       // it at all. Rejecting rather than reviewing keeps admin load at zero --
       // the member can re-record and resubmit straight away.
       //
-      // Only runs when the admin set a minimum AND Bunny reported a length;
+      // Only runs when the admin set a minimum AND the host reported a length;
       // either being absent means the rule is simply off for this submission.
-      if (videoPrefix == null && minVideoSeconds != null && videoSeconds != null && videoSeconds < minVideoSeconds) {
+      if (minVideoSeconds != null && videoSeconds != null && videoSeconds < minVideoSeconds) {
         const msg = `This video is ${videoSeconds} seconds long, but this task needs at least ${minVideoSeconds} seconds so the full set is visible. Please record the whole set in one take and upload again.`
         await supabase.from('task_submissions').update({
           ai_status: 'rejected', ai_feedback: msg, ai_confidence: 1,
@@ -1111,7 +1027,7 @@ Deno.serve(async (req: Request) => {
 
       // Re-used video, caught before a single AI token is spent.
       //
-      // Bunny renders the thumbnail from a fixed frame, so an identical source
+      // The host renders the thumbnail from a fixed frame, so an identical source
       // file yields identical thumbnail bytes -- a SHA-256 of it is an exact
       // fingerprint. Photos had this since migration 049; videos had nothing at
       // all, and a sweep on 22 Aug found 67 re-used clips worth 26,220 points,
@@ -1119,11 +1035,9 @@ Deno.serve(async (req: Request) => {
       //
       // FAILS OPEN on purpose: any fetch or hash problem falls through to normal
       // analysis. A member must never be blocked because a thumbnail 404'd.
-      if (isBunny) {
+      if (isGumlet) {
         try {
-          const guid = sub.proof_url.replace('bunny://', '')
-          const thumbUrl = await bunnySignPath(`/${guid}/thumbnail.jpg`)
-          const thumbRes = await fetch(thumbUrl, { signal: AbortSignal.timeout(8000) })
+          const thumbRes = await fetch(gumletThumbUrl(sub.proof_url.replace('gumlet://', '')), { signal: AbortSignal.timeout(8000) })
           if (thumbRes.ok) {
             const thumbBytes = new Uint8Array(await thumbRes.arrayBuffer())
             // A tiny body is an error page or a placeholder, not a real frame.
@@ -1150,7 +1064,7 @@ Deno.serve(async (req: Request) => {
               if (prior) {
                 // A THUMBNAIL match is a candidate, not a verdict.
                 //
-                // Bunny takes the thumbnail from a fixed frame, so a member who
+                // The host takes the thumbnail from a fixed frame, so a member who
                 // films in the same room from the same spot produces the same
                 // opening frame every day -- even when the recording is
                 // genuinely new. Rejecting on that alone wrongly penalised three
@@ -1181,7 +1095,7 @@ Deno.serve(async (req: Request) => {
       // lookup/fetch problem. Analysis proceeds exactly as before when absent.
       const identityRefs = await fetchIdentityAnchors(sub.user_id, orgId, submissionId)
       try {
-        decision = await decideVideo(videoUrl ?? '', taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds, videoSize, videoPrefix)
+        decision = await decideVideo(videoUrl ?? '', taskTitle, taskDesc, claimedTier, taskPoints, identityRefs, requiredReps, videoSeconds, videoSize)
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e)
         console.error('[analyze-submission/video]', errMsg)

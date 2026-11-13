@@ -1636,7 +1636,7 @@ export type VideoDuplicateEntry = {
   status: string
   pointsAwarded: number | null
   proofUrl: string | null
-  /** Bunny GUID, for building a playable URL. */
+  /** Gumlet asset id, for building a playable URL (null for retired Bunny videos). */
   guid: string | null
   /** SHA-256 of the MP4. Present once the scanner has proved the group. */
   fileSha: string | null
@@ -1707,7 +1707,8 @@ export async function getVideoDuplicateGroups(orgId: string): Promise<VideoDupli
       status: r.status,
       pointsAwarded: r.points_awarded,
       proofUrl: r.proof_url,
-      guid: r.proof_url?.startsWith('bunny://') ? r.proof_url.slice('bunny://'.length) : null,
+      // Gumlet asset id; null for retired Bunny videos (files no longer exist).
+      guid: r.proof_url?.startsWith('gumlet://') ? r.proof_url.slice('gumlet://'.length) : null,
       fileSha: r.video_file_sha,
       fileBytes: r.video_bytes == null ? null : Number(r.video_bytes),
       seconds: r.video_seconds == null ? null : Number(r.video_seconds),

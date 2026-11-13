@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import { revalidatePath } from 'next/cache'
 import { getAdminProfile, readOnlyBlock } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/server'
+import { gumletPlayableUrl } from '@/lib/video-host'
 
 export type ProofEvidence = {
   url: string
@@ -190,7 +191,7 @@ export async function rejectVideoDuplicate(
       status: 'rejected',
       rejection_reason: reason,
       reviewed_at: new Date().toISOString(),
-      // Must mirror the approvals path: retry_pending_bunny_submissions selects
+      // Must mirror the approvals path: the AI retry crons select
       // on a null ai_status, so nulling it makes the cron re-fire the AI and
       // silently re-approve what an admin just rejected.
       ai_status: 'rejected',
@@ -207,51 +208,15 @@ export async function rejectVideoDuplicate(
 }
 
 /**
- * Signed playback URLs for a video group, fetched when the admin opens it.
- *
- * Token Authentication is on for the Bunny library, so an unsigned URL will not
- * play. Mirrors the signing in the approvals actions rather than importing it,
- * because that module pulls in the whole approvals surface for one helper.
+ * Signed playback URLs for the duplicate groups, keyed by Gumlet asset id.
+ * Retired Bunny videos have no id here (their files are gone) and are skipped.
  */
-export async function getVideoPlaybackUrls(guids: string[]): Promise<Record<string, string>> {
+export async function getVideoPlaybackUrls(assetIds: string[]): Promise<Record<string, string>> {
   const profile = await getAdminProfile()
   if (!profile) return {}
-
-  const host = process.env.BUNNY_CDN_HOSTNAME || 'vz-c97d7e4d-363.b-cdn.net'
-  const key  = process.env.BUNNY_TOKEN_AUTH_KEY || ''
-
-  const sign = (path: string, ttl = 1800) => {
-    const url = `https://${host}${path}`
-    if (!key) return url
-    const expires = Math.floor(Date.now() / 1000) + ttl
-    const token = createHash('md5').update(key + path + String(expires)).digest('base64')
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-    return `${url}?token=${token}&expires=${expires}`
-  }
-
   const out: Record<string, string> = {}
-  await Promise.all([...new Set(guids)].map(async guid => {
-    // Bunny only generates renditions that fit the source, so try smallest-up
-    // rather than assuming one exists.
-    //
-    // Probed with a one-byte ranged GET and a timeout, not HEAD: Bunny's CDN
-    // does not answer HEAD on these paths (a ranged GET returns 206 where HEAD
-    // gives nothing), and an untimed fetch that never answers hangs the whole
-    // page. Same fix as the approvals and member views.
-    const probe = async (url: string) => {
-      try {
-        const r = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(6000) })
-        r.body?.cancel().catch(() => {})
-        return r.ok || r.status === 206
-      } catch { return false }
-    }
-    for (const r of ['480p', '360p', '240p', '720p']) {
-      const url = sign(`/${guid}/play_${r}.mp4`)
-      if (await probe(url)) { out[guid] = url; return }
-    }
-    // Transcode may never have run -- the original is intact throughout.
-    const original = sign(`/${guid}/original`)
-    if (await probe(original)) { out[guid] = original; return }
+  await Promise.all([...new Set(assetIds)].map(async id => {
+    out[id] = await gumletPlayableUrl(id)
   }))
   return out
 }

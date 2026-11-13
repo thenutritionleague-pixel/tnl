@@ -6,7 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:video_compress/video_compress.dart';
 import 'package:video_player/video_player.dart';
-import 'bunny_video_service.dart';
+import 'gumlet_video_service.dart';
 import 'submission_outbox.dart';
 import '../utils/org_date_utils.dart';
 
@@ -55,9 +55,9 @@ class VideoTooShortException implements Exception {
       'in one take and upload again.';
 }
 
-/// Thrown when the recording is above the resolution Bunny Stream can encode.
-/// Bunny rejects anything beyond 4K with "Incompatible resolution or not a
-/// video stream" — an 8K (7680x4320) phone recording fails there AFTER the
+/// Thrown when the recording is above 4K. The old host (Bunny) rejected these
+/// with "Incompatible resolution or not a video stream", and 4K is all review
+/// needs on any host — an 8K (7680x4320) phone recording fails there AFTER the
 /// member has waited out a ~180 MB upload, and the failure text blames their
 /// file. Catching it before upload saves the upload and tells them what to do.
 class VideoResolutionTooHighException implements Exception {
@@ -484,8 +484,8 @@ class TaskService {
 
     if (kIsWeb) {
       // Flutter web: video_compress has no web implementation. Upload raw
-      // — Bunny Stream transcodes any input to browser-safe MP4 server-side.
-      // Bunny bucket accepts up to 500 MB. iPhone 90s .mov typically 60-150 MB.
+      // — Gumlet transcodes any input to browser-safe MP4 server-side.
+      // We cap uploads at 500 MB. iPhone 90s .mov typically 60-150 MB.
 
       // SECURE THE BYTES FIRST — before anything else touches the blob.
       //
@@ -522,7 +522,7 @@ class TaskService {
         throw VideoTooLongException(probedSeconds, maxDurationSeconds);
       }
       // Same fail-open contract as above: only block on a duration we actually
-      // read. The edge function re-checks against Bunny's reported length, so a
+      // read. The edge function re-checks against Gumlet's reported length, so a
       // probe that fails here is caught server-side rather than let through.
       if (minDurationSeconds != null &&
           probedSeconds != null &&
@@ -545,7 +545,7 @@ class TaskService {
       };
     } else {
       // Native (iOS / Android): probe duration then compress to 480p .mp4.
-      // Compression here still helps upload speed on 4G — Bunny would transcode
+      // Compression here still helps upload speed on 4G — Gumlet would transcode
       // anyway, but a 20 MB upload is much faster than a 100 MB one.
       final info = await VideoCompress.getMediaInfo(videoFile.path);
       final srcDurationSec = ((info.duration ?? 0) / 1000).round();
@@ -615,12 +615,12 @@ class TaskService {
       uploadMime = 'video/mp4';
     }
 
-    // Upload directly to Bunny Stream — server-side transcodes to browser-safe
-    // MP4 + adaptive HLS. proof_url becomes "bunny://<guid>" so downstream
+    // Upload directly to Gumlet — server-side transcodes to an MP4 for the AI
+    // plus adaptive HLS. proof_url becomes "gumlet://<asset_id>" so downstream
     // (analyze-submission, admin dashboard) can route to the CDN.
     // ignore: unused_local_variable
     final _extForLegacy = uploadExt;
-    final fileName = await BunnyVideoService.uploadVideo(
+    final fileName = await GumletVideoService.uploadVideo(
       bytes: bytes,
       mimeType: uploadMime,
       title: 'proof-$taskId-${DateTime.now().millisecondsSinceEpoch}',
