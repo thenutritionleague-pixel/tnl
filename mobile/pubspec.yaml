@@ -46,6 +46,12 @@ dependencies:
   video_player: ^2.9.2
   http: ^1.2.2
 
+# flutter_html 3.0.0 calls html's query_selector `matches`, which html 0.15.7
+# no longer has. pubspec.lock is not committed, so Netlify resolves fresh and
+# the web build fails without this pin.
+dependency_overrides:
+  html: 0.15.6
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
