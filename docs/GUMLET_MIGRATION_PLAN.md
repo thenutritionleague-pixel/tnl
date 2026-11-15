@@ -1,9 +1,12 @@
 # Bunny → Gumlet migration plan
 
-Status: **BUILT + backend LIVE (13 Nov 2026).** Edge functions `gumlet-upload`,
-`gumlet-webhook`, `analyze-submission` (v89+) deployed; migration 095 applied; Flutter +
-dashboard changes ship with the next Netlify build. Still open: §6 delete-after-decision
-sweep, §7 peak load test. Original plan written 9 Nov 2026 below.
+Status: **LIVE end to end (14 Nov 2026).** Edge functions `gumlet-upload`,
+`gumlet-webhook`, `analyze-submission` (v89+) deployed; migration 095 applied; member app
+(eonl.live) and dashboard serve the Gumlet build. Verified 15 Nov with a full member-journey
+test: 15 s clip ready 52 s after upload, webhook kicked AI, decision recorded.
+Still open: §6 delete-after-decision sweep (needed only near the 3,000-minute limit), §7 peak
+load test. Note: we create assets with `keep_original: true` (the AI's fallback while a
+transcode is queued), not `false` as §6 first proposed. Original plan written 9 Nov 2026 below.
 Bunny account is **deactivated**. Gumlet is the 100% replacement, not a side-by-side.
 
 ---
