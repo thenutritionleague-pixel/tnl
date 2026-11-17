@@ -887,7 +887,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: sub } = await supabase
       .from('task_submissions')
-      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, task_snapshot, submitted_at, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
+      .select('user_id, task_id, challenge_id, proof_url, selected_tier_index, task_snapshot, submitted_at, submitted_date, ai_started_at, tasks(title, description, points, points_tiers, min_video_seconds), profiles:user_id(name)')
       .eq('id', submissionId).eq('ai_started_at', claimToken).maybeSingle()
 
     // Superseded before we even started reading -- bail out before spending a
@@ -1248,6 +1248,32 @@ Deno.serve(async (req: Request) => {
           // anything else goes to review (never auto-rejected on a misread).
           if (ai.approved && conf >= 0.55) { status = 'approved'; feedback = '' }
           else { status = 'needs_review'; feedback = ai.feedback || 'Could not read the number clearly — please verify the screenshot.' }
+        }
+
+        // Recorded so a later day can be compared against it. Best-effort.
+        await supabase.from('task_submissions').update({ ai_read_value: readVal }).eq('id', submissionId).eq('ai_started_at', claimToken)
+
+        // The same step count as an earlier day, from a DIFFERENT file.
+        //
+        // An identical file is already rejected by the exact-duplicate cron
+        // (storage MD5). What it cannot see is a fresh screenshot of an old
+        // screen: new bytes, same number. A real day landing on exactly the
+        // same count (e.g. 10,234 twice) is rare but honest, so a person
+        // decides -- never an automatic rejection. Steps only: a "30 minutes"
+        // workout repeats exactly every day by design.
+        const isSteps = numericTarget.unit === 'steps' || ai.read?.unit === 'steps'
+        if (status === 'approved' && isSteps && readVal != null && readVal >= 100) {
+          const { data: sameCount } = await supabase.from('task_submissions')
+            .select('submitted_date')
+            .eq('user_id', sub.user_id).eq('org_id', orgId).eq('task_id', sub.task_id)
+            .eq('status', 'approved').eq('ai_read_value', readVal)
+            .neq('id', submissionId).neq('submitted_date', sub.submitted_date)
+            .order('submitted_at', { ascending: false }).limit(1)
+          const prior = (sameCount ?? [])[0] as { submitted_date: string } | undefined
+          if (prior) {
+            status = 'needs_review'
+            feedback = `Same step count (${readVal.toLocaleString('en-IN')}) as this member's approved screenshot on ${fmtProofDate(prior.submitted_date)}, from a different file. Check it is a new day's screenshot.`
+          }
         }
       } else {
         // Non-numeric tasks (food, water, habit) — trust the lenient AI verdict.
