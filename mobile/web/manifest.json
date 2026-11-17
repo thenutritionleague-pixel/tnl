@@ -1,11 +1,11 @@
 {
-    "name": "EO Nutrition League",
-    "short_name": "EONL",
+    "name": "The Nutrition League",
+    "short_name": "TNL",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#F0FDF4",
     "theme_color": "#059669",
-    "description": "EO Nutrition League — Track your health challenges and team progress.",
+    "description": "The Nutrition League — Track your health challenges and team progress.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
